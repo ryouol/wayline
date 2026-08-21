@@ -17,3 +17,18 @@ weights/
 **/.DS_Store
 docs/
 
+
+# Model weights — multi-GB, fetched with ./download_weights.sh
+*.pt
+skyseg_batch.onnx
+
+# Local Python environment
+.venv/
+
+# Run artifacts and caches
+outputs/
+*.glb
+webui/uploads/
+*_sky_masks/
+*.log
+screenshot.png

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LingBot-Map · console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wordmark">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>LingBot&#8209;Map</h1>
+    <span class="wordmark-sub">local console</span>
+  </div>
+  <div class="rig" id="rig">
+    <span class="rig-dot" aria-hidden="true"></span>
+    <span id="rigLabel">CPU · fp32 · SDPA</span>
+  </div>
+</header>
+
+<main class="deck">
+
+  <!-- ── capture rail ─────────────────────────────────────────── -->
+  <section class="rail" aria-label="Capture settings">
+
+    <div class="panel">
+      <p class="eyebrow">Source</p>
+
+      <div class="drop" id="drop" tabindex="0" role="button"
+           aria-label="Choose a video file, or drop one here">
+        <input type="file" id="file" accept="video/*" hidden>
+        <div class="drop-idle" id="dropIdle">
+          <span class="drop-glyph" aria-hidden="true"></span>
+          <p class="drop-title">Drop a video</p>
+          <p class="drop-hint">mp4 · mov · avi · mkv</p>
+        </div>
+        <div class="drop-loaded" id="dropLoaded" hidden>
+          <p class="clip-name" id="clipName">—</p>
+          <dl class="clip-meta">
+            <div><dt>Length</dt><dd id="clipDur">—</dd></div>
+            <div><dt>Source</dt><dd id="clipFps">—</dd></div>
+            <div><dt>Frames</dt><dd id="clipFrames">—</dd></div>
+            <div><dt>Size</dt><dd id="clipSize">—</dd></div>
+          </dl>
+          <button class="link-btn" id="clearClip" type="button">Choose another</button>
+        </div>
+      </div>
+      <p class="note" id="uploadNote" hidden></p>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">Capture</p>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="fps">Frames sampled per second</label>
+          <output class="readout" id="fpsOut">3</output>
+        </div>
+        <input type="range" id="fps" min="1" max="15" step="1" value="3">
+        <p class="field-note">Thins the clip before reconstruction. Lower is faster and usually enough.</p>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="maxFrames">Frame limit</label>
+          <output class="readout" id="maxOut">120</output>
+        </div>
+        <input type="range" id="maxFrames" min="30" max="900" step="10" value="120">
+        <p class="field-note">Stops after this many frames. Keep it small for a first look.</p>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="maskSky" checked>
+        <span class="box" aria-hidden="true"></span>
+        <span class="check-text">Remove sky
+          <em>Keeps unbounded sky points out of the cloud. Outdoor clips only.</em>
+        </span>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="rotate">
+        <span class="box" aria-hidden="true"></span>
+        <span class="check-text">Rotate 90&deg;
+          <em>For portrait phone video, which otherwise reconstructs sideways.</em>
+        </span>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="memoryGuard" checked>
+        <span class="box" aria-hidden="true"></span>
+        <span class="check-text">Memory guard
+          <em>Caps the attention cache at 32 frames. Without it, long clips exhaust
+          memory on this machine and slow to a crawl.</em>
+        </span>
+      </label>
+    </div>
+
+    <div class="panel estimate" id="estimate">
+      <p class="eyebrow">Before you start</p>
+      <div class="est-row">
+        <span class="est-figure" id="estFrames">—</span>
+        <span class="est-unit">frames</span>
+      </div>
+      <div class="est-row">
+        <span class="est-figure" id="estTime">—</span>
+        <span class="est-unit">on this Mac</span>
+      </div>
+      <p class="est-note" id="estNote">Load a clip to see the cost.</p>
+      <button class="primary" id="start" type="button" disabled>Start reconstruction</button>
+    </div>
+
+  </section>
+
+  <!-- ── run console ──────────────────────────────────────────── -->
+  <section class="console" aria-label="Run status">
+
+    <div class="panel console-head">
+      <div class="stage-block">
+        <p class="eyebrow" id="stageEyebrow">Idle</p>
+        <p class="stage-line" id="stageLine">No run yet</p>
+      </div>
+      <div class="controls">
+        <button class="ghost" id="pause" type="button" disabled>Pause</button>
+        <button class="ghost danger" id="stop" type="button" disabled>Stop</button>
+      </div>
+    </div>
+
+    <!-- signature: the sequence ribbon -->
+    <div class="panel ribbon-panel">
+      <div class="ribbon-head">
+        <p class="eyebrow">Sequence</p>
+        <p class="ribbon-count"><span id="frameNow">0</span><span class="slash">/</span><span id="frameTotal">0</span></p>
+      </div>
+      <canvas id="ribbon" class="ribbon" height="72"></canvas>
+      <div class="ribbon-legend">
+        <span class="lg"><i class="sw sw-done"></i>reconstructed</span>
+        <span class="lg"><i class="sw sw-window"></i>attention window</span>
+        <span class="lg"><i class="sw sw-todo"></i>pending</span>
+      </div>
+    </div>
+
+    <div class="panel metrics">
+      <div class="metric">
+        <p class="metric-label">Elapsed</p>
+        <p class="metric-value" id="mElapsed">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">Remaining</p>
+        <p class="metric-value" id="mEta">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">Per frame</p>
+        <p class="metric-value" id="mRate">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">Sky masks</p>
+        <p class="metric-value" id="mMasks">—</p>
+      </div>
+    </div>
+
+    <div class="panel result" id="result" hidden>
+      <p class="eyebrow">Reconstruction ready</p>
+      <p class="result-line" id="resultLine">—</p>
+      <a class="primary" id="openViewer" href="#" target="_blank" rel="noopener">Open 3D viewer</a>
+    </div>
+
+    <div class="panel log-panel">
+      <p class="eyebrow">Output</p>
+      <pre class="log" id="log" aria-live="polite"><span class="log-empty">Model output appears here once a run starts.</span></pre>
+    </div>
+
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

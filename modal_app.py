@@ -29,25 +29,18 @@ jobs = modal.Volume.from_name("lingbot-research-jobs", create_if_missing=True)
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1", "libglib2.0-0", "libgomp1")
+    .add_local_file(
+        "requirements/modal.lock",
+        remote_path="/opt/lingbot-map/requirements/modal.lock",
+        copy=True,
+    )
+    .run_commands(
+        "python -m pip install --require-hashes -r /opt/lingbot-map/requirements/modal.lock"
+    )
     .pip_install(
         "torch==2.8.0",
         "torchvision==0.23.0",
         index_url="https://download.pytorch.org/whl/cu128",
-    )
-    .pip_install(
-        "numpy==1.26.4",
-        "Pillow==12.3.0",
-        "huggingface-hub==0.34.4",
-        "einops==0.8.1",
-        "safetensors==0.6.2",
-        "opencv-python-headless==4.11.0.86",
-        "tqdm==4.67.1",
-        "scipy==1.16.1",
-        "trimesh==4.8.1",
-        "matplotlib==3.8.4",
-        "onnxruntime==1.22.1",
-        "requests==2.33.0",
-        "viser==0.2.23",
     )
     .add_local_dir("lingbot_map", remote_path="/opt/lingbot-map/lingbot_map", copy=True)
     .add_local_file("demo.py", remote_path="/opt/lingbot-map/demo.py", copy=True)
@@ -200,7 +193,6 @@ def reconstruct(
             mode="streaming",
             model_path=str(checkpoint),
             model_sha256=MODEL_SHA256,
-            allow_unverified_checkpoint=False,
         )
         started = time.monotonic()
         images, _, _ = demo.load_images(
@@ -233,6 +225,7 @@ def reconstruct(
             mask_sky=mask_sky,
             target_dir=str(output_folder),
             skyseg_model_path=str(skyseg),
+            skyseg_sha256=SKYSEG_SHA256,
             sky_mask_dir=str(temporary_path / "sky-masks"),
         )
         local_output = output_folder / "scene.glb"

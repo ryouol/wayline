@@ -5,9 +5,10 @@ application, its browser client, the research-engine boundary, dependency locks,
 and adjacent model-loading utilities. This is an application-code review, not a
 penetration test or infrastructure attestation.
 
-No known Critical or High application-code finding remains open in the
-synthetic demo path. The conditional research runner and two edge controls below
-remain explicit launch gates.
+No known Critical, High, or Medium repository-controlled finding remains open
+in the synthetic demo path after the final remediation pass. The conditional
+research runner, horizontal infrastructure migration, and edge/browser/legal
+controls below remain explicit external launch gates.
 
 ## SEC-001 — Production metadata and Host exposure
 
@@ -52,13 +53,14 @@ remain explicit launch gates.
 - Rule ID: `FASTAPI-SUPPLY-001` and unsafe-deserialization review control
 - Severity: Medium
 - Status: Remediated
-- Location: `lingbot_map/checkpoints.py`, `verify_checkpoint`, lines 33–50;
-  `demo.py`, `demo_render/demo.py`, `benchmark/viewer.py`, and NPZ loaders;
-  `lingbot_map/vis/sky_segmentation.py`, lines 434–440
+- Location: `lingbot_map/checkpoints.py`; `demo.py`; `demo_render/demo.py`;
+  `benchmark/methods/lingbot_map.py`; `lingbot_map/aggregator/base.py`
 - Evidence: PyTorch loads use `weights_only=True`; NumPy loads use
   `allow_pickle=False`; checkpoints and optional sky weights require exact
-  digests, bounded regular files, safe permissions, and non-symlink paths;
-  legacy automatic moving-revision sky-model acquisition fails closed.
+  digests, bounded regular files, group/world-write rejection, descriptor-bound
+  hashing, and private content-addressed copies. Every direct PyTorch or ONNX
+  model load consumes only a copied verified path; moving-revision acquisition
+  fails closed, and generated sky-mask caches are bound to the model digest.
 - Impact: a malicious pickle-capable checkpoint/NPZ or silently changed remote
   model could execute code or alter research output.
 - Fix: implemented. The guarded downloader pins revision, size, and SHA-256.
@@ -88,15 +90,17 @@ remain explicit launch gates.
 - False positive notes: mark complete only with deployed proxy configuration and
   an oversized/chunked integration test.
 
-## SEC-005 — Distributed throttling and proxy trust
+## SEC-005 — Distributed edge/login throttling and proxy trust
 
 - Rule ID: `FASTAPI-PROXY-001`, `FASTAPI-LIMITS-001`
 - Severity: Medium
 - Status: Open before public or multi-instance deployment
 - Location: `lingbot_map/workspace/app.py`, `LoginLimiter`, lines 202–218;
   `docs/deployment.md`, lines 24–26 and 49–54
-- Evidence: login throttling is intentionally process-local. Proxy header trust
-  and distributed request/token/tenant limits are deployment responsibilities.
+- Evidence: upload, job, and share creation use durable transactional per-tenant
+  rate buckets in SQLite. Login throttling remains intentionally process-local;
+  proxy header trust and distributed IP/byte/concurrency limits are deployment
+  responsibilities.
 - Impact: multiple replicas reset the local counter, and incorrectly trusted
   forwarded headers can undermine IP-based throttles or audit trails.
 - Fix: enforce distributed limits at the edge and restrict forwarded headers to
@@ -127,7 +131,7 @@ remain explicit launch gates.
 - False positive notes: an external worker implementation may provide the
   sandbox; the local command adapter alone does not.
 
-## SEC-007 — Cancellation could lose to late worker completion
+## SEC-007 — Late/stale workers could mutate or clean a newer attempt
 
 - Rule ID: application business-logic and durable-state race review
 - Severity: High
@@ -135,16 +139,15 @@ remain explicit launch gates.
 - Location: `lingbot_map/workspace/database.py`, `Database.finish_job` and
   `Database.fail_job`; `lingbot_map/workspace/service.py`,
   `WorkspaceService._process_job`
-- Evidence: result settlement now reads `cancellation_requested` and performs
-  the `ready` or `cancelled` transition in the same SQLite transaction. A
-  committed cancellation releases the reservation and causes the service to
-  delete both database artifact rows and stored objects. Failure settlement also
-  gives a committed cancellation precedence over a provider error.
-- Impact: before the fix, cancellation could commit while a worker was storing
-  output and the subsequent completion transaction could still mark the job
-  ready, exposing an artifact the user had cancelled.
-- Fix: implemented with regression tests for cancellation immediately before
-  completion and cancellation immediately before worker failure.
+- Evidence: claims set a cryptographic attempt token and worker ID. Progress,
+  artifact creation, completion, and failure require both; recovery selects
+  only expired leases and clears ownership. Artifact keys and cleanup are
+  attempt-scoped. Cancellation still wins atomically over completion/failure.
+- Impact: without fences an old worker could publish after recovery or delete a
+  newer worker's valid artifact, producing a ready job with missing bytes.
+- Fix: implemented with regression tests for live-lease non-recovery, stale
+  mutation rejection, current-attempt survival, cancellation races, and
+  cooperative shutdown/requeue.
 - Mitigation: the production Postgres repository must preserve this atomic
   ordering and include the same race tests; provider cancellation remains an
   efficiency control, not the source of truth for state.
@@ -195,14 +198,64 @@ remain explicit launch gates.
 - False positive notes: the single-instance local demo starts without a worker
   by design, so its in-process test client checks storage and schema only.
 
+## SEC-010 — Database-first deletion could orphan customer bytes
+
+- Severity: Medium
+- Status: Remediated
+- Location: deletion-outbox methods in `database.py`; delete/reconcile/drain
+  methods in `service.py`
+- Evidence: logical revocation, object-key capture, and row deletion commit with
+  a durable outbox entry. Physical deletion retries with bounded exponential
+  backoff; pending bytes remain charged. Startup reconciliation queues unknown
+  objects and fails readiness on missing active objects. Durable, expiring
+  provisional claims protect in-flight uploads/artifact writes from concurrent
+  orphan reconciliation, and partial attempt artifacts are not published until
+  the fenced ready transition commits.
+- Impact: an object-store outage during deletion previously removed the only
+  database pointer and left untracked customer bytes indefinitely.
+
+## SEC-011 — Unbounded tenant storage and record growth
+
+- Severity: High
+- Status: Remediated
+- Location: `config.py` and transactional create methods in `database.py`
+- Evidence: byte, asset, unattached-upload, job, artifact, active-share, and
+  compute limits are checked inside `BEGIN IMMEDIATE` transactions. Durable
+  upload/job/share rates, terminal/unattached retention, cursor pagination, and
+  bounded bulk deletion have regression coverage.
+- Impact: zero-unit samples and retained uploads/artifacts could previously grow
+  storage and SQLite without bound.
+
+## SEC-012 — Cross-account browser state and GPU resource retention
+
+- Severity: Medium
+- Status: Remediated; external browser/accessibility matrix still required
+- Location: `static/app.js` and `static/viewer.js`
+- Evidence: logout, `401`, and principal change increment a session epoch,
+  abort every in-flight request, clear tenant/job/share DOM state, and destroy
+  fetches, event listeners, observers, WebGL buffers/program/shaders/context.
+  A one-way marker on every authenticated response detects cookie/account
+  changes made by another tab before the response is rendered.
+- Impact: delayed responses or retained WebGL buffers could expose a previous
+  tenant's metadata/scene after an account change on the same browser.
+
+## SEC-013 — Capability share tokens in access logs
+
+- Severity: Medium
+- Status: Repository control remediated; edge verification remains a gate
+- Location: CLI `uvicorn.run` in `app.py`; deployment runbook
+- Evidence: built-in Uvicorn access logging is disabled and regression-tested.
+  The runbook requires path redaction/disablement at CDN, proxy, WAF, APM, and
+  trace layers.
+- Impact: bearer share URLs copied into logs grant artifact read/download until
+  expiry or revocation.
+
 ## Browser review result
 
 The supported workspace frontend uses `textContent`, explicit DOM construction,
 same-origin fetches, HttpOnly session cookies, CSRF headers, no browser storage,
 no third-party scripts, and no eval/HTML insertion sinks. CSP includes Trusted
-Types enforcement. The offline benchmark report retains audited escaped HTML
-templates; generated artifact URLs now pass a same-origin/protocol gate. The
-in-app browser verified token sign-in, job creation/review, WebGL loading,
-keyboard viewer controls, share creation, the unauthenticated share view, and no
-browser errors at 1280 x 720. Mobile-viewport, screen-reader, contrast, and
-cross-browser coverage remains an owner gate.
+Types enforcement. A prior baseline in-app-browser pass verified the desktop
+workflow at 1280 x 720. The final session-abort/WebGL-destruction changes have
+static regression tests; mobile viewport, screen reader, contrast,
+account-switch, and cross-browser execution remain explicit external gates.

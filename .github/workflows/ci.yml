@@ -29,11 +29,18 @@ jobs:
           cache: pip
           cache-dependency-path: requirements/dev.lock
 
+      - name: Set up locked dependency tooling
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.8"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
       - name: Install locked dependencies
         run: |
-          python -m pip install --upgrade pip setuptools==83.0.0 wheel==0.46.3
-          python -m pip install -r requirements/dev.lock
-          python -m pip install --no-deps -e .
+          uv lock --check
+          python -m pip install --require-hashes -r requirements/dev.lock
+          python -m pip install --no-deps --no-build-isolation -e .
 
       - name: Test
         run: python -m pytest
@@ -51,7 +58,7 @@ jobs:
           node --check lingbot_map/workspace/static/viewer.js
           node --check lingbot_map/workspace/static/share.js
           bash -n download_weights.sh
-          python -m pip wheel --no-deps . --wheel-dir dist
+          python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
           python - <<'PY'
           import pathlib, zipfile
           wheel = next(pathlib.Path("dist").glob("*.whl"))

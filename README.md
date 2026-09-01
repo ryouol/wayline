@@ -34,9 +34,15 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
 - High-entropy bearer-token login exchanged for an HTTP-only, SameSite session
   and rotating CSRF token.
 - Tenant checks on every asset, job, artifact, download, and share operation.
-- SQLite state with WAL mode, explicit job transitions, worker leases, one
-  retry after restart, terminal recovery failure, and partial-artifact cleanup.
-- Atomic filesystem object storage behind a small `ObjectStore` protocol.
+- SQLite state with WAL mode, explicit job transitions, expiring worker leases,
+  per-attempt/worker fencing, bounded retries, and attempt-scoped cleanup.
+- Transactional per-tenant limits for stored bytes, assets, unattached uploads,
+  jobs, artifacts, active shares, and compute reservations; durable upload/job/
+  share rate buckets and configurable retention.
+- Atomic filesystem object storage behind an injectable `ObjectStore` protocol,
+  with provisional in-flight claims, startup orphan/missing-object
+  reconciliation, and a durable deletion outbox that retries failed physical
+  deletes. Attempt artifacts remain private until the job is ready.
 - Streamed uploads with byte limits, container signatures, media-type checks,
   decode probing, duration/frame/dimension limits, and opaque storage keys.
 - Deletion of unsubmitted uploads, including browser cleanup when job submission
@@ -53,6 +59,10 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
   controls; no remote fonts, analytics, or third-party runtime scripts.
 - Expiring, hashed share tokens and tenant-scoped deletion of source uploads,
   artifacts, and related shares.
+- Cursor-paginated job/asset/share inventories, bounded bulk deletion, and
+  route-scoped request-hash idempotency for costly and mutation endpoints.
+- Session-epoch browser isolation: logout, `401`, and account changes abort
+  in-flight requests, clear tenant state, and destroy WebGL resources.
 
 ## Architecture
 
@@ -104,9 +114,23 @@ Important environment variables:
 | `LINGBOT_MAX_VIDEO_SECONDS` | Decoded duration limit | 300 seconds |
 | `LINGBOT_MAX_VIDEO_FRAMES` | Source frame limit | 9,000 |
 | `LINGBOT_MAX_VIDEO_DIMENSION` | Largest width/height | 4,096 px |
-| `LINGBOT_TENANT_QUOTA_UNITS` | Operational capacity ceiling | 10,000 |
+| `LINGBOT_TENANT_QUOTA_UNITS` | Operational compute-capacity ceiling | 10,000 |
+| `LINGBOT_TENANT_STORAGE_BYTES` | Assets + artifacts + pending-delete bytes | 5 GiB |
+| `LINGBOT_TENANT_MAX_ASSETS` | Retained upload records | 100 |
+| `LINGBOT_TENANT_MAX_UNATTACHED_ASSETS` | Uploads not attached to a job | 10 |
+| `LINGBOT_TENANT_MAX_JOBS` | Retained job records | 500 |
+| `LINGBOT_TENANT_MAX_ARTIFACTS` | Retained artifact records | 1,500 |
+| `LINGBOT_TENANT_MAX_SHARES` | Active expiring shares | 250 |
+| `LINGBOT_UPLOAD_RATE_PER_MINUTE` | Durable per-tenant upload starts | 10 |
+| `LINGBOT_JOB_RATE_PER_MINUTE` | Durable per-tenant job submissions | 30 |
+| `LINGBOT_SHARE_RATE_PER_MINUTE` | Durable per-tenant share creation | 30 |
+| `LINGBOT_TERMINAL_JOB_RETENTION_SECONDS` | Terminal job retention | 30 days |
+| `LINGBOT_UNATTACHED_ASSET_RETENTION_SECONDS` | Unattached upload retention | 24 hours |
+| `LINGBOT_IDEMPOTENCY_TTL_SECONDS` | Completed request replay window | 24 hours |
 | `LINGBOT_JOB_TIMEOUT_SECONDS` | Worker/lease timeout | 3,600 seconds |
 | `LINGBOT_MAX_JOB_ATTEMPTS` | Recovery attempts | 2 |
+| `LINGBOT_SHUTDOWN_TIMEOUT_SECONDS` | Cooperative worker shutdown wait | 30 seconds |
+| `LINGBOT_READINESS_PROBE_TTL_SECONDS` | Successful dependency-probe cache | 2 seconds |
 
 ## Research-only LingBot adapter
 
@@ -124,7 +148,8 @@ The command is split without a shell. It receives these environment variables:
 
 - `LINGBOT_JOB_MANIFEST`: private per-job JSON input and rights record
 - `LINGBOT_OUTPUT_DIR`: private per-job output directory
-- `LINGBOT_CHECKPOINT_PATH`: already verified regular checkpoint file
+- `LINGBOT_CHECKPOINT_PATH`: private content-addressed copy of the exact
+  verified checkpoint (never the mutable operator path)
 - `LINGBOT_SKYSEG_PATH`: present only when sky masking was requested and its
   separate digest gate passed
 
@@ -147,7 +172,9 @@ uploads this checkout rather than cloning a moving branch, uses pinned packages
 and model revision, validates archives, isolates every job, and writes artifact
 keys to a Volume instead of returning large GLB bytes over RPC. It is a reference
 runner, not an enabled hosted product path; no paid GPU run is required for the
-workspace demo.
+workspace demo. Its non-CUDA Python runtime is installed from the hash-locked
+`requirements/modal.lock`; CUDA PyTorch remains separately version- and index-
+pinned because those platform wheels are outside the PyPI lock.
 
 ## Direct model research
 
@@ -160,14 +187,16 @@ Install the CUDA runtime separately and exactly as required by your host:
 LINGBOT_RESEARCH_ACK='I understand LingBot is research-only' ./download_weights.sh
 .venv/bin/python demo.py \
   --model_path ./lingbot-map.pt \
+  --model_sha256 "$(cut -d' ' -f1 lingbot-map.pt.sha256)" \
   --image_folder /path/to/owned-or-licensed-images \
   --use_sdpa
 ```
 
 The downloader pins a model-repository revision, checks exact sizes and hashes,
-and writes the sidecar digest required by `demo.py`. PyTorch loads with
-`weights_only=True`. `--allow_unverified_checkpoint` exists only as a clearly
-named research escape hatch and does not relax restricted deserialization.
+and writes the sidecar digest required by every direct loader. Every PyTorch and
+ONNX model loader copies the exact digest into a private content-addressed file
+before use; PyTorch also loads with `weights_only=True`. Sky-mask caches are
+bound to that model digest, and there is no unverified escape hatch.
 
 No throughput, scale, accuracy, or state-of-the-art claim is made by this fork;
 none is covered by a reproducible CI artifact on the supported runtime.
@@ -175,8 +204,8 @@ none is covered by a reproducible CI artifact on the supported runtime.
 ## Verify
 
 ```bash
-.venv/bin/pip install -r requirements/dev.lock
-.venv/bin/pip install --no-deps -e .
+.venv/bin/pip install --require-hashes -r requirements/dev.lock
+.venv/bin/pip install --no-deps --no-build-isolation -e .
 .venv/bin/pytest
 .venv/bin/ruff check .
 .venv/bin/mypy lingbot_map/workspace lingbot_map/checkpoints.py
@@ -185,11 +214,14 @@ node --check lingbot_map/workspace/static/viewer.js
 ```
 
 CI also builds the wheel and verifies that the packaged static UI is present.
+`uv.lock` is the cross-platform resolution source, CI pins `uv==0.12.8`, and
+the exported workspace/dev/Modal requirement locks require artifact hashes.
 The automated suite covers authentication, CSRF, host/body gates, tenant
-isolation, upload rejection and orphan cleanup, job reservations/refunds,
-atomic cancellation/completion races, recovery, sample artifact generation,
-viewing bytes, sharing, expiry, deletion, path traversal, sanitized runner
-provenance, and checkpoint integrity.
+isolation, upload rejection, quota/rate bounds, request idempotency, fenced
+worker recovery/shutdown, durable deletion/reconciliation, paginated
+inventories, sample artifact generation, viewing bytes, sharing, expiry, path
+traversal, browser teardown, sanitized runner provenance, object-store contract
+injection, and checkpoint immutability.
 
 ## Product and launch documents
 

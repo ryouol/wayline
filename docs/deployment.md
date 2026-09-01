@@ -14,6 +14,11 @@ public base URL, data directory, and explicit upload/job limits. Run as a
 dedicated unprivileged user with a read-only application filesystem and writable
 data mount only.
 
+Set the tenant byte/count limits, retention periods, durable upload/job/share
+rates, job timeout, and shutdown deadline from the environment rather than
+accepting defaults blindly. The local SQLite limits are safe for one instance;
+the Postgres migration must preserve their transaction boundaries.
+
 Set `LINGBOT_ALLOWED_HOSTS` to exact public DNS names. If omitted,
 `LINGBOT_PUBLIC_BASE_URL` supplies its hostname; production refuses to start if
 neither produces an allowlist. The app disables docs/OpenAPI in production and
@@ -30,27 +35,47 @@ known proxy IPs; never trust forwarded headers from the public network.
 `GET /healthz` exposes only `{"status":"ok"}` after the schema is current, the
 object store passes an atomic write/delete probe, and the required worker thread
 is alive; otherwise it returns `503` without revealing internal paths. The
-process stops accepting work through the reverse proxy first, then joins its
-worker for up to five seconds. On the next boot, durable running jobs are
-requeued once or failed/refunded after their final attempt.
+successful dependency probe is cached briefly (two seconds by default) to avoid
+turning health traffic into unbounded disk writes. The process stops accepting
+work through the reverse proxy first, signals the active attempt through its
+cancellation callback, terminates/waits for a research child process, and joins
+its worker for up to `LINGBOT_SHUTDOWN_TIMEOUT_SECONDS`. Only expired leases are
+recovered on boot or maintenance; stale workers are fenced by attempt/worker
+identity.
+
+Uploads and artifact writes create bounded provisional object claims before
+touching storage. Startup recovers every leftover claim from a stopped process;
+periodic maintenance recovers expired claims. Alert on claim recovery because
+it indicates an interrupted write or database/storage availability gap.
+
+The built-in CLI disables Uvicorn access logs because public share capability
+tokens appear in URL paths. Configure every reverse proxy, CDN, APM agent, WAF,
+and trace collector to disable or redact `/s/{token}` and
+`/api/public/shares/{token}[/content]` paths before public traffic. Do not rely
+on the application setting to sanitize upstream logs.
 
 ## Backups
 
 Back up `workspace.sqlite3` through SQLite's online backup mechanism or a stopped
-process, plus the entire `objects/` prefix and `runtime-manifest.json`. Test a
-restore into an isolated data directory. Database rows and object bytes must be
-restored to the same point in time.
+process, plus the entire `objects/` prefix, `runtime-manifest.json`, and the
+private `share-token.secret`. The secret is required to replay an idempotent
+share response; losing it does not reveal existing shares but makes such replay
+unavailable. Test a restore into an isolated data directory. Database rows,
+object bytes, and the secret must be restored to the same point in time.
 
 ## Observability required before public launch
 
 Send structured logs to a restricted sink and alert on authentication failures,
-upload rejections, job failure rate, stuck leases, queue age, storage errors,
-quota exhaustion, and delete failures. Never log tokens, cookies, source paths,
-signed URLs, video bytes, or raw customer filenames.
+upload rejections, rate-limit hits, job failure rate, expired/stuck leases,
+queue age, storage reconciliation mismatches, deletion-outbox age/retries,
+provisional-claim recovery, quota exhaustion, and retention throughput. Never
+log tokens, cookies, source paths, signed URLs, video bytes, or raw customer
+filenames.
 
 ## Scale migration
 
 The local architecture is intentionally explicit about its Postgres and
-S3-compatible boundaries. Complete that migration, add distributed request
-limits, use direct signed uploads, and run engine workers outside the web process
-before adding a second application replica.
+S3-compatible boundaries. Complete that migration, preserve transactional
+quotas/idempotency/attempt fences/deletion outbox semantics, add distributed
+login and edge byte/concurrency limits, use direct signed uploads, and run
+engine workers outside the web process before adding a second replica.

@@ -6,18 +6,26 @@
 headers, exact Host validation, declared-body prechecks, input/output models, and
 sanitized API responses. It never exposes a filesystem path or object key.
 
-`Database` owns tenant scoping, job transitions, leases, quota reservations,
-usage ledger entries, share hashes, and recovery. Every customer-owned lookup
-includes `tenant_id`.
+`Database` owns tenant scoping, job transitions, expiring leases, attempt/worker
+fences, transactional compute and storage/count quotas, durable rate buckets,
+request idempotency, deletion outbox entries, usage ledger entries, share
+hashes, provisional object claims, retention, cursor pagination, and recovery.
+Every customer-owned lookup includes `tenant_id`.
 
-`ObjectStore` owns opaque byte storage. `LocalObjectStore` uses normalized POSIX
-keys, root confinement, atomic replacement, byte limits, hashes, and restrictive
-permissions.
+`ObjectStore` owns opaque byte storage and is injected into the service.
+`LocalObjectStore` uses normalized POSIX keys, root confinement, atomic
+replacement, byte limits, hashes, restrictive permissions, and stable listing
+for reconciliation. Contract tests exercise a non-default adapter wrapper.
 
 `WorkspaceService` owns upload inspection and the worker. The worker claims one
 durable job, renews its lease on stage changes, calls an engine, stores artifacts,
-and settles or releases reservations. Startup recovery discards artifacts left
-before a durable `ready` transition.
+and settles or releases reservations. Every progress, artifact, failure, and
+completion mutation must match both the claim's worker ID and cryptographic
+attempt token. Startup and periodic maintenance recover only expired leases,
+queue only the expired attempt's artifacts for deletion, enforce retention,
+reconcile storage, and retry the deletion outbox. Provisional durable claims
+keep uploads and artifact writes out of orphan reconciliation until their
+database records commit or their bounded claim expires.
 
 `ReconstructionEngine` owns only estimate, provenance, and execution. The
 synthetic engine is enabled. The LingBot command engine is research-only and
@@ -34,13 +42,23 @@ queued → running(validating → generating/reconstructing → exporting → st
        → cancelled
 ```
 
-Only queued jobs are claimed. A startup moves an interrupted running job back to
-queued once; the next interruption fails it and releases its reservation. A
-running cancellation sets a durable flag that the engine observes. Final result
-settlement rechecks that flag in the same transaction as the `ready` transition;
-if cancellation already committed, it releases the reservation, records
-`cancelled`, and the service discards every stored artifact. Terminal jobs are
+Only queued jobs are claimed. A non-expired running lease is never recovered.
+After expiry, the attempt token is fenced and the job is requeued until the
+configured final attempt, when it fails and releases its reservation. A stale
+worker cannot renew progress, publish an artifact, finish, fail, or clean a
+newer attempt. A running cancellation sets a durable flag that the engine
+observes. Final settlement rechecks the flag and attempt fence in the same
+transaction as the `ready` transition. Cooperative process shutdown enters the
+same cancellation callback, terminates and waits for a research child process,
+cleans the attempt, and requeues without charging a retry. Terminal jobs are
 immutable except deletion.
+
+Logical deletion revokes access and enqueues every object key in one SQLite
+transaction. The API returns `202` with `state: deleting`; physical deletion is
+idempotent and retried with bounded exponential backoff. Pending-delete bytes
+continue to count against tenant storage until object deletion succeeds.
+Attempt artifacts are not returned, downloaded, or shareable until their job's
+fenced `ready` settlement commits.
 
 ## Production migration boundary
 
@@ -50,8 +68,8 @@ replacing:
 
 | Current | Production | Required behavior |
 |---|---|---|
-| SQLite repository | Postgres | transactional reservation; RLS/tenant tests; `FOR UPDATE SKIP LOCKED`; migrations |
-| Local object store | S3/R2/GCS | direct signed multipart upload; checksums; scoped IAM; lifecycle/delete policy |
+| SQLite repository | Postgres | preserve attempt fences, quota/idempotency/outbox transactions; RLS/tenant tests; `FOR UPDATE SKIP LOCKED`; migrations |
+| Local object store | S3/R2/GCS | implement the full injected protocol; direct signed multipart upload; checksums; scoped IAM; lifecycle/delete reconciliation |
 | Worker thread | Dedicated worker pool | leases/heartbeats; bounded tenant concurrency; timeout; cancellation; retry class |
 | Local artifact response | Signed object response | short expiry; content disposition; audit log |
 | Process login limiter | Edge limiter | distributed limits by IP, token, tenant, bytes, and job rate |
@@ -66,9 +84,15 @@ does.
 - Browser input is untrusted: content type, extension, magic bytes, decoded
   metadata, byte count, frame count, dimensions, and duration are bounded.
 - API identifiers are opaque database IDs and always paired with tenant ID.
-- Public shares store only token hashes, expire, and cascade-delete with artifacts.
-- Checkpoints are regular non-symlink files, not world-writable, bounded, and
-  SHA-256 verified before restricted deserialization.
+- Authenticated responses carry a one-way principal marker. A browser that sees
+  the marker change aborts its epoch, destroys the viewer, and reloads before
+  rendering data from the replacement account.
+- Public shares store only token hashes, expire, and cascade-delete with
+  artifacts. Idempotent share responses derive the capability from a private
+  installation secret; raw tokens are not stored in idempotency records.
+- Checkpoints are regular non-symlink files, not group/world-writable, bounded,
+  descriptor-hashed, copied into a private content-addressed path, and verified
+  again before restricted deserialization.
 - External runners use argument arrays, private per-job directories, capped
   output/logs, process-group termination, and no shell evaluation. Their GLB
   header is validated, report output is allowlisted, and stored provenance omits

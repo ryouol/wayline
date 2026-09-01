@@ -4,6 +4,7 @@ import ast
 import hashlib
 import io
 import json
+import stat
 import struct
 from pathlib import Path
 
@@ -40,6 +41,26 @@ def test_object_store_rejects_traversal_and_enforces_limit(tmp_path):
     with pytest.raises(ObjectTooLarge):
         store.put_stream("tenant/large.bin", io.BytesIO(b"12345"), max_bytes=4)
     assert not (tmp_path / "objects" / "tenant" / "large.bin").exists()
+
+
+def test_workspace_runtime_files_are_private(settings):
+    from lingbot_map.workspace.service import WorkspaceService
+
+    settings.data_dir.mkdir(parents=True, mode=0o755)
+    settings.data_dir.chmod(0o755)
+    service = WorkspaceService(settings)
+    service.initialize()
+    service.write_runtime_manifest()
+
+    assert stat.S_IMODE(settings.data_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(service.store.root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(service.work_root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(service.database.path.stat().st_mode) == 0o600
+    assert stat.S_IMODE((settings.data_dir / "runtime-manifest.json").stat().st_mode) == 0o600
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{service.database.path}{suffix}")
+        if sidecar.exists():
+            assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 def test_checkpoint_requires_exact_digest_and_safe_file(tmp_path):

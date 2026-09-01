@@ -151,6 +151,30 @@ remain explicit launch gates.
 - False positive notes: if completion commits first, the terminal ready state
   correctly wins and a later cancellation request is rejected.
 
+## SEC-008 — Pre-existing runtime directories could retain permissive modes
+
+- Rule ID: `FASTAPI-FILES-001` plus least-privilege storage review
+- Severity: Medium
+- Status: Remediated
+- Location: `lingbot_map/workspace/database.py`, `Database.__init__` and
+  `Database.connect`; `lingbot_map/workspace/storage.py`, `LocalObjectStore`;
+  `lingbot_map/workspace/service.py`, initialization and runtime-manifest write
+- Evidence: every startup corrects data/object/work directories to `0700`,
+  SQLite plus existing WAL/SHM sidecars to `0600`, and the runtime manifest to
+  `0600`; stored objects and research-runner manifests already use `0600`.
+  A regression test starts from a deliberately permissive data directory and
+  checks each resulting mode.
+- Impact: `mkdir(mode=...)` does not tighten an existing directory. A
+  misprovisioned volume could therefore have made hashed credentials, source
+  names, job metadata, or artifact bytes visible to another local account.
+- Fix: explicitly apply private modes rather than relying on the process umask
+  or first-creation behavior.
+- Mitigation: retain a dedicated unprivileged service identity and restrictive
+  parent volume/IAM controls; POSIX mode bits are not a substitute for an
+  encrypted volume.
+- False positive notes: a newly created `0700` directory already prevented
+  traversal, but the fix closes the pre-existing-volume case too.
+
 ## Browser review result
 
 The supported workspace frontend uses `textContent`, explicit DOM construction,

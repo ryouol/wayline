@@ -97,12 +97,14 @@ class WorkspaceService:
     ):
         self.settings = settings
         settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settings.data_dir.chmod(0o700)
         self.database = Database(settings.data_dir / "workspace.sqlite3")
         self.store = LocalObjectStore(settings.data_dir / "objects")
         self.inspector = inspector or VideoInspector()
         self.engines = engines or engine_registry(settings)
         self.work_root = settings.data_dir / "work"
         self.work_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.work_root.chmod(0o700)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
@@ -410,4 +412,5 @@ class WorkspaceService:
         temporary.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        temporary.chmod(0o600)
         temporary.replace(target)

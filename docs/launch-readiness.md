@@ -12,6 +12,8 @@
   cancellation/completion ordering, partial-artifact discard, and restart
   recovery
 - Atomic local object writes and path traversal rejection
+- Runtime data/object/work directories are forced to `0700`; SQLite, WAL/SHM,
+  stored objects, runner manifests, and the runtime manifest are forced to `0600`
 - Exact checkpoint digest verification and restricted PyTorch loading
 - Separate auxiliary-model digest gate and no automatic moving-weight downloads
 - Synthetic GLB provenance and CC0 license
@@ -20,7 +22,7 @@
 - In-app browser pass of token sign-in, synthetic job creation, completed-scene
   review, WebGL load, viewer keyboard controls, expiring-share creation, and the
   unauthenticated share view at a 1280 x 720 viewport; no browser errors observed
-- 27 passing unit/integration tests, lint, type check, JavaScript syntax check,
+- 28 passing unit/integration tests, lint, type check, JavaScript syntax check,
   wheel build, and CI definition
 
 ## Owner gates before a public production launch

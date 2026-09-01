@@ -56,6 +56,7 @@ class LocalObjectStore:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
 
     def _path(self, key: str) -> Path:
         safe = validate_object_key(key)

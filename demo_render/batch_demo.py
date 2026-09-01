@@ -644,11 +644,11 @@ def load_predictions_from_npz(input_path, num_workers=None):
             # Load metadata if present
             meta_path = os.path.join(input_path, 'meta.npz')
             if os.path.exists(meta_path):
-                meta = np.load(meta_path, allow_pickle=True)
+                meta = np.load(meta_path, allow_pickle=False)
                 for key in meta.files:
                     predictions[key] = meta[key]
     else:
-        data = np.load(input_path, allow_pickle=True)
+        data = np.load(input_path, allow_pickle=False)
         predictions = {key: data[key] for key in data.files}
     print(f"Loaded predictions from {input_path}")
     print(f"  Keys: {list(predictions.keys())}")

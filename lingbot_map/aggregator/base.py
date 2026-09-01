@@ -218,7 +218,7 @@ class AggregatorBase(nn.Module, ABC):
 
             # Load pretrained weights
             try:
-                ckpt = torch.load(pretrained_path)
+                ckpt = torch.load(pretrained_path, weights_only=True)
                 del ckpt['pos_embed']
                 logger.info("Loading pretrained weights for DINOv2")
                 missing, unexpected = self.patch_embed.load_state_dict(ckpt, strict=False)

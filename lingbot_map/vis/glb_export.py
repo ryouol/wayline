@@ -499,28 +499,3 @@ def run_skyseg(
     onnx_result = (onnx_result - min_value) / (max_value - min_value)
     onnx_result *= 255
     return onnx_result.astype("uint8")
-
-
-def download_file_from_url(url: str, filename: str):
-    """Downloads a file from a URL, handling redirects."""
-    import requests
-
-    try:
-        response = requests.get(url, allow_redirects=False)
-        response.raise_for_status()
-
-        if response.status_code == 302:
-            redirect_url = response.headers["Location"]
-            response = requests.get(redirect_url, stream=True)
-            response.raise_for_status()
-        else:
-            print(f"Unexpected status code: {response.status_code}")
-            return
-
-        with open(filename, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"Downloaded {filename} successfully.")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading file: {e}")

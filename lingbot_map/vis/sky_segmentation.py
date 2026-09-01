@@ -26,7 +26,6 @@ except ImportError:
 _SKYSEG_INPUT_SIZE = (320, 320)
 _SKYSEG_SOFT_THRESHOLD = 0.1
 _SKYSEG_CACHE_VERSION = "imagenet_norm_softmap_inverted_v3"
-_SKYSEG_MODEL_URL = "https://huggingface.co/JianyuanWang/skyseg/resolve/main/skyseg.onnx"
 
 
 def _get_cache_version_path(sky_mask_dir: str) -> str:
@@ -45,27 +44,13 @@ def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> None:
 
 
 def _ensure_skyseg_model(skyseg_model_path: str) -> None:
-    """Download the skyseg model when the requested path is not a regular file."""
+    """Require an operator-provisioned sky model; never fetch moving weights."""
     if os.path.isfile(skyseg_model_path):
         return
-
-    print(f"Sky segmentation model not found at {skyseg_model_path}, downloading...")
-    try:
-        download_skyseg_model(skyseg_model_path)
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to download the sky segmentation model to {skyseg_model_path} "
-            f"from {_SKYSEG_MODEL_URL}: {error}. Download it manually from "
-            f"{_SKYSEG_MODEL_URL} and set skyseg_model_path to the downloaded model file."
-        ) from error
-
-    if not os.path.isfile(skyseg_model_path):
-        raise RuntimeError(
-            f"Sky segmentation model download to {skyseg_model_path} from "
-            f"{_SKYSEG_MODEL_URL} completed, but no model file was created. "
-            f"Download it manually from {_SKYSEG_MODEL_URL} and set "
-            "skyseg_model_path to the downloaded model file."
-        )
+    raise RuntimeError(
+        f"Sky segmentation model not found at {skyseg_model_path}. Automatic, moving-revision "
+        "model downloads are disabled; provision a rights-reviewed, digest-verified file."
+    )
 
 
 def run_skyseg(
@@ -447,54 +432,9 @@ def apply_sky_segmentation(
 
 
 def download_skyseg_model(output_path: str = "skyseg.onnx") -> str:
-    """
-    Download sky segmentation model from HuggingFace.
+    """Reject legacy unverified acquisition; use an operator-pinned asset instead."""
 
-    Args:
-        output_path: Path to save the model
-
-    Returns:
-        Path to the downloaded model
-    """
-    import tempfile
-
-    import requests
-
-    url = _SKYSEG_MODEL_URL
-
-    print(f"Downloading sky segmentation model from {url}...")
-    response = requests.get(url, stream=True)
-    temp_path = None
-    try:
-        response.raise_for_status()
-
-        total_size = int(response.headers.get('content-length', 0))
-        output_dir = os.path.dirname(output_path) or "."
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=output_dir,
-            prefix=f".{os.path.basename(output_path)}.",
-            suffix=".tmp",
-            delete=False,
-        ) as model_file:
-            temp_path = model_file.name
-            with tqdm(total=total_size, unit='B', unit_scale=True, desc="Downloading") as pbar:
-                for chunk in response.iter_content(chunk_size=8192):
-                    model_file.write(chunk)
-                    pbar.update(len(chunk))
-
-        os.replace(temp_path, output_path)
-        temp_path = None
-    finally:
-        if temp_path is not None:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-        try:
-            response.close()
-        except Exception:
-            pass
-
-    print(f"Model saved to {output_path}")
-    return output_path
+    raise RuntimeError(
+        f"Automatic download to {output_path} is disabled. Provision a rights-reviewed, "
+        "digest-verified sky segmentation model explicitly."
+    )

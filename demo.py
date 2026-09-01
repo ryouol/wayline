@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 # Must be set before `import torch` / any CUDA init. Reduces the reserved-vs-allocated
 # memory gap by letting the caching allocator grow segments on demand instead of
@@ -47,6 +48,7 @@ from tqdm.auto import tqdm
 from lingbot_map.utils.pose_enc import pose_encoding_to_extri_intri
 from lingbot_map.utils.geometry import closed_form_inverse_se3_general
 from lingbot_map.utils.load_fn import load_and_preprocess_images
+from lingbot_map.checkpoints import CheckpointRejected, expected_digest, verify_checkpoint
 
 
 # =============================================================================
@@ -151,7 +153,18 @@ def load_model(args, device):
 
     if args.model_path:
         print(f"Loading checkpoint: {args.model_path}")
-        ckpt = torch.load(args.model_path, map_location=device, weights_only=False)
+        checkpoint_path = Path(args.model_path)
+        digest = expected_digest(checkpoint_path, getattr(args, "model_sha256", None))
+        if not digest and not getattr(args, "allow_unverified_checkpoint", False):
+            raise CheckpointRejected(
+                "checkpoint digest missing; pass --model_sha256 or create <checkpoint>.sha256"
+            )
+        if digest:
+            verified = verify_checkpoint(checkpoint_path, digest, 6 * 1024 * 1024 * 1024)
+            print(f"  Verified SHA-256: {verified['sha256']}")
+        else:
+            print("  WARNING: checkpoint digest verification explicitly bypassed")
+        ckpt = torch.load(args.model_path, map_location=device, weights_only=True)
         state_dict = ckpt.get("model", ckpt)
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing:
@@ -354,6 +367,17 @@ def main():
 
     # Model
     parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument(
+        "--model_sha256",
+        type=str,
+        default=None,
+        help="Expected checkpoint SHA-256 (or provide <model_path>.sha256)",
+    )
+    parser.add_argument(
+        "--allow_unverified_checkpoint",
+        action="store_true",
+        help="Research-only escape hatch; weights_only deserialization remains enabled",
+    )
     parser.add_argument("--image_size", type=int, default=518)
     parser.add_argument("--patch_size", type=int, default=14)
 

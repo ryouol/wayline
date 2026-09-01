@@ -127,7 +127,7 @@ class LingbotMapMethod(BaseMethod):
 
         if self.checkpoint:
             print(f"  → Loading checkpoint: {self.checkpoint}")
-            ckpt = torch.load(self.checkpoint, map_location=self.device, weights_only=False)
+            ckpt = torch.load(self.checkpoint, map_location=self.device, weights_only=True)
             state_dict = ckpt.get("model", ckpt)
             missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
             if missing:

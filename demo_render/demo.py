@@ -114,7 +114,7 @@ def load_model(args, device):
 
     if args.model_path:
         print(f"Loading checkpoint: {args.model_path}")
-        ckpt = torch.load(args.model_path, map_location=device, weights_only=False)
+        ckpt = torch.load(args.model_path, map_location=device, weights_only=True)
         state_dict = ckpt.get("model", ckpt)
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing:
@@ -292,7 +292,7 @@ def main():
     # ── Load from saved predictions ──────────────────────────────────────────
     if args.load_predictions:
         print(f"Loading predictions from {args.load_predictions}...")
-        data = np.load(args.load_predictions, allow_pickle=True)
+        data = np.load(args.load_predictions, allow_pickle=False)
         predictions = {k: torch.from_numpy(data[k]) for k in data.files}
         print(f"  Keys: {list(predictions.keys())}")
 

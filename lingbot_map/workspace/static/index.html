@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Scene Workspace</title>
+  <meta name="description" content="A private workspace for reviewable 3D scene artifacts.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#workspaceMain">Skip to workspace</a>
+
+  <main class="login-shell" id="loginView">
+    <section class="login-panel" aria-labelledby="loginTitle">
+      <p class="product-kicker">3D Scene Workspace</p>
+      <h1 id="loginTitle">Open your private workspace</h1>
+      <p class="login-copy">Use the workspace token printed when the server starts. Production tokens must be supplied through the environment.</p>
+      <form id="loginForm">
+        <label for="token">Workspace token</label>
+        <input id="token" name="token" type="password" autocomplete="current-password" minlength="16" required>
+        <button class="primary" type="submit">Continue</button>
+      </form>
+      <p class="form-message" id="loginMessage" role="alert"></p>
+      <p class="legal-note">LingBot model inference is not commercially cleared and remains disabled unless an operator explicitly enables the research adapter.</p>
+    </section>
+  </main>
+
+  <div id="appView" hidden>
+    <header class="app-header">
+      <div>
+        <p class="product-kicker">3D Scene Workspace</p>
+        <p class="workspace-name" id="workspaceName">Workspace</p>
+      </div>
+      <div class="header-actions">
+        <span class="status-label research">LingBot research-only</span>
+        <button class="text-button" id="logoutButton" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main class="workspace" id="workspaceMain">
+      <aside class="source-column" aria-label="Create and browse jobs">
+        <section class="section-block" aria-labelledby="createTitle">
+          <p class="section-label">New scene</p>
+          <h1 id="createTitle">Start with a known-good sample</h1>
+          <p class="supporting">The synthetic studio contains no source photos or model output. Use it to verify the complete workspace before configuring compute.</p>
+          <button class="primary wide" id="sampleButton" type="button">Create synthetic scene</button>
+          <p class="inline-meta">CC0-1.0 · no GPU · no compute units consumed</p>
+        </section>
+
+        <section class="section-block" aria-labelledby="uploadTitle">
+          <div class="section-heading-row">
+            <div>
+              <p class="section-label">Research adapter</p>
+              <h2 id="uploadTitle">Use your own walkthrough</h2>
+            </div>
+            <span class="status-label" id="researchStatus">Checking</span>
+          </div>
+          <p class="supporting" id="researchReason">The adapter checks rights acknowledgement, a pinned checkpoint digest, and an isolated runner before accepting work.</p>
+          <form id="researchForm">
+            <label for="video">Video file</label>
+            <input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska" required>
+            <div class="form-row">
+              <div>
+                <label for="sampleFps">Frames per second</label>
+                <input id="sampleFps" name="sampleFps" type="number" value="3" min="1" max="15" required>
+              </div>
+              <div>
+                <label for="frameLimit">Frame limit</label>
+                <input id="frameLimit" name="frameLimit" type="number" value="120" min="30" max="9000" required>
+              </div>
+            </div>
+            <button class="secondary wide" id="researchButton" type="submit" disabled>Upload and reconstruct</button>
+          </form>
+        </section>
+
+        <section class="jobs-section" aria-labelledby="jobsTitle">
+          <div class="section-heading-row">
+            <div>
+              <p class="section-label">Workspace</p>
+              <h2 id="jobsTitle">Recent scenes</h2>
+            </div>
+            <button class="text-button" id="refreshButton" type="button">Refresh</button>
+          </div>
+          <ol class="job-list" id="jobList"></ol>
+          <p class="empty-state" id="emptyJobs">No scenes yet. Create the synthetic sample to begin.</p>
+        </section>
+      </aside>
+
+      <section class="detail-column" aria-live="polite">
+        <div class="empty-detail" id="emptyDetail">
+          <p class="section-label">Scene review</p>
+          <h2>Select a scene</h2>
+          <p>Progress, provenance, the stored 3D artifact, and sharing controls appear here.</p>
+        </div>
+
+        <div id="jobDetail" hidden>
+          <div class="detail-header">
+            <div>
+              <p class="section-label" id="detailEngine">Engine</p>
+              <h2 id="detailTitle">Scene</h2>
+              <p class="detail-meta" id="detailMeta"></p>
+            </div>
+            <div class="detail-actions">
+              <button class="text-button danger" id="cancelButton" type="button" hidden>Cancel job</button>
+              <button class="text-button danger" id="deleteButton" type="button" hidden>Delete</button>
+            </div>
+          </div>
+
+          <section class="progress-section" aria-labelledby="progressTitle">
+            <div class="progress-heading">
+              <h3 id="progressTitle">Processing</h3>
+              <span id="progressPercent">0%</span>
+            </div>
+            <progress id="progressBar" value="0" max="100">0%</progress>
+            <ol class="stage-list" id="stageList">
+              <li data-stage="queued">Queued</li>
+              <li data-stage="validating">Validated</li>
+              <li data-stage="generating">Generated</li>
+              <li data-stage="exporting">Exported</li>
+              <li data-stage="ready">Ready</li>
+            </ol>
+            <p class="form-message" id="jobMessage" role="status"></p>
+          </section>
+
+          <section class="viewer-section" id="viewerSection" hidden aria-labelledby="viewerTitle">
+            <div class="viewer-heading">
+              <div>
+                <p class="section-label">Stored artifact</p>
+                <h3 id="viewerTitle">Interactive point cloud</h3>
+              </div>
+              <p class="viewer-help">Drag to orbit · scroll to zoom · arrow keys supported</p>
+            </div>
+            <canvas id="sceneCanvas" class="scene-canvas" tabindex="0" aria-label="Interactive 3D point-cloud viewer. Use arrow keys to orbit and plus or minus to zoom."></canvas>
+            <p class="viewer-status" id="viewerStatus" role="status">Waiting for a scene.</p>
+            <div class="artifact-actions">
+              <a class="secondary" id="downloadLink" href="#">Download GLB</a>
+              <button class="secondary" id="shareButton" type="button">Create expiring share</button>
+            </div>
+            <dl class="artifact-facts" id="artifactFacts"></dl>
+          </section>
+
+          <section class="provenance-section" aria-labelledby="provenanceTitle">
+            <p class="section-label">Trust record</p>
+            <h3 id="provenanceTitle">Provenance and rights</h3>
+            <dl class="provenance-list" id="provenanceList"></dl>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="shareDialog" aria-labelledby="shareDialogTitle">
+    <form method="dialog" class="dialog-panel">
+      <p class="section-label">Permissioned link</p>
+      <h2 id="shareDialogTitle">Scene share created</h2>
+      <p>This link expires in 24 hours. Anyone with the link can view and download this artifact until then.</p>
+      <label for="shareUrl">Share URL</label>
+      <div class="copy-row">
+        <input id="shareUrl" readonly>
+        <button class="secondary" id="copyShare" type="button">Copy</button>
+      </div>
+      <button class="primary" value="close">Done</button>
+    </form>
+  </dialog>
+
+  <script src="/static/viewer.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

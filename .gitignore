@@ -15,7 +15,6 @@ skyseg.onnx
 weights/
 .DS_Store
 **/.DS_Store
-docs/
 
 
 # Model weights — multi-GB, fetched with ./download_weights.sh
@@ -32,3 +31,6 @@ webui/uploads/
 *_sky_masks/
 *.log
 screenshot.png
+
+# Durable local workspace state
+.lingbot-workspace/

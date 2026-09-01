@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+from fastapi.testclient import TestClient
+
+from lingbot_map.workspace.app import create_app
+from lingbot_map.workspace.database import token_digest
+from lingbot_map.workspace.service import WorkspaceService
+
+from .conftest import BOOTSTRAP_TOKEN
+
+
+def fake_mp4(size: int = 64) -> bytes:
+    return b"\x00\x00\x00\x18ftypisom" + b"\x00" * max(0, size - 12)
+
+
+def test_authentication_and_security_headers(client):
+    response = client.get("/api/jobs")
+    assert response.status_code == 401
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+    assert client.post("/api/session", json={"token": "wrong-token-value"}).status_code == 401
+    login = client.post("/api/session", json={"token": BOOTSTRAP_TOKEN})
+    assert login.status_code == 200
+    assert "HttpOnly" in login.headers["set-cookie"]
+    assert "SameSite=strict" in login.headers["set-cookie"]
+
+    # Cookie-authenticated writes require the separate rotating CSRF token.
+    assert client.post("/api/jobs/sample").status_code == 403
+    client.headers["X-CSRF-Token"] = login.json()["csrfToken"]
+    assert client.post("/api/jobs/sample").status_code == 202
+
+
+def test_me_rotates_csrf(authenticated_client):
+    previous = authenticated_client.headers["X-CSRF-Token"]
+    response = authenticated_client.get("/api/me")
+    assert response.status_code == 200
+    current = response.json()["csrfToken"]
+    assert current and current != previous
+    assert authenticated_client.post("/api/jobs/sample").status_code == 403
+    authenticated_client.headers["X-CSRF-Token"] = current
+    assert authenticated_client.post("/api/jobs/sample").status_code == 202
+
+
+def test_bearer_authentication_does_not_use_csrf(client):
+    response = client.post(
+        "/api/jobs/sample", headers={"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+    )
+    assert response.status_code == 202
+
+
+def test_validated_upload_and_research_gate(authenticated_client, service):
+    upload = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+    )
+    assert upload.status_code == 201
+    asset = upload.json()
+    assert asset["metadata"]["frames"] == 100
+    assert "object_key" not in asset
+
+    research = authenticated_client.post(
+        "/api/jobs/research",
+        json={"assetId": asset["id"], "maxFrames": 60, "extractFps": 3},
+    )
+    assert research.status_code == 409
+    assert research.json()["code"] == "engine_unavailable"
+    assert (
+        service.database.list_jobs(
+            service.database.authenticate_api_token(BOOTSTRAP_TOKEN)["tenant_id"]
+        )
+        == []
+    )
+
+
+def test_upload_rejects_mismatched_content_and_removes_object(authenticated_client, service):
+    response = authenticated_client.post(
+        "/api/assets", files={"file": ("not-video.mp4", b"plain text", "video/mp4")}
+    )
+    assert response.status_code == 415
+    assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
+
+
+def test_orphan_upload_can_be_deleted(authenticated_client, service):
+    upload = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+    )
+    assert upload.status_code == 201
+    response = authenticated_client.delete(f"/api/assets/{upload.json()['id']}")
+    assert response.status_code == 204
+    assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
+
+
+def test_upload_limit_returns_413(settings):
+    from .conftest import StubInspector
+
+    limited = replace(settings, max_upload_bytes=24)
+    service = WorkspaceService(limited, inspector=StubInspector())
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        login = client.post("/api/session", json={"token": BOOTSTRAP_TOKEN})
+        client.headers["X-CSRF-Token"] = login.json()["csrfToken"]
+        response = client.post(
+            "/api/assets", files={"file": ("large.mp4", fake_mp4(128), "video/mp4")}
+        )
+    assert response.status_code == 413
+
+
+def test_request_body_ceiling_rejects_before_parsing(client):
+    response = client.post(
+        "/api/session", content=b"", headers={"Content-Length": str(64 * 1024 + 1)}
+    )
+    assert response.status_code == 413
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_production_disables_schema_validates_host_and_leaves_hsts_to_edge(settings):
+    from .conftest import StubInspector
+
+    production = replace(
+        settings,
+        environment="production",
+        bootstrap_token="x" * 32,
+        cookie_secure=True,
+        public_base_url="https://scenes.example.com",
+        allowed_hosts=("scenes.example.com",),
+    )
+    service = WorkspaceService(production, inspector=StubInspector())
+    with TestClient(
+        create_app(production, service=service, start_worker=False),
+        base_url="https://scenes.example.com",
+    ) as production_client:
+        assert production_client.get("/openapi.json").status_code == 404
+        health = production_client.get("/healthz")
+        assert health.status_code == 200
+        assert "strict-transport-security" not in health.headers
+        assert (
+            production_client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
+        )
+
+
+def test_complete_sample_view_download_share_and_delete(authenticated_client, service, tenant_id):
+    submitted = authenticated_client.post("/api/jobs/sample")
+    assert submitted.status_code == 202
+    job_id = submitted.json()["id"]
+    assert service.database.quota(tenant_id)["reserved_units"] == 1
+
+    assert service.process_next_job() is True
+    result = authenticated_client.get(f"/api/jobs/{job_id}")
+    assert result.status_code == 200
+    job = result.json()
+    assert job["state"] == "ready"
+    assert job["progress"] == 1
+    assert job["usedUnits"] == 0
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+    assert service.database.quota(tenant_id)["consumed_units"] == 0
+
+    scene = next(item for item in job["artifacts"] if item["kind"] == "scene")
+    content = authenticated_client.get(scene["viewUrl"])
+    assert content.status_code == 200
+    assert content.content[:4] == b"glTF"
+    assert content.headers["content-type"].startswith("model/gltf-binary")
+
+    share = authenticated_client.post(
+        f"/api/artifacts/{scene['id']}/shares", json={"ttlSeconds": 300}
+    )
+    assert share.status_code == 201
+    share_path = share.json()["url"]
+    token = share_path.rsplit("/", 1)[-1]
+    public = authenticated_client.get(f"/api/public/shares/{token}")
+    assert public.status_code == 200
+    assert public.json()["artifact"]["licenseId"] == "CC0-1.0"
+    public_content = authenticated_client.get(f"/api/public/shares/{token}/content")
+    assert public_content.content[:4] == b"glTF"
+
+    deleted = authenticated_client.delete(f"/api/jobs/{job_id}")
+    assert deleted.status_code == 204
+    assert authenticated_client.get(scene["viewUrl"]).status_code == 404
+    assert authenticated_client.get(f"/api/public/shares/{token}").status_code == 404
+    assert list((service.settings.data_dir / "objects").rglob("*.glb")) == []
+
+
+def test_queued_cancellation_releases_reservation(authenticated_client, service, tenant_id):
+    job = authenticated_client.post("/api/jobs/sample").json()
+    assert service.database.quota(tenant_id)["reserved_units"] == 1
+    response = authenticated_client.post(f"/api/jobs/{job['id']}/cancel")
+    assert response.status_code == 202
+    assert response.json()["state"] == "cancelled"
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+    events = [(entry["event"], entry["units"]) for entry in service.database.ledger(tenant_id)]
+    assert events[-2:] == [("reserve", 1), ("cancel", -1)]
+
+
+def test_worker_recovery_requeues_once_then_fails_with_refund(service, tenant_id):
+    job = service.submit_sample(tenant_id)
+    claimed = service.database.claim_next_job(lease_seconds=1, max_attempts=2)
+    assert claimed and claimed["id"] == job["id"] and claimed["attempt"] == 1
+    partial = service.store.put_bytes(
+        f"tenants/{tenant_id}/jobs/{job['id']}/partial.glb", b"partial", max_bytes=64
+    )
+    service.database.create_artifact(
+        tenant_id=tenant_id,
+        job_id=job["id"],
+        kind="scene",
+        object_key=partial.key,
+        filename="partial.glb",
+        media_type="model/gltf-binary",
+        size_bytes=partial.size_bytes,
+        sha256=partial.sha256,
+        license_id="NOASSERTION",
+        metadata={},
+    )
+    assert service.initialize() == {"requeued": 1, "failed": 0}
+    assert service.database.list_artifacts(tenant_id, job["id"]) == []
+    assert not (service.settings.data_dir / "objects" / partial.key).exists()
+    claimed = service.database.claim_next_job(lease_seconds=1, max_attempts=2)
+    assert claimed and claimed["attempt"] == 2
+    assert service.database.recover_jobs(max_attempts=2) == {"requeued": 0, "failed": 1}
+    failed = service.database.get_job(tenant_id, job["id"])
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "worker_lost"
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+
+
+def test_tenant_scope_hides_jobs_and_artifacts(authenticated_client, service, tenant_id):
+    job_id = authenticated_client.post("/api/jobs/sample").json()["id"]
+    service.process_next_job()
+    artifact = service.database.get_job(tenant_id, job_id)["artifacts"][0]
+
+    other_token = "other-tenant-token-that-is-also-long-enough"
+    service.database.provision_tenant(token=other_token, tenant_name="Other", quota_units=10)
+    headers = {"Authorization": f"Bearer {other_token}"}
+    assert authenticated_client.get(f"/api/jobs/{job_id}", headers=headers).status_code == 404
+    assert (
+        authenticated_client.get(
+            f"/api/artifacts/{artifact['id']}/content", headers=headers
+        ).status_code
+        == 404
+    )
+
+
+def test_expired_share_is_not_resolved(service, tenant_id):
+    job = service.submit_sample(tenant_id)
+    service.process_next_job()
+    artifact = service.database.get_job(tenant_id, job["id"])["artifacts"][0]
+    _, token = service.database.create_share(tenant_id, artifact["id"], ttl_seconds=-1)
+    assert service.database.resolve_share(token) is None
+
+
+def test_token_hashes_not_plaintext(service):
+    with service.database.connect() as connection:
+        stored = connection.execute("SELECT token_hash FROM api_tokens LIMIT 1").fetchone()[0]
+    assert stored == token_digest(BOOTSTRAP_TOKEN)
+    assert BOOTSTRAP_TOKEN not in stored

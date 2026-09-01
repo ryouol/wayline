@@ -66,7 +66,7 @@ def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
     database = Database(path)
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 2
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 3
         assert connection.execute("SELECT name FROM tenants").fetchone()[0] == "Legacy"
         tenant_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(tenants)").fetchall()
@@ -87,8 +87,43 @@ def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
     assert {"storage_limit_bytes", "asset_limit", "share_limit"} <= tenant_columns
     assert {"attempt_token", "worker_id"} <= job_columns
     assert "attempt_token" in artifact_columns
-    assert "size_bytes" in claim_columns
+    assert {"size_bytes", "materialized", "purpose"} <= claim_columns
     assert {"deletion_outbox", "idempotency_keys", "rate_buckets", "object_claims"} <= tables
+
+
+def test_schema_two_invalidates_unrecoverable_sessions_and_preserves_claims(tmp_path):
+    path = tmp_path / "schema-two.sqlite3"
+    database = Database(path)
+    database.initialize()
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            DROP TABLE sessions;
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL,
+                expires_at REAL NOT NULL, created_at REAL NOT NULL
+            );
+            INSERT INTO sessions VALUES('ses_old','ten_old','usr_old','token','csrf',9999999999,1);
+            DROP TABLE object_claims;
+            CREATE TABLE object_claims (
+                object_key TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            );
+            INSERT INTO object_claims VALUES('tenants/ten_old/orphan.bin','ten_old',42,1,1);
+            UPDATE schema_meta SET version=2;
+            """
+        )
+
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 3
+        assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        claim = connection.execute(
+            "SELECT size_bytes,materialized,purpose FROM object_claims"
+        ).fetchone()
+    assert tuple(claim) == (42, 0, "legacy")
 
 
 def test_only_expired_leases_recover_and_old_attempt_cannot_mutate(service, tenant_id):
@@ -407,13 +442,41 @@ def test_cursor_inventories_and_route_scoped_idempotency(authenticated_client, s
     first_ids = {item["id"] for item in page_one["jobs"]}
     second_ids = {item["id"] for item in page_two["jobs"]}
     assert not first_ids & second_ids
-    assert authenticated_client.get("/api/assets").json() == {
-        "assets": [],
-        "nextCursor": None,
+
+    for index in range(3):
+        assert (
+            authenticated_client.post(
+                "/api/assets",
+                files={"file": (f"walkthrough-{index}.mp4", fake_mp4(), "video/mp4")},
+            ).status_code
+            == 201
+        )
+    asset_page_one = authenticated_client.get("/api/assets?limit=2").json()
+    asset_page_two = authenticated_client.get(
+        "/api/assets", params={"limit": 2, "cursor": asset_page_one["nextCursor"]}
+    ).json()
+    assert len(asset_page_one["assets"]) == 2 and asset_page_one["nextCursor"]
+    assert not {item["id"] for item in asset_page_one["assets"]} & {
+        item["id"] for item in asset_page_two["assets"]
     }
-    assert authenticated_client.get("/api/shares").json() == {
-        "shares": [],
-        "nextCursor": None,
+
+    assert service.process_next_job() is True
+    artifact = service.database.get_job(tenant_id, first.json()["id"])["artifacts"][0]
+    for seconds in (300, 600, 900):
+        assert (
+            authenticated_client.post(
+                f"/api/artifacts/{artifact['id']}/shares",
+                json={"ttlSeconds": seconds},
+            ).status_code
+            == 201
+        )
+    share_page_one = authenticated_client.get("/api/shares?limit=2").json()
+    share_page_two = authenticated_client.get(
+        "/api/shares", params={"limit": 2, "cursor": share_page_one["nextCursor"]}
+    ).json()
+    assert len(share_page_one["shares"]) == 2 and share_page_one["nextCursor"]
+    assert not {item["id"] for item in share_page_one["shares"]} & {
+        item["id"] for item in share_page_two["shares"]
     }
 
 
@@ -607,6 +670,42 @@ def test_object_store_protocol_is_injected_and_exercised(settings):
     assert len(store.iter_keys("tenants")) == 2
 
 
+def test_upload_and_artifact_claims_exist_before_object_io(service, tenant_id, monkeypatch):
+    observed: list[tuple[str, int, int]] = []
+    original_stream = service.store.put_stream
+    original_bytes = service.store.put_bytes
+
+    def assert_reserved(key):
+        with service.database.connect() as connection:
+            claim = connection.execute(
+                "SELECT purpose,size_bytes,materialized FROM object_claims WHERE object_key=?",
+                (key,),
+            ).fetchone()
+        assert claim is not None
+        observed.append((claim["purpose"], claim["size_bytes"], claim["materialized"]))
+
+    def put_stream(key, stream, *, max_bytes):
+        assert_reserved(key)
+        return original_stream(key, stream, max_bytes=max_bytes)
+
+    def put_bytes(key, payload, *, max_bytes):
+        assert_reserved(key)
+        return original_bytes(key, payload, max_bytes=max_bytes)
+
+    monkeypatch.setattr(service.store, "put_stream", put_stream)
+    monkeypatch.setattr(service.store, "put_bytes", put_bytes)
+    service.upload_video(
+        tenant_id=tenant_id,
+        filename="walkthrough.mp4",
+        media_type="video/mp4",
+        stream=io.BytesIO(fake_mp4()),
+    )
+    service.submit_sample(tenant_id)
+    assert service.process_next_job() is True
+    assert ("upload", service.settings.max_upload_bytes, 0) in observed
+    assert ("artifact", service.settings.max_artifact_bytes, 0) in observed
+
+
 def test_reconciliation_does_not_delete_an_inflight_claim(service, tenant_id):
     key = f"tenants/{tenant_id}/assets/inflight.mp4"
     service.database.claim_object(tenant_id, key, ttl_seconds=300)
@@ -637,6 +736,169 @@ def test_inflight_claim_bytes_are_reserved_transactionally(settings):
     with pytest.raises(QuotaExceeded, match="storage byte"):
         service.database.size_object_claim(tenant_id, second, 30)
     assert service.database.quota(tenant_id)["stored_bytes"] == 80
+
+
+def test_pre_io_claims_enforce_global_bytes_and_inflight_slots(settings):
+    limited = replace(
+        settings,
+        max_upload_bytes=80,
+        max_artifact_bytes=100,
+        global_storage_bytes=120,
+        storage_min_free_bytes=0,
+        global_max_inflight_objects=2,
+        tenant_max_inflight_objects=2,
+    )
+    service = WorkspaceService(limited, inspector=StubInspector())
+    service.initialize()
+    tenant_id = service.database.authenticate_api_token(BOOTSTRAP_TOKEN)["tenant_id"]
+    first = f"tenants/{tenant_id}/assets/first-reserved.mp4"
+    second = f"tenants/{tenant_id}/assets/second-reserved.mp4"
+    service._claim_object(tenant_id, first, reserve_bytes=80, purpose="upload")
+    assert service.database.quota(tenant_id)["stored_bytes"] == 80
+    with pytest.raises(QuotaExceeded, match="global storage"):
+        service._claim_object(tenant_id, second, reserve_bytes=80, purpose="upload")
+    assert not service.store.iter_keys("tenants")
+
+    slots = WorkspaceService(
+        replace(
+            limited,
+            data_dir=limited.data_dir.parent / "slot-workspace",
+            global_storage_bytes=1_000,
+            global_max_inflight_objects=2,
+            tenant_max_inflight_objects=1,
+        ),
+        inspector=StubInspector(),
+    )
+    slots.initialize()
+    slots_tenant = slots.database.authenticate_api_token(BOOTSTRAP_TOKEN)["tenant_id"]
+    first_slot = f"tenants/{slots_tenant}/assets/one.mp4"
+    slots._claim_object(slots_tenant, first_slot, reserve_bytes=80, purpose="upload")
+    with pytest.raises(QuotaExceeded, match="tenant in-flight"):
+        slots._claim_object(
+            slots_tenant,
+            f"tenants/{slots_tenant}/assets/two.mp4",
+            reserve_bytes=80,
+            purpose="upload",
+        )
+    other = slots.database.provision_tenant(
+        token="second-budget-tenant-token-long-enough",
+        tenant_name="Second budget tenant",
+        quota_units=100,
+        storage_limit_bytes=1_000,
+    )
+    second_slot = f"tenants/{other['tenant_id']}/assets/one.mp4"
+    slots._claim_object(other["tenant_id"], second_slot, reserve_bytes=80, purpose="upload")
+    with pytest.raises(QuotaExceeded, match="global in-flight"):
+        slots._claim_object(
+            other["tenant_id"],
+            f"tenants/{other['tenant_id']}/assets/two.mp4",
+            reserve_bytes=80,
+            purpose="upload",
+        )
+
+    slots.database.release_object_claim(slots_tenant, first_slot)
+    slots.database.release_object_claim(other["tenant_id"], second_slot)
+    with pytest.raises(QuotaExceeded, match="minimum-free-space"):
+        slots.database.claim_object(
+            slots_tenant,
+            f"tenants/{slots_tenant}/assets/disk-budget.mp4",
+            ttl_seconds=300,
+            reserve_bytes=80,
+            purpose="upload",
+            global_storage_bytes=1_000,
+            physical_free_bytes=100,
+            min_free_bytes=30,
+            global_inflight_limit=2,
+            tenant_inflight_limit=1,
+        )
+
+
+def test_interrupted_claim_recovery_measures_orphan_bytes(service, tenant_id):
+    key = f"tenants/{tenant_id}/assets/interrupted.mp4"
+    service._claim_object(tenant_id, key, reserve_bytes=1_024, purpose="upload")
+    stored = service.store.put_bytes(key, b"measured orphan", max_bytes=1_024)
+
+    assert service.recover_object_claims(force=True) == 1
+    with service.database.connect() as connection:
+        outbox_size = connection.execute(
+            "SELECT size_bytes FROM deletion_outbox WHERE object_key=?", (key,)
+        ).fetchone()[0]
+        claim_count = connection.execute(
+            "SELECT COUNT(*) FROM object_claims WHERE object_key=?", (key,)
+        ).fetchone()[0]
+    assert outbox_size == stored.size_bytes
+    assert claim_count == 0
+    assert service.database.quota(tenant_id)["stored_bytes"] == stored.size_bytes
+
+
+def test_idempotency_completion_failure_rolls_back_business_mutation(
+    service, tenant_id, monkeypatch
+):
+    original = service.database.complete_idempotency
+
+    def fail_completion(*_args, **_kwargs):
+        raise OSError("simulated commit boundary failure")
+
+    monkeypatch.setattr(service.database, "complete_idempotency", fail_completion)
+    with pytest.raises(OSError, match="commit boundary"):
+        service.submit_sample(tenant_id, idempotency_key="atomic-submit-key-0001")
+    assert service.database.list_jobs(tenant_id) == []
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+    with service.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0] == 0
+
+    monkeypatch.setattr(service.database, "complete_idempotency", original)
+    created = service.submit_sample(tenant_id, idempotency_key="atomic-submit-key-0001")
+    assert created["state"] == "queued"
+
+
+def test_worker_survives_iteration_failure_with_backoff(service, monkeypatch):
+    recovered = threading.Event()
+    calls = 0
+
+    def flaky_iteration():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("transient database failure")
+        recovered.set()
+        return False
+
+    monkeypatch.setattr(service, "_worker_iteration", flaky_iteration)
+    service.start_worker()
+    try:
+        assert recovered.wait(timeout=2)
+        assert service._worker and service._worker.is_alive()
+    finally:
+        service.stop_worker()
+
+
+def test_future_schema_fails_before_any_schema_mutation(tmp_path):
+    path = tmp_path / "future.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_meta(version INTEGER NOT NULL);
+            INSERT INTO schema_meta VALUES(999);
+            CREATE TABLE future_only(marker TEXT NOT NULL);
+            INSERT INTO future_only VALUES('preserve-me');
+            """
+        )
+        before = connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+    before_bytes = path.read_bytes()
+    with pytest.raises(RuntimeError, match="schema 999"):
+        Database(path).initialize()
+    with sqlite3.connect(path) as connection:
+        after = connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+        assert connection.execute("SELECT marker FROM future_only").fetchone()[0] == "preserve-me"
+    assert after == before
+    assert path.read_bytes() == before_bytes
+    assert not Path(f"{path}-wal").exists()
+    assert not Path(f"{path}-shm").exists()
 
 
 def test_partial_attempt_artifacts_are_not_published(authenticated_client, service, tenant_id):

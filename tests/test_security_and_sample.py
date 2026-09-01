@@ -155,6 +155,28 @@ def test_production_settings_require_long_secure_token(tmp_path):
         ).validate()
 
 
+def test_runtime_settings_reject_unsafe_ranges(settings):
+    from dataclasses import replace
+
+    for field, value, message in (
+        ("max_video_frames", 0, "MAX_VIDEO_FRAMES"),
+        ("worker_poll_seconds", 0, "WORKER_POLL_SECONDS"),
+        ("worker_poll_seconds", float("nan"), "WORKER_POLL_SECONDS"),
+        ("readiness_probe_ttl_seconds", float("nan"), "READINESS_PROBE_TTL_SECONDS"),
+        ("storage_min_free_bytes", -1, "MIN_FREE_BYTES"),
+        ("max_job_attempts", 11, "must not exceed 10"),
+        ("global_max_inflight_objects", 0, "GLOBAL_MAX_INFLIGHT_OBJECTS"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            replace(settings, **{field: value}).validate()
+    with pytest.raises(ValueError, match="tenant in-flight"):
+        replace(
+            settings,
+            global_max_inflight_objects=1,
+            tenant_max_inflight_objects=2,
+        ).validate()
+
+
 def test_research_engine_stays_closed_without_all_gates(settings):
     from lingbot_map.workspace.engines import EngineUnavailable, LingbotResearchEngine
 
@@ -258,6 +280,17 @@ def test_modal_research_runner_keeps_sky_masking_opt_in():
     assert mask_sky.value is False
     assert "requirements/modal.lock" in source
     assert "--require-hashes" in source
+
+
+def test_modal_reference_imports_without_credentials_and_remains_disabled():
+    import modal
+
+    import modal_app
+
+    assert modal.__version__ == "1.5.5"
+    assert modal_app.MODAL_REFERENCE_ENABLED is False
+    with pytest.raises(RuntimeError, match="disabled pending"):
+        modal_app._acknowledge(modal_app.RESEARCH_ACK)
 
 
 def test_every_direct_torch_loader_uses_a_private_verified_path():

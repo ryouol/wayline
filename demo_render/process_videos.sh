@@ -87,7 +87,7 @@ for VIDEO_PATH in "${VIDEOS[@]}"; do
     echo "[$CURRENT/$TOTAL] $VIDEO_NAME"
 
     if [ -d "$NPZ_DIR" ] && ls "$NPZ_DIR"/frame_*.npz &>/dev/null; then
-        FRAME_COUNT=$(ls "$NPZ_DIR"/frame_*.npz 2>/dev/null | wc -l)
+        FRAME_COUNT=$(find "$NPZ_DIR" -maxdepth 1 -type f -name 'frame_*.npz' -print | wc -l)
         echo "  [skip] NPZ already exists ($FRAME_COUNT frames)"
     else
         echo "  [inference] Running batch_demo.py..."

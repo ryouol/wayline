@@ -402,7 +402,14 @@ def create_app(
                     rejected = JSONResponse(
                         status_code=413, content={"detail": "Request body is too large."}
                     )
-        response = rejected or await call_next(request)
+        try:
+            response = rejected or await call_next(request)
+        except Exception:
+            logger.exception("unhandled request failure on %s", request.url.path)
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "The request could not be completed."},
+            )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -435,13 +442,14 @@ def create_app(
             value = workspace.database.authenticate_session(token) if token else None
         if not value:
             raise HTTPException(401, "Authentication required.")
-        if method == "cookie" and request.method in UNSAFE_METHODS:
-            supplied = token_digest(x_csrf_token) if x_csrf_token else ""
-            if not hmac.compare_digest(supplied, value["csrf_hash"]):
-                raise HTTPException(403, "CSRF token is missing or invalid.")
         request.state.workspace_principal_marker = token_digest(
             f"{value['tenant_id']}\0{value['user_id']}"
         )
+        logout_request = request.method == "DELETE" and request.url.path == "/api/session"
+        if method == "cookie" and request.method in UNSAFE_METHODS and not logout_request:
+            supplied = token_digest(x_csrf_token) if x_csrf_token else ""
+            if not hmac.compare_digest(supplied, value["csrf_hash"]):
+                raise HTTPException(403, "CSRF token is missing or invalid.")
         return Principal(
             tenant_id=value["tenant_id"],
             user_id=value["user_id"],
@@ -530,7 +538,7 @@ def create_app(
     def me(current: CurrentPrincipal):
         csrf = None
         if current.method == "cookie" and current.session_id:
-            csrf = workspace.database.rotate_csrf(current.session_id)
+            csrf = workspace.database.session_csrf(current.session_id)
         return {
             "user": {"displayName": current.display_name, "tenantName": current.tenant_name},
             "csrfToken": csrf,

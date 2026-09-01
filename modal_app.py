@@ -21,6 +21,10 @@ MODEL_REVISION = "204754b72bb24f561f8d7e7e1e4e4cd9e809adf9"
 MODEL_SHA256 = "ee665103348e07e6b826d529b8e61de8f413d5432a4f2e84970d6c8fd2e1cd72"
 SKYSEG_SHA256 = "b09c0f6cf79e1caa2591b946b659487bd7c8208caddd3f80680cbb169617e378"
 SAFE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# This reference is intentionally non-executable until an owner records the
+# budget, cancellation, object-integration, and paid GPU validation gates.
+# Enabling it requires a reviewed source change, not a runtime environment typo.
+MODAL_REFERENCE_ENABLED = False
 
 app = modal.App("lingbot-map-research", include_source=False)
 weights = modal.Volume.from_name("lingbot-research-weights", create_if_missing=True)
@@ -49,6 +53,10 @@ image = (
 
 
 def _acknowledge(value: str) -> None:
+    if not MODAL_REFERENCE_ENABLED:
+        raise RuntimeError(
+            "the Modal reference runner is disabled pending its recorded release gates"
+        )
     if value != RESEARCH_ACK:
         raise ValueError(
             "LingBot commercial rights are unresolved; pass the exact research acknowledgement"

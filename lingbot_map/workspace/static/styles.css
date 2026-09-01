@@ -95,7 +95,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 .workspace { display: grid; grid-template-columns: minmax(310px, 390px) minmax(0, 1fr); min-height: calc(100vh - 67px); }
 .source-column { border-right: 1px solid var(--line); background: #0d131a; }
-.section-block, .jobs-section { padding: 25px 22px; border-bottom: 1px solid var(--line); }
+.section-block, .jobs-section, .management-section { padding: 25px 22px; border-bottom: 1px solid var(--line); }
 .supporting { margin-bottom: 18px; font-size: 13px; }
 .inline-meta { margin: 9px 0 0; color: var(--quiet); font: 11px/1.4 var(--mono); }
 .section-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -105,6 +105,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 .job-list { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--line); }
 .job-list li { border-bottom: 1px solid var(--line); }
+.job-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.record-selector { width: 18px; height: 18px; accent-color: var(--accent); }
 .job-button {
   width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 13px 4px;
   border: 0; border-left: 3px solid transparent; border-radius: 0; background: transparent; color: var(--text);
@@ -115,6 +117,21 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .job-state { color: var(--accent); font: 700 10px/1.4 var(--mono); text-transform: uppercase; }
 .job-time { color: var(--quiet); font-size: 12px; }
 .empty-state { margin: 16px 0 0; color: var(--quiet); font-size: 13px; }
+.load-more { width: 100%; margin-top: 9px; border-color: var(--line); }
+.selection-summary { margin: -8px 0 16px; color: var(--quiet); font: 11px/1.4 var(--mono); }
+.inventory-group { padding-top: 18px; border-top: 1px solid var(--line); }
+.inventory-group + .inventory-group { margin-top: 20px; }
+.inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.inventory-heading h3 { margin: 0; }
+.inventory-list { list-style: none; margin: 9px 0 0; padding: 0; }
+.inventory-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px;
+  padding: 10px 0; border-top: 1px solid var(--line);
+}
+.inventory-copy { min-width: 0; }
+.inventory-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.inventory-meta { display: block; color: var(--quiet); font-size: 11px; }
+.inventory-action { min-height: 32px; padding-inline: 6px; }
 
 .detail-column { min-width: 0; padding: clamp(22px, 4vw, 48px); }
 .empty-detail { max-width: 560px; margin: 12vh auto 0; color: var(--muted); }
@@ -166,7 +183,7 @@ dialog::backdrop { background: rgb(0 0 0 / .72); }
 }
 @media (max-width: 560px) {
   .app-header { align-items: flex-start; padding-inline: 16px; }
-  .section-block, .jobs-section, .detail-column { padding-inline: 16px; }
+  .section-block, .jobs-section, .management-section, .detail-column { padding-inline: 16px; }
   .form-row, .artifact-facts, .provenance-list { grid-template-columns: 1fr; }
   .stage-list { grid-template-columns: 1fr; gap: 4px; }
   .stage-list li { border-top: 0; border-left: 2px solid var(--line); padding: 3px 0 3px 9px; }

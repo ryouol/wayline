@@ -220,9 +220,11 @@ controls below remain explicit external launch gates.
 - Status: Remediated
 - Location: `config.py` and transactional create methods in `database.py`
 - Evidence: byte, asset, unattached-upload, job, artifact, active-share, and
-  compute limits are checked inside `BEGIN IMMEDIATE` transactions. Durable
-  upload/job/share rates, terminal/unattached retention, cursor pagination, and
-  bounded bulk deletion have regression coverage.
+  compute limits are checked inside `BEGIN IMMEDIATE` transactions. Upload and
+  artifact claims reserve maximum bytes and in-flight slots before I/O against
+  tenant/global logical budgets and a physical free-space floor, then reconcile
+  to measured size. Interrupted objects are measured before outbox recovery.
+  Durable rates, retention, cursor pagination, and bounded cleanup have coverage.
 - Impact: zero-unit samples and retained uploads/artifacts could previously grow
   storage and SQLite without bound.
 
@@ -232,10 +234,15 @@ controls below remain explicit external launch gates.
 - Status: Remediated; external browser/accessibility matrix still required
 - Location: `static/app.js` and `static/viewer.js`
 - Evidence: logout, `401`, and principal change increment a session epoch,
-  abort every in-flight request, clear tenant/job/share DOM state, and destroy
+  abort every in-flight request, erase workspace identity and every private
+  job/asset/share/detail DOM node, and destroy
   fetches, event listeners, observers, WebGL buffers/program/shaders/context.
   A one-way marker on every authenticated response detects cookie/account
-  changes made by another tab before the response is rendered.
+  changes made by another tab before the response is rendered. Stable CSRF,
+  stale-header logout, cross-tab notifications, and focus revalidation are
+  behaviorally covered: peer `/api/me` refresh preserves the shared token,
+  logout revokes the shared server session, and `signed-out`/`account-changed`
+  broadcasts synchronously clear peer state (`session-changed` revalidates).
 - Impact: delayed responses or retained WebGL buffers could expose a previous
   tenant's metadata/scene after an account change on the same browser.
 
@@ -250,12 +257,53 @@ controls below remain explicit external launch gates.
 - Impact: bearer share URLs copied into logs grant artifact read/download until
   expiry or revocation.
 
+## SEC-014 — Mutation could commit behind a stranded idempotency claim
+
+- Severity: Medium
+- Status: Remediated
+- Location: `database.py`, `service.py`, and `static/app.js`
+- Evidence: every database mutation now joins the transaction that claims and
+  completes its request key. A forced completion failure rolls back the job,
+  compute reservation, and key together. Ambiguous browser transport and
+  in-progress retries retain one generated key.
+- Impact: a lost completion write previously left a real mutation behind an
+  `in_progress` key; a later click could allocate duplicate compute or storage.
+
+## SEC-015 — Sole worker could exit on a transient iteration failure
+
+- Severity: Medium
+- Status: Remediated
+- Location: `service.py`
+- Evidence: the worker loop owns an exception boundary around maintenance and
+  queue processing, logs failures, and retries with bounded exponential backoff.
+  A threaded regression injects a failure and proves the worker remains alive.
+- Impact: one transient database/object-store error could previously stop all
+  queued work until process restart.
+
+## SEC-016 — Unhandled errors and future schema starts were not fail-safe
+
+- Severity: Low
+- Status: Remediated
+- Location: `app.py`, `config.py`, and `database.py`
+- Evidence: unhandled `500` responses retain the full security-header policy and
+  return a generic body; configuration applies strict positivity/range checks;
+  schema compatibility is checked through a read-only preflight before WAL or
+  DDL, and a future-schema regression proves the database file remains byte-for-
+  byte unchanged without creating WAL/SHM sidecars.
+- Impact: exceptional paths could lose browser defenses, unsafe limits could be
+  accepted, or older code could partially modify newer state.
+
 ## Browser review result
 
 The supported workspace frontend uses `textContent`, explicit DOM construction,
-same-origin fetches, HttpOnly session cookies, CSRF headers, no browser storage,
-no third-party scripts, and no eval/HTML insertion sinks. CSP includes Trusted
-Types enforcement. A prior baseline in-app-browser pass verified the desktop
-workflow at 1280 x 720. The final session-abort/WebGL-destruction changes have
-static regression tests; mobile viewport, screen reader, contrast,
-account-switch, and cross-browser execution remain explicit external gates.
+same-origin fetches, HttpOnly session cookies, CSRF headers, no persisted
+customer data, no third-party scripts, and no eval/HTML insertion sinks. The only Web Storage
+write is an immediately removed timestamped cross-tab session signal; it never
+contains a tenant, user, token, job, asset, or share value. CSP includes Trusted
+Types enforcement. The final in-app-browser pass verified authentication,
+peer-tab session reuse, synthetic generation, point-cloud review, and management
+controls on desktop and at 390 x 844 with no horizontal overflow or console
+warnings/errors. The final extracted session-event module loaded successfully.
+Static and executable JavaScript regressions cover private-state/WebGL teardown
+and immediate peer clearing. Screen-reader, contrast, real account switching,
+and external cross-browser execution remain explicit owner gates.

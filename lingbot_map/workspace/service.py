@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -179,7 +180,7 @@ class WorkspaceService:
             )
         recovery = self.database.recover_jobs(max_attempts=self.settings.max_job_attempts)
         partial_artifacts = self.database.queue_incomplete_artifacts()
-        abandoned_claims = self.database.expire_object_claims(force=True)
+        abandoned_claims = self.recover_object_claims(force=True)
         retention = self.run_retention()
         reconciliation = self.reconcile_storage()
         self.drain_deletions()
@@ -232,7 +233,13 @@ class WorkspaceService:
         return hashlib.sha256(encoded).hexdigest()
 
     def _idempotency_begin(
-        self, tenant_id: str, scope: str, key: str | None, payload: dict[str, Any]
+        self,
+        tenant_id: str,
+        scope: str,
+        key: str | None,
+        payload: dict[str, Any],
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> tuple[str, dict[str, Any] | None]:
         request_hash = self.request_hash(payload)
         replay = self.database.begin_idempotency(
@@ -241,6 +248,7 @@ class WorkspaceService:
             key,
             request_hash,
             ttl_seconds=self.settings.idempotency_ttl_seconds,
+            connection=connection,
         )
         return request_hash, replay["response"] if replay else None
 
@@ -253,6 +261,7 @@ class WorkspaceService:
         response: dict[str, Any],
         *,
         status_code: int,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         self.database.complete_idempotency(
             tenant_id,
@@ -261,6 +270,7 @@ class WorkspaceService:
             request_hash,
             status_code=status_code,
             response=response,
+            connection=connection,
         )
 
     def _queue_object_deletion(self, tenant_id: str, stored: StoredObject) -> None:
@@ -292,6 +302,41 @@ class WorkspaceService:
             # orphaned. Startup/periodic claim recovery will reconcile it later.
             logger.exception("could not release provisional object claim %s", key)
 
+    def _claim_object(self, tenant_id: str, key: str, *, reserve_bytes: int, purpose: str) -> None:
+        free_bytes = shutil.disk_usage(self.settings.data_dir).free
+        self.database.claim_object(
+            tenant_id,
+            key,
+            ttl_seconds=self._claim_ttl(),
+            reserve_bytes=reserve_bytes,
+            purpose=purpose,
+            global_storage_bytes=self.settings.global_storage_bytes,
+            physical_free_bytes=free_bytes,
+            min_free_bytes=self.settings.storage_min_free_bytes,
+            global_inflight_limit=self.settings.global_max_inflight_objects,
+            tenant_inflight_limit=self.settings.tenant_max_inflight_objects,
+        )
+
+    def recover_object_claims(self, *, force: bool = False) -> int:
+        """Measure interrupted writes before releasing their durable reservations."""
+
+        recovered = 0
+        for claim in self.database.object_claims_due(force=force):
+            try:
+                with self.store.open(claim["object_key"]) as stream:
+                    stream.seek(0, 2)
+                    actual_size: int | None = stream.tell()
+            except FileNotFoundError:
+                actual_size = None
+            except Exception:
+                logger.exception("could not inspect claimed object %s", claim["object_key"])
+                continue
+            if self.database.recover_object_claim(
+                claim["tenant_id"], claim["object_key"], actual_size=actual_size
+            ):
+                recovered += 1
+        return recovered
+
     def upload_video(
         self,
         *,
@@ -313,7 +358,12 @@ class WorkspaceService:
         )
         key = f"tenants/{tenant_id}/assets/{uuid.uuid4().hex}{suffix}"
         asset_recorded = False
-        self.database.claim_object(tenant_id, key, ttl_seconds=self._claim_ttl())
+        self._claim_object(
+            tenant_id,
+            key,
+            reserve_bytes=self.settings.max_upload_bytes,
+            purpose="upload",
+        )
         try:
             try:
                 stored = self.store.put_stream(
@@ -361,46 +411,48 @@ class WorkspaceService:
                 )
             metadata["container"] = detected
             scope = "POST:/api/assets"
-            request_hash, replay = self._idempotency_begin(
-                tenant_id,
-                scope,
-                idempotency_key,
-                {
-                    "filename": original_name,
-                    "mediaType": detected,
-                    "sha256": stored.sha256,
-                    "sizeBytes": stored.size_bytes,
-                },
-            )
-            if replay is not None:
-                self._queue_object_deletion(tenant_id, stored)
-                return replay
-            try:
-                result = self.database.create_asset(
-                    tenant_id=tenant_id,
-                    object_key=stored.key,
-                    original_name=original_name,
-                    media_type=detected,
-                    size_bytes=stored.size_bytes,
-                    sha256=stored.sha256,
-                    metadata=metadata,
-                )
-                asset_recorded = True
-                self._idempotency_complete(
+            payload = {
+                "filename": original_name,
+                "mediaType": detected,
+                "sha256": stored.sha256,
+                "sizeBytes": stored.size_bytes,
+            }
+            created_result: dict[str, Any] | None = None
+            with self.database.transaction() as connection:
+                request_hash, replay = self._idempotency_begin(
                     tenant_id,
                     scope,
                     idempotency_key,
-                    request_hash,
-                    result,
-                    status_code=201,
+                    payload,
+                    connection=connection,
                 )
-                return result
-            except Exception:
-                if not asset_recorded:
-                    self.database.abandon_idempotency(
-                        tenant_id, scope, idempotency_key, request_hash
+                if replay is None:
+                    created_result = self.database.create_asset(
+                        tenant_id=tenant_id,
+                        object_key=stored.key,
+                        original_name=original_name,
+                        media_type=detected,
+                        size_bytes=stored.size_bytes,
+                        sha256=stored.sha256,
+                        metadata=metadata,
+                        connection=connection,
                     )
-                raise
+                    self._idempotency_complete(
+                        tenant_id,
+                        scope,
+                        idempotency_key,
+                        request_hash,
+                        created_result,
+                        status_code=201,
+                        connection=connection,
+                    )
+            if replay is not None:
+                self._queue_object_deletion(tenant_id, stored)
+                return replay
+            if created_result is None:  # pragma: no cover - internal invariant
+                raise RuntimeError("asset transaction completed without a result")
+            asset_recorded = True
+            return created_result
         except Exception:
             if not asset_recorded:
                 self._queue_object_deletion(tenant_id, stored)
@@ -456,16 +508,16 @@ class WorkspaceService:
         if asset_id:
             metadata = self.database.get_asset(tenant_id, asset_id)["metadata"]
         reservation = engine.estimate_units(metadata, params)
-        request_hash, replay = self._idempotency_begin(
-            tenant_id,
-            route_scope,
-            idempotency_key,
-            {"engineId": engine_id, "assetId": asset_id, "params": params},
-        )
-        if replay is not None:
-            return replay
-        created = False
-        try:
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                route_scope,
+                idempotency_key,
+                {"engineId": engine_id, "assetId": asset_id, "params": params},
+                connection=connection,
+            )
+            if replay is not None:
+                return replay
             job = self.database.create_job(
                 tenant_id=tenant_id,
                 engine_id=engine_id,
@@ -474,8 +526,8 @@ class WorkspaceService:
                 provenance=engine.provenance(),
                 reserve_units=reservation,
                 rate_limit=self.settings.job_rate_per_minute,
+                connection=connection,
             )
-            created = True
             self._idempotency_complete(
                 tenant_id,
                 route_scope,
@@ -483,42 +535,55 @@ class WorkspaceService:
                 request_hash,
                 job,
                 status_code=202,
+                connection=connection,
             )
-        except Exception:
-            if not created:
-                self.database.abandon_idempotency(
-                    tenant_id, route_scope, idempotency_key, request_hash
-                )
-            raise
         self._wake.set()
         return job
 
     def _worker_loop(self) -> None:
+        consecutive_failures = 0
         while not self._stop.is_set():
-            now = time.monotonic()
-            if now - self._maintenance_at >= 5:
-                self.database.recover_jobs(max_attempts=self.settings.max_job_attempts)
-                self.database.queue_incomplete_artifacts()
-                self.database.expire_object_claims()
-                self.drain_deletions()
-                self._maintenance_at = now
-            if now - self._full_maintenance_at >= 60:
-                retention = self.run_retention()
-                reconciliation = self.reconcile_storage()
-                self.drain_deletions()
-                if any(retention.values()) or reconciliation["orphans"]:
-                    logger.info(
-                        "workspace maintenance: retention=%s storage=%s",
-                        retention,
-                        reconciliation,
-                    )
-                self._full_maintenance_at = now
-            if self._stop.is_set():
-                break
-            processed = self.process_next_job()
+            try:
+                processed = self._worker_iteration()
+            except Exception:
+                consecutive_failures += 1
+                delay = min(
+                    5.0,
+                    max(self.settings.worker_poll_seconds, 0.1)
+                    * (2 ** min(consecutive_failures - 1, 6)),
+                )
+                logger.exception(
+                    "workspace worker iteration failed; retrying in %.2f seconds", delay
+                )
+                self._stop.wait(delay)
+                continue
+            consecutive_failures = 0
             if not processed:
                 self._wake.wait(self.settings.worker_poll_seconds)
                 self._wake.clear()
+
+    def _worker_iteration(self) -> bool:
+        now = time.monotonic()
+        if now - self._maintenance_at >= 5:
+            self.database.recover_jobs(max_attempts=self.settings.max_job_attempts)
+            self.database.queue_incomplete_artifacts()
+            self.recover_object_claims()
+            self.drain_deletions()
+            self._maintenance_at = now
+        if now - self._full_maintenance_at >= 60:
+            retention = self.run_retention()
+            reconciliation = self.reconcile_storage()
+            self.drain_deletions()
+            if any(retention.values()) or reconciliation["orphans"]:
+                logger.info(
+                    "workspace maintenance: retention=%s storage=%s",
+                    retention,
+                    reconciliation,
+                )
+            self._full_maintenance_at = now
+        if self._stop.is_set():
+            return False
+        return self.process_next_job()
 
     def process_next_job(self) -> bool:
         job = self.database.claim_next_job(
@@ -586,17 +651,22 @@ class WorkspaceService:
                     f"tenants/{tenant_id}/jobs/{job_id}/attempts/"
                     f"{attempt_token}/{uuid.uuid4().hex}{suffix}"
                 )
-                self.database.claim_object(tenant_id, key, ttl_seconds=self._claim_ttl())
+                self._claim_object(
+                    tenant_id,
+                    key,
+                    reserve_bytes=self.settings.max_artifact_bytes,
+                    purpose="artifact",
+                )
                 stored: StoredObject | None = None
                 claim_releasable = False
                 try:
                     if artifact.payload is not None:
                         stored = self.store.put_bytes(
-                            key, artifact.payload, max_bytes=100 * 1024 * 1024
+                            key, artifact.payload, max_bytes=self.settings.max_artifact_bytes
                         )
                     elif artifact.path is not None:
                         stored = self.store.copy_from_path(
-                            key, artifact.path, max_bytes=100 * 1024 * 1024
+                            key, artifact.path, max_bytes=self.settings.max_artifact_bytes
                         )
                     else:
                         raise RuntimeError("engine produced an artifact without bytes or a file")
@@ -715,23 +785,31 @@ class WorkspaceService:
         self, tenant_id: str, job_id: str, *, idempotency_key: str | None = None
     ) -> dict[str, Any]:
         scope = "POST:/api/jobs/{job_id}/cancel"
-        request_hash, replay = self._idempotency_begin(
-            tenant_id, scope, idempotency_key, {"jobId": job_id}
-        )
-        if replay is not None:
-            return replay
-        changed = False
-        try:
-            result = {"state": self.database.request_cancellation(tenant_id, job_id)}
-            changed = True
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                {"jobId": job_id},
+                connection=connection,
+            )
+            if replay is not None:
+                return replay
+            result = {
+                "state": self.database.request_cancellation(
+                    tenant_id, job_id, connection=connection
+                )
+            }
             self._idempotency_complete(
-                tenant_id, scope, idempotency_key, request_hash, result, status_code=202
+                tenant_id,
+                scope,
+                idempotency_key,
+                request_hash,
+                result,
+                status_code=202,
+                connection=connection,
             )
             return result
-        except Exception:
-            if not changed:
-                self.database.abandon_idempotency(tenant_id, scope, idempotency_key, request_hash)
-            raise
 
     def create_share(
         self,
@@ -742,34 +820,34 @@ class WorkspaceService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         scope = "POST:/api/artifacts/{artifact_id}/shares"
-        request_hash, replay = self._idempotency_begin(
-            tenant_id,
-            scope,
-            idempotency_key,
-            {"artifactId": artifact_id, "ttlSeconds": ttl_seconds},
-        )
-        if replay is not None:
-            if idempotency_key:
-                seed = replay.pop("_tokenSeed", "")
-                if not seed:
-                    raise RuntimeError("idempotent share record is missing its token seed")
-                replay["token"] = self._derived_share_token(
-                    tenant_id,
-                    idempotency_key,
-                    request_hash,
-                    seed,
-                )
-                if not self.database.share_token_matches(
-                    tenant_id,
-                    replay["id"],
-                    replay["token"],
-                ):
-                    raise RuntimeError(
-                        "share-token secret does not match the idempotent share record"
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                {"artifactId": artifact_id, "ttlSeconds": ttl_seconds},
+                connection=connection,
+            )
+            if replay is not None:
+                if idempotency_key:
+                    seed = replay.pop("_tokenSeed", "")
+                    if not seed:
+                        raise RuntimeError("idempotent share record is missing its token seed")
+                    replay["token"] = self._derived_share_token(
+                        tenant_id,
+                        idempotency_key,
+                        request_hash,
+                        seed,
                     )
-            return replay
-        changed = False
-        try:
+                    if not self.database.share_token_matches(
+                        tenant_id,
+                        replay["id"],
+                        replay["token"],
+                    ):
+                        raise RuntimeError(
+                            "share-token secret does not match the idempotent share record"
+                        )
+                return replay
             token_seed = secrets.token_urlsafe(18) if idempotency_key else ""
             derived_token = None
             if idempotency_key:
@@ -785,9 +863,9 @@ class WorkspaceService:
                 ttl_seconds=ttl_seconds,
                 rate_limit=self.settings.share_rate_per_minute,
                 raw_token=derived_token,
+                connection=connection,
             )
             result = {**share, "token": token}
-            changed = True
             self._idempotency_complete(
                 tenant_id,
                 scope,
@@ -795,83 +873,92 @@ class WorkspaceService:
                 request_hash,
                 {**share, "_tokenSeed": token_seed},
                 status_code=201,
+                connection=connection,
             )
             return result
-        except Exception:
-            if not changed:
-                self.database.abandon_idempotency(tenant_id, scope, idempotency_key, request_hash)
-            raise
 
     def revoke_share(
         self, tenant_id: str, share_id: str, *, idempotency_key: str | None = None
     ) -> dict[str, Any]:
         scope = "DELETE:/api/shares/{share_id}"
-        request_hash, replay = self._idempotency_begin(
-            tenant_id, scope, idempotency_key, {"shareId": share_id}
-        )
-        if replay is not None:
-            return replay
-        changed = False
-        try:
-            self.database.revoke_share(tenant_id, share_id)
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                {"shareId": share_id},
+                connection=connection,
+            )
+            if replay is not None:
+                return replay
+            self.database.revoke_share(tenant_id, share_id, connection=connection)
             result = {"state": "revoked", "id": share_id}
-            changed = True
             self._idempotency_complete(
-                tenant_id, scope, idempotency_key, request_hash, result, status_code=202
+                tenant_id,
+                scope,
+                idempotency_key,
+                request_hash,
+                result,
+                status_code=202,
+                connection=connection,
             )
             return result
-        except Exception:
-            if not changed:
-                self.database.abandon_idempotency(tenant_id, scope, idempotency_key, request_hash)
-            raise
 
     def delete_job(
         self, tenant_id: str, job_id: str, *, idempotency_key: str | None = None
     ) -> dict[str, Any]:
         scope = "DELETE:/api/jobs/{job_id}"
-        request_hash, replay = self._idempotency_begin(
-            tenant_id, scope, idempotency_key, {"jobId": job_id}
-        )
-        if replay is not None:
-            return replay
-        changed = False
-        try:
-            self.database.queue_delete_job(tenant_id, job_id)
-            result = {"state": "deleting", "id": job_id}
-            changed = True
-            self._idempotency_complete(
-                tenant_id, scope, idempotency_key, request_hash, result, status_code=202
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                {"jobId": job_id},
+                connection=connection,
             )
-            self.drain_deletions()
-            return result
-        except Exception:
-            if not changed:
-                self.database.abandon_idempotency(tenant_id, scope, idempotency_key, request_hash)
-            raise
+            if replay is not None:
+                return replay
+            self.database.queue_delete_job(tenant_id, job_id, connection=connection)
+            result = {"state": "deleting", "id": job_id}
+            self._idempotency_complete(
+                tenant_id,
+                scope,
+                idempotency_key,
+                request_hash,
+                result,
+                status_code=202,
+                connection=connection,
+            )
+        self.drain_deletions()
+        return result
 
     def delete_asset(
         self, tenant_id: str, asset_id: str, *, idempotency_key: str | None = None
     ) -> dict[str, Any]:
         scope = "DELETE:/api/assets/{asset_id}"
-        request_hash, replay = self._idempotency_begin(
-            tenant_id, scope, idempotency_key, {"assetId": asset_id}
-        )
-        if replay is not None:
-            return replay
-        changed = False
-        try:
-            self.database.queue_delete_asset(tenant_id, asset_id)
-            result = {"state": "deleting", "id": asset_id}
-            changed = True
-            self._idempotency_complete(
-                tenant_id, scope, idempotency_key, request_hash, result, status_code=202
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                {"assetId": asset_id},
+                connection=connection,
             )
-            self.drain_deletions()
-            return result
-        except Exception:
-            if not changed:
-                self.database.abandon_idempotency(tenant_id, scope, idempotency_key, request_hash)
-            raise
+            if replay is not None:
+                return replay
+            self.database.queue_delete_asset(tenant_id, asset_id, connection=connection)
+            result = {"state": "deleting", "id": asset_id}
+            self._idempotency_complete(
+                tenant_id,
+                scope,
+                idempotency_key,
+                request_hash,
+                result,
+                status_code=202,
+                connection=connection,
+            )
+        self.drain_deletions()
+        return result
 
     def bulk_delete(
         self,
@@ -888,41 +975,59 @@ class WorkspaceService:
             "assetIds": sorted(set(asset_ids)),
             "shareIds": sorted(set(share_ids)),
         }
-        request_hash, replay = self._idempotency_begin(tenant_id, scope, idempotency_key, payload)
-        if replay is not None:
-            return replay
-        result: dict[str, list[str]] = {"jobs": [], "assets": [], "shares": []}
-        errors: dict[str, str] = {}
-        for share_id in payload["shareIds"]:
-            try:
-                self.database.revoke_share(tenant_id, share_id)
-                result["shares"].append(share_id)
-            except KeyError as error:
-                errors[share_id] = str(error)
-        for job_id in payload["jobIds"]:
-            try:
-                self.database.queue_delete_job(tenant_id, job_id)
-                result["jobs"].append(job_id)
-            except (KeyError, InvalidTransition) as error:
-                errors[job_id] = str(error)
-        for asset_id in payload["assetIds"]:
-            try:
-                self.database.queue_delete_asset(tenant_id, asset_id)
-                result["assets"].append(asset_id)
-            except (KeyError, InvalidTransition) as error:
-                errors[asset_id] = str(error)
-        response: dict[str, Any] = {"state": "deleting", "accepted": result, "errors": errors}
-        if not any(result.values()):
-            self.database.abandon_idempotency(
+        with self.database.transaction() as connection:
+            request_hash, replay = self._idempotency_begin(
+                tenant_id,
+                scope,
+                idempotency_key,
+                payload,
+                connection=connection,
+            )
+            if replay is not None:
+                return replay
+            result: dict[str, list[str]] = {"jobs": [], "assets": [], "shares": []}
+            errors: dict[str, str] = {}
+            for share_id in payload["shareIds"]:
+                try:
+                    self.database.revoke_share(tenant_id, share_id, connection=connection)
+                    result["shares"].append(share_id)
+                except KeyError as error:
+                    errors[share_id] = str(error)
+            for job_id in payload["jobIds"]:
+                try:
+                    self.database.queue_delete_job(tenant_id, job_id, connection=connection)
+                    result["jobs"].append(job_id)
+                except (KeyError, InvalidTransition) as error:
+                    errors[job_id] = str(error)
+            for asset_id in payload["assetIds"]:
+                try:
+                    self.database.queue_delete_asset(tenant_id, asset_id, connection=connection)
+                    result["assets"].append(asset_id)
+                except (KeyError, InvalidTransition) as error:
+                    errors[asset_id] = str(error)
+            response: dict[str, Any] = {
+                "state": "deleting",
+                "accepted": result,
+                "errors": errors,
+            }
+            if not any(result.values()):
+                self.database.abandon_idempotency(
+                    tenant_id,
+                    scope,
+                    idempotency_key,
+                    request_hash,
+                    connection=connection,
+                )
+                return response
+            self._idempotency_complete(
                 tenant_id,
                 scope,
                 idempotency_key,
                 request_hash,
+                response,
+                status_code=202,
+                connection=connection,
             )
-            return response
-        self._idempotency_complete(
-            tenant_id, scope, idempotency_key, request_hash, response, status_code=202
-        )
         self.drain_deletions()
         return response
 

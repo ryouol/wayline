@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import secrets
@@ -44,6 +45,11 @@ class Settings:
     cookie_secure: bool = True
     session_ttl_seconds: int = 12 * 60 * 60
     max_upload_bytes: int = 250 * 1024 * 1024
+    max_artifact_bytes: int = 100 * 1024 * 1024
+    global_storage_bytes: int = 20 * 1024 * 1024 * 1024
+    storage_min_free_bytes: int = 1024 * 1024 * 1024
+    global_max_inflight_objects: int = 8
+    tenant_max_inflight_objects: int = 3
     max_video_seconds: int = 5 * 60
     max_video_frames: int = 9_000
     max_video_dimension: int = 4_096
@@ -100,6 +106,15 @@ class Settings:
             cookie_secure=_bool_env("LINGBOT_COOKIE_SECURE", environment == "production"),
             session_ttl_seconds=int(os.getenv("LINGBOT_SESSION_TTL_SECONDS", str(12 * 60 * 60))),
             max_upload_bytes=int(os.getenv("LINGBOT_MAX_UPLOAD_BYTES", str(250 * 1024 * 1024))),
+            max_artifact_bytes=int(os.getenv("LINGBOT_MAX_ARTIFACT_BYTES", str(100 * 1024 * 1024))),
+            global_storage_bytes=int(
+                os.getenv("LINGBOT_GLOBAL_STORAGE_BYTES", str(20 * 1024 * 1024 * 1024))
+            ),
+            storage_min_free_bytes=int(
+                os.getenv("LINGBOT_STORAGE_MIN_FREE_BYTES", str(1024 * 1024 * 1024))
+            ),
+            global_max_inflight_objects=int(os.getenv("LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS", "8")),
+            tenant_max_inflight_objects=int(os.getenv("LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS", "3")),
             max_video_seconds=int(os.getenv("LINGBOT_MAX_VIDEO_SECONDS", str(5 * 60))),
             max_video_frames=int(os.getenv("LINGBOT_MAX_VIDEO_FRAMES", "9000")),
             max_video_dimension=int(os.getenv("LINGBOT_MAX_VIDEO_DIMENSION", "4096")),
@@ -182,10 +197,44 @@ class Settings:
                 raise ValueError("allowed hosts must be explicit DNS names or IP addresses")
         if self.bootstrap_token and len(self.bootstrap_token) < 16:
             raise ValueError("bootstrap tokens must contain at least 16 characters")
-        if self.max_upload_bytes <= 0 or self.max_video_seconds <= 0:
-            raise ValueError("upload limits must be positive")
-        if self.max_job_attempts < 1:
-            raise ValueError("max job attempts must be at least one")
+        bounded_runtime_values = {
+            "LINGBOT_SESSION_TTL_SECONDS": self.session_ttl_seconds,
+            "LINGBOT_MAX_UPLOAD_BYTES": self.max_upload_bytes,
+            "LINGBOT_MAX_ARTIFACT_BYTES": self.max_artifact_bytes,
+            "LINGBOT_GLOBAL_STORAGE_BYTES": self.global_storage_bytes,
+            "LINGBOT_MAX_VIDEO_SECONDS": self.max_video_seconds,
+            "LINGBOT_MAX_VIDEO_FRAMES": self.max_video_frames,
+            "LINGBOT_MAX_VIDEO_DIMENSION": self.max_video_dimension,
+            "LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS": self.global_max_inflight_objects,
+            "LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS": self.tenant_max_inflight_objects,
+            "LINGBOT_JOB_TIMEOUT_SECONDS": self.job_timeout_seconds,
+            "LINGBOT_MAX_JOB_ATTEMPTS": self.max_job_attempts,
+            "LINGBOT_CHECKPOINT_MAX_BYTES": self.checkpoint_max_bytes,
+            "LINGBOT_SKYSEG_MAX_BYTES": self.skyseg_max_bytes,
+        }
+        if any(value <= 0 for value in bounded_runtime_values.values()):
+            invalid = next(name for name, value in bounded_runtime_values.items() if value <= 0)
+            raise ValueError(f"{invalid} must be positive")
+        if self.storage_min_free_bytes < 0:
+            raise ValueError("LINGBOT_STORAGE_MIN_FREE_BYTES must not be negative")
+        if self.max_artifact_bytes > self.global_storage_bytes:
+            raise ValueError("artifact limit cannot exceed the global storage limit")
+        if self.max_upload_bytes > self.global_storage_bytes:
+            raise ValueError("upload limit cannot exceed the global storage limit")
+        if self.max_artifact_bytes > self.tenant_storage_bytes:
+            raise ValueError("artifact limit cannot exceed the tenant storage limit")
+        if self.max_upload_bytes > self.tenant_storage_bytes:
+            raise ValueError("upload limit cannot exceed the tenant storage limit")
+        if self.tenant_max_inflight_objects > self.global_max_inflight_objects:
+            raise ValueError("tenant in-flight limit cannot exceed the global in-flight limit")
+        if self.max_job_attempts > 10:
+            raise ValueError("LINGBOT_MAX_JOB_ATTEMPTS must not exceed 10")
+        if (
+            not math.isfinite(self.worker_poll_seconds)
+            or self.worker_poll_seconds <= 0
+            or self.worker_poll_seconds > 60
+        ):
+            raise ValueError("LINGBOT_WORKER_POLL_SECONDS must be greater than 0 and at most 60")
         bounded_values = {
             "LINGBOT_TENANT_STORAGE_BYTES": self.tenant_storage_bytes,
             "LINGBOT_TENANT_MAX_ASSETS": self.tenant_max_assets,
@@ -206,7 +255,11 @@ class Settings:
             raise ValueError(f"{invalid} must be positive")
         if self.tenant_max_unattached_assets > self.tenant_max_assets:
             raise ValueError("unattached asset limit cannot exceed the asset limit")
-        if self.readiness_probe_ttl_seconds < 0 or self.readiness_probe_ttl_seconds > 30:
+        if (
+            not math.isfinite(self.readiness_probe_ttl_seconds)
+            or self.readiness_probe_ttl_seconds < 0
+            or self.readiness_probe_ttl_seconds > 30
+        ):
             raise ValueError("LINGBOT_READINESS_PROBE_TTL_SECONDS must be between 0 and 30")
         for name, digest in (
             ("LINGBOT_CHECKPOINT_SHA256", self.checkpoint_sha256),

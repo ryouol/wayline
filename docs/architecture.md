@@ -10,6 +10,9 @@ sanitized API responses. It never exposes a filesystem path or object key.
 fences, transactional compute and storage/count quotas, durable rate buckets,
 request idempotency, deletion outbox entries, usage ledger entries, share
 hashes, provisional object claims, retention, cursor pagination, and recovery.
+Mutation responses and their idempotency completion records commit in the same
+SQLite transaction, so a process interruption cannot leave a changed resource
+behind an `in_progress` replay record.
 Every customer-owned lookup includes `tenant_id`.
 
 `ObjectStore` owns opaque byte storage and is injected into the service.
@@ -23,9 +26,12 @@ and settles or releases reservations. Every progress, artifact, failure, and
 completion mutation must match both the claim's worker ID and cryptographic
 attempt token. Startup and periodic maintenance recover only expired leases,
 queue only the expired attempt's artifacts for deletion, enforce retention,
-reconcile storage, and retry the deletion outbox. Provisional durable claims
-keep uploads and artifact writes out of orphan reconciliation until their
-database records commit or their bounded claim expires.
+reconcile storage, and retry the deletion outbox. Before any upload or artifact
+bytes touch disk, a durable claim reserves the maximum permitted bytes and an
+in-flight slot against tenant, global, and physical minimum-free-space budgets.
+After writing, the claim reconciles to the measured size. Startup and expiry
+recovery measure interrupted objects before moving their exact bytes into the
+deletion outbox.
 
 `ReconstructionEngine` owns only estimate, provenance, and execution. The
 synthetic engine is enabled. The LingBot command engine is research-only and
@@ -86,7 +92,9 @@ does.
 - API identifiers are opaque database IDs and always paired with tenant ID.
 - Authenticated responses carry a one-way principal marker. A browser that sees
   the marker change aborts its epoch, destroys the viewer, and reloads before
-  rendering data from the replacement account.
+  rendering data from the replacement account. CSRF values remain stable for a
+  session, logout does not depend on a fresh CSRF header, and peer tabs broadcast
+  logout/account changes and revalidate on focus.
 - Public shares store only token hashes, expire, and cascade-delete with
   artifacts. Idempotent share responses derive the capability from a private
   installation secret; raw tokens are not stored in idempotency records.

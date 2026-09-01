@@ -54,10 +54,18 @@ jobs:
 
       - name: Check scripts and packaging
         run: |
+          python - <<'PY'
+          import modal
+          import modal_app
+          assert modal.__version__ == "1.5.5"
+          assert modal_app.MODAL_REFERENCE_ENABLED is False
+          PY
           node --check lingbot_map/workspace/static/app.js
+          node --check lingbot_map/workspace/static/session-events.js
           node --check lingbot_map/workspace/static/viewer.js
           node --check lingbot_map/workspace/static/share.js
-          bash -n download_weights.sh
+          node tests/session-events.test.js
+          bash -n download_weights.sh demo_render/process_videos.sh
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
           python - <<'PY'
           import pathlib, zipfile
@@ -67,6 +75,7 @@ jobs:
           required = {
               "lingbot_map/workspace/static/index.html",
               "lingbot_map/workspace/static/app.js",
+              "lingbot_map/workspace/static/session-events.js",
               "lingbot_map/workspace/static/viewer.js",
               "lingbot_map/workspace/static/styles.css",
           }

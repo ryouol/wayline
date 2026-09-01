@@ -2,12 +2,17 @@
 
 const byId = (id) => document.getElementById(id);
 const state = {
-  csrf: "", jobs: [], selectedId: null, engine: null, viewer: null, viewerArtifact: null,
-  pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(), principal: "",
-  principalMarker: "",
+  csrf: "", jobs: [], assets: [], shares: [], selectedId: null, engine: null, viewer: null,
+  viewerArtifact: null, pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(),
+  principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
+  selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
 };
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
 const stageOrder = ["queued", "validating", "generating", "reconstructing", "exporting", "storing", "ready"];
+const sessionChannel = "BroadcastChannel" in window
+  ? new BroadcastChannel("lingbot-workspace-session-v1") : null;
+
+const pause = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 function formatBytes(value) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KiB`;
@@ -25,42 +30,105 @@ async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (method !== "GET" && method !== "HEAD" && state.csrf) headers.set("X-CSRF-Token", state.csrf);
   if (options.idempotent && !headers.has("Idempotency-Key")) {
+    // This header instance is reused by transport and in-progress retries. A
+    // lost response can therefore never turn one click into two mutations.
     headers.set("Idempotency-Key", crypto.randomUUID());
   }
+  let body = options.body;
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
-    options.body = JSON.stringify(options.json);
+    body = JSON.stringify(options.json);
   }
   const controller = new AbortController();
   state.controllers.add(controller);
-  let response;
   try {
-    response = await fetch(path, {
-      ...options, method, headers, credentials: "same-origin", signal: controller.signal,
-    });
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await fetch(path, {
+          method, headers, body, credentials: "same-origin", signal: controller.signal,
+        });
+      } catch (error) {
+        if (!options.idempotent || error?.name === "AbortError" || attempt >= 1) throw error;
+        await pause(250);
+        continue;
+      }
+      if (options.idempotent && response.status === 409 && attempt < 2) {
+        let code = "";
+        try { code = (await response.clone().json()).code || ""; } catch (_) { /* not JSON */ }
+        if (code === "idempotency_in_progress") {
+          await pause(500 * (attempt + 1));
+          continue;
+        }
+      }
+      break;
+    }
+    if (!response) throw new Error("The request did not receive a response.");
+    if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+    const principalMarker = response.headers.get("X-Workspace-Principal");
+    if (principalMarker && state.principalMarker && principalMarker !== state.principalMarker) {
+      broadcastSession("account-changed");
+      secureReset();
+      window.location.reload();
+      throw new DOMException("Workspace account changed", "AbortError");
+    }
+    if (principalMarker) state.principalMarker = principalMarker;
+    if (response.status === 401) {
+      broadcastSession("signed-out");
+      showLogin();
+      throw new Error("Your session ended. Sign in again.");
+    }
+    if (!response.ok) {
+      let detail = `Request failed (${response.status}).`;
+      try { detail = (await response.json()).detail || detail; } catch (_) { /* response was not JSON */ }
+      throw new Error(detail);
+    }
+    if (response.status === 204) return null;
+    return response.json();
   } finally {
     state.controllers.delete(controller);
   }
-  if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
-  const principalMarker = response.headers.get("X-Workspace-Principal");
-  if (principalMarker && state.principalMarker && principalMarker !== state.principalMarker) {
-    secureReset();
-    window.location.reload();
-    throw new DOMException("Workspace account changed", "AbortError");
-  }
-  if (principalMarker) state.principalMarker = principalMarker;
-  if (response.status === 401) {
-    showLogin();
-    throw new Error("Your session ended. Sign in again.");
-  }
-  if (!response.ok) {
-    let detail = `Request failed (${response.status}).`;
-    try { detail = (await response.json()).detail || detail; } catch (_) { /* response was not JSON */ }
-    throw new Error(detail);
-  }
-  if (response.status === 204) return null;
-  return response.json();
 }
+
+function broadcastSession(type) {
+  const event = { type, at: Date.now() };
+  sessionChannel?.postMessage(event);
+  try {
+    localStorage.setItem("lingbot-workspace-session-event", JSON.stringify(event));
+    localStorage.removeItem("lingbot-workspace-session-event");
+  } catch (_) { /* storage can be disabled */ }
+}
+
+async function revalidateSession() {
+  if (byId("appView").hidden) return;
+  try {
+    const result = await api("/api/me");
+    showApp(result.user, result.csrfToken);
+  } catch (error) {
+    if (error?.name !== "AbortError" && !byId("appView").hidden) report(error);
+  }
+}
+
+function handleSessionEvent(event) {
+  window.WorkspaceSessionEvents.dispatch(event, {
+    signedOut: showLogin,
+    accountChanged: () => {
+      secureReset();
+      window.location.reload();
+    },
+    sessionChanged: revalidateSession,
+  });
+}
+
+sessionChannel?.addEventListener("message", (event) => handleSessionEvent(event.data));
+window.addEventListener("storage", (event) => {
+  if (event.key !== "lingbot-workspace-session-event" || !event.newValue) return;
+  try { handleSessionEvent(JSON.parse(event.newValue)); } catch (_) { /* malformed peer event */ }
+});
+window.addEventListener("focus", () => revalidateSession());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") revalidateSession();
+});
 
 function clearDetail() {
   byId("jobDetail").hidden = true;
@@ -70,6 +138,17 @@ function clearDetail() {
   byId("shareButton").removeAttribute("data-artifact-id");
   byId("artifactFacts").replaceChildren();
   byId("provenanceList").replaceChildren();
+  byId("detailEngine").textContent = "Engine";
+  byId("detailTitle").textContent = "Scene";
+  byId("detailMeta").textContent = "";
+  byId("progressTitle").textContent = "Processing";
+  byId("progressPercent").textContent = "0%";
+  byId("progressBar").value = 0;
+  byId("progressBar").textContent = "0%";
+  byId("jobMessage").textContent = "";
+  byId("viewerStatus").textContent = "Waiting for a scene.";
+  byId("cancelButton").hidden = true;
+  byId("deleteButton").hidden = true;
   if (state.viewer) state.viewer.destroy();
   state.viewer = null;
   state.viewerArtifact = null;
@@ -83,6 +162,14 @@ function secureReset() {
   state.pollTimer = null;
   state.csrf = "";
   state.jobs = [];
+  state.assets = [];
+  state.shares = [];
+  state.jobCursor = null;
+  state.assetCursor = null;
+  state.shareCursor = null;
+  state.selectedJobs.clear();
+  state.selectedAssets.clear();
+  state.selectedShares.clear();
   state.selectedId = null;
   state.engine = null;
   state.principal = "";
@@ -92,9 +179,23 @@ function secureReset() {
   byId("toast").hidden = true;
   byId("toast").textContent = "";
   byId("jobList").replaceChildren();
+  byId("assetList").replaceChildren();
+  byId("shareList").replaceChildren();
+  byId("workspaceName").textContent = "Workspace";
+  byId("researchStatus").textContent = "Checking";
+  byId("researchReason").textContent = "Research configuration is checked after sign-in.";
+  byId("loginMessage").textContent = "";
+  byId("token").value = "";
   byId("video").value = "";
   byId("shareUrl").value = "";
   if (byId("shareDialog").open) byId("shareDialog").close();
+  byId("emptyJobs").hidden = false;
+  byId("emptyAssets").hidden = false;
+  byId("emptyShares").hidden = false;
+  byId("loadMoreJobs").hidden = true;
+  byId("loadMoreAssets").hidden = true;
+  byId("loadMoreShares").hidden = true;
+  updateSelectionSummary();
   clearDetail();
 }
 
@@ -147,6 +248,17 @@ function renderJobs() {
   byId("emptyJobs").hidden = state.jobs.length > 0;
   state.jobs.forEach((job) => {
     const item = document.createElement("li");
+    item.className = "job-row";
+    const selector = document.createElement("input");
+    selector.type = "checkbox";
+    selector.className = "record-selector";
+    selector.checked = state.selectedJobs.has(job.id);
+    selector.disabled = !terminalStates.has(job.state);
+    selector.setAttribute("aria-label", `Select ${job.engineId} scene created ${formatDate(job.createdAt)}`);
+    selector.addEventListener("change", () => {
+      if (selector.checked) state.selectedJobs.add(job.id); else state.selectedJobs.delete(job.id);
+      updateSelectionSummary();
+    });
     const button = document.createElement("button");
     button.type = "button";
     button.className = "job-button";
@@ -162,25 +274,179 @@ function renderJobs() {
     timestamp.textContent = formatDate(job.createdAt);
     button.append(name, jobState, timestamp);
     button.addEventListener("click", () => selectJob(job.id));
-    item.append(button);
+    item.append(selector, button);
     list.append(item);
   });
 }
 
-async function loadJobs({ selectNewest = false } = {}) {
-  const result = await api("/api/jobs");
-  state.jobs = result.jobs;
+async function loadJobs({ selectNewest = false, append = false, preserveLoaded = false } = {}) {
+  const cursor = append ? state.jobCursor : null;
+  const loadedCursor = state.jobCursor;
+  const query = new URLSearchParams({ limit: "25" });
+  if (cursor) query.set("cursor", cursor);
+  const result = await api(`/api/jobs?${query}`);
+  if (append) {
+    const seen = new Set(state.jobs.map((job) => job.id));
+    state.jobs.push(...result.jobs.filter((job) => !seen.has(job.id)));
+  } else if (preserveLoaded) {
+    const refreshed = new Set(result.jobs.map((job) => job.id));
+    state.jobs = [...result.jobs, ...state.jobs.filter((job) => !refreshed.has(job.id))];
+  } else {
+    state.jobs = result.jobs;
+  }
+  state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
+  byId("loadMoreJobs").hidden = !state.jobCursor;
   if (selectNewest && state.jobs.length) state.selectedId = state.jobs[0].id;
   if (state.selectedId && !state.jobs.some((job) => job.id === state.selectedId)) state.selectedId = null;
+  const jobIds = new Set(state.jobs.map((job) => job.id));
+  state.selectedJobs.forEach((id) => { if (!jobIds.has(id) && !append) state.selectedJobs.delete(id); });
   renderJobs();
+  updateSelectionSummary();
   if (state.selectedId) await renderJobDetail(); else clearDetail();
   schedulePoll();
+}
+
+function updateSelectionSummary() {
+  const counts = [state.selectedJobs.size, state.selectedAssets.size, state.selectedShares.size];
+  const total = counts.reduce((sum, value) => sum + value, 0);
+  byId("selectionSummary").textContent = total
+    ? `${total} selected · ${counts[0]} scenes · ${counts[1]} uploads · ${counts[2]} shares`
+    : "Nothing selected";
+  byId("bulkDeleteButton").disabled = total === 0;
+}
+
+function inventoryRow({ id, name, meta, selected, disabled = false, actionLabel, onSelect, onAction }) {
+  const item = document.createElement("li");
+  item.className = "inventory-row";
+  const selector = document.createElement("input");
+  selector.type = "checkbox";
+  selector.className = "record-selector";
+  selector.checked = selected;
+  selector.disabled = disabled;
+  selector.setAttribute("aria-label", `Select ${name}`);
+  selector.addEventListener("change", () => onSelect(selector.checked));
+  const copy = document.createElement("span");
+  copy.className = "inventory-copy";
+  const title = document.createElement("span");
+  title.className = "inventory-name";
+  title.textContent = name;
+  const detail = document.createElement("span");
+  detail.className = "inventory-meta";
+  detail.textContent = meta;
+  copy.append(title, detail);
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "text-button danger inventory-action";
+  action.textContent = actionLabel;
+  action.disabled = disabled;
+  action.dataset.recordId = id;
+  action.addEventListener("click", onAction);
+  item.append(selector, copy, action);
+  return item;
+}
+
+function renderAssets() {
+  const list = byId("assetList");
+  list.replaceChildren();
+  byId("emptyAssets").hidden = state.assets.length > 0;
+  state.assets.forEach((asset) => {
+    list.append(inventoryRow({
+      id: asset.id,
+      name: asset.name,
+      meta: `${formatBytes(asset.sizeBytes)} · ${formatDate(asset.createdAt)}`,
+      selected: state.selectedAssets.has(asset.id),
+      actionLabel: "Delete",
+      onSelect: (checked) => {
+        if (checked) state.selectedAssets.add(asset.id); else state.selectedAssets.delete(asset.id);
+        updateSelectionSummary();
+      },
+      onAction: () => deleteAsset(asset),
+    }));
+  });
+}
+
+function renderShares() {
+  const list = byId("shareList");
+  list.replaceChildren();
+  byId("emptyShares").hidden = state.shares.length > 0;
+  const now = Date.now() / 1000;
+  state.shares.forEach((share) => {
+    const inactive = Boolean(share.revokedAt) || share.expiresAt <= now;
+    list.append(inventoryRow({
+      id: share.id,
+      name: share.filename,
+      meta: inactive ? "Inactive" : `Expires ${formatDate(share.expiresAt)}`,
+      selected: state.selectedShares.has(share.id),
+      disabled: inactive,
+      actionLabel: inactive ? "Revoked" : "Revoke",
+      onSelect: (checked) => {
+        if (checked) state.selectedShares.add(share.id); else state.selectedShares.delete(share.id);
+        updateSelectionSummary();
+      },
+      onAction: () => revokeShare(share),
+    }));
+  });
+}
+
+async function loadAssets({ append = false } = {}) {
+  const query = new URLSearchParams({ limit: "25" });
+  if (append && state.assetCursor) query.set("cursor", state.assetCursor);
+  const result = await api(`/api/assets?${query}`);
+  if (append) {
+    const seen = new Set(state.assets.map((asset) => asset.id));
+    state.assets.push(...result.assets.filter((asset) => !seen.has(asset.id)));
+  } else state.assets = result.assets;
+  state.assetCursor = result.nextCursor;
+  byId("loadMoreAssets").hidden = !state.assetCursor;
+  renderAssets();
+  updateSelectionSummary();
+}
+
+async function loadShares({ append = false } = {}) {
+  const query = new URLSearchParams({ limit: "25" });
+  if (append && state.shareCursor) query.set("cursor", state.shareCursor);
+  const result = await api(`/api/shares?${query}`);
+  if (append) {
+    const seen = new Set(state.shares.map((share) => share.id));
+    state.shares.push(...result.shares.filter((share) => !seen.has(share.id)));
+  } else state.shares = result.shares;
+  state.shareCursor = result.nextCursor;
+  byId("loadMoreShares").hidden = !state.shareCursor;
+  renderShares();
+  updateSelectionSummary();
+}
+
+async function loadInventory() {
+  await Promise.all([loadAssets(), loadShares()]);
+  updateSelectionSummary();
+}
+
+async function deleteAsset(asset) {
+  if (!window.confirm(`Delete retained upload “${asset.name}”?`)) return;
+  try {
+    await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true });
+    state.selectedAssets.delete(asset.id);
+    await loadAssets();
+    toast("Upload deletion accepted.");
+  } catch (error) { toast(error.message); }
+}
+
+async function revokeShare(share) {
+  if (!window.confirm(`Revoke the share for “${share.filename}”?`)) return;
+  try {
+    await api(`/api/shares/${encodeURIComponent(share.id)}`, { method: "DELETE", idempotent: true });
+    state.selectedShares.delete(share.id);
+    await loadShares();
+    toast("Share revoked.");
+  } catch (error) { toast(error.message); }
 }
 
 function schedulePoll() {
   if (state.pollTimer) clearTimeout(state.pollTimer);
   const hasActive = state.jobs.some((job) => !terminalStates.has(job.state));
-  state.pollTimer = window.setTimeout(() => loadJobs().catch(report), hasActive ? 900 : 5000);
+  state.pollTimer = window.setTimeout(
+    () => loadJobs({ preserveLoaded: true }).catch(report), hasActive ? 900 : 5000,
+  );
 }
 
 async function selectJob(jobId) {
@@ -274,7 +540,7 @@ async function initialize() {
   try {
     const result = await api("/api/me");
     showApp(result.user, result.csrfToken);
-    await Promise.all([loadEngines(), loadJobs({ selectNewest: true })]);
+    await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
   } catch (_) {
     showLogin();
   }
@@ -287,14 +553,21 @@ byId("loginForm").addEventListener("submit", async (event) => {
     const result = await api("/api/session", { method: "POST", json: { token: byId("token").value } });
     byId("token").value = "";
     showApp(result.user, result.csrfToken);
-    await Promise.all([loadEngines(), loadJobs({ selectNewest: true })]);
+    broadcastSession("session-changed");
+    await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
   } catch (error) {
     byId("loginMessage").textContent = error.message;
   }
 });
 
 byId("logoutButton").addEventListener("click", async () => {
-  try { await api("/api/session", { method: "DELETE" }); } finally { showLogin(); }
+  try {
+    await api("/api/session", { method: "DELETE" });
+    broadcastSession("signed-out");
+    showLogin();
+  } catch (error) {
+    if (!byId("appView").hidden) toast(`Sign out failed: ${error.message}`);
+  }
 });
 
 byId("sampleButton").addEventListener("click", async () => {
@@ -338,7 +611,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     });
     state.selectedId = job.id;
     asset = null;
-    await loadJobs();
+    await Promise.all([loadJobs(), loadAssets()]);
   } catch (error) {
     if (asset) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
@@ -351,6 +624,10 @@ byId("researchForm").addEventListener("submit", async (event) => {
 });
 
 byId("refreshButton").addEventListener("click", () => loadJobs().catch(report));
+byId("loadMoreJobs").addEventListener("click", () => loadJobs({ append: true }).catch(report));
+byId("loadMoreAssets").addEventListener("click", () => loadAssets({ append: true }).catch(report));
+byId("loadMoreShares").addEventListener("click", () => loadShares({ append: true }).catch(report));
+byId("refreshInventoryButton").addEventListener("click", () => loadInventory().catch(report));
 byId("cancelButton").addEventListener("click", async () => {
   if (!state.selectedId) return;
   try {
@@ -364,7 +641,7 @@ byId("deleteButton").addEventListener("click", async () => {
     await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { method: "DELETE", idempotent: true });
     state.selectedId = null;
     clearDetail();
-    await loadJobs({ selectNewest: true });
+    await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
     toast("Deletion accepted. Stored objects are being removed.");
   } catch (error) { toast(error.message); }
 });
@@ -379,11 +656,38 @@ byId("shareButton").addEventListener("click", async () => {
     });
     byId("shareUrl").value = new URL(result.url, window.location.origin).href;
     byId("shareDialog").showModal();
+    await loadShares();
   } catch (error) { toast(error.message); }
 });
 byId("copyShare").addEventListener("click", async () => {
   await navigator.clipboard.writeText(byId("shareUrl").value);
   toast("Share URL copied.");
+});
+byId("bulkDeleteButton").addEventListener("click", async () => {
+  const total = state.selectedJobs.size + state.selectedAssets.size + state.selectedShares.size;
+  if (!total || !window.confirm(`Clean up ${total} selected record${total === 1 ? "" : "s"}?`)) return;
+  const button = byId("bulkDeleteButton");
+  button.disabled = true;
+  try {
+    const result = await api("/api/bulk-delete", {
+      method: "POST",
+      idempotent: true,
+      json: {
+        jobIds: [...state.selectedJobs],
+        assetIds: [...state.selectedAssets],
+        shareIds: [...state.selectedShares],
+      },
+    });
+    Object.values(result.accepted).flat().forEach((id) => {
+      state.selectedJobs.delete(id);
+      state.selectedAssets.delete(id);
+      state.selectedShares.delete(id);
+    });
+    await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
+    const failures = Object.keys(result.errors).length;
+    toast(failures ? `Cleanup accepted with ${failures} record error${failures === 1 ? "" : "s"}.` : "Cleanup accepted.");
+  } catch (error) { toast(error.message); }
+  finally { updateSelectionSummary(); }
 });
 
 initialize();

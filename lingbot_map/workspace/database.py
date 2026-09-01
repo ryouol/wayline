@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _id(prefix: str) -> str:
@@ -111,7 +111,39 @@ class Database:
             else:
                 connection.commit()
 
+    @contextmanager
+    def transaction_or(
+        self, connection: sqlite3.Connection | None = None
+    ) -> Iterator[sqlite3.Connection]:
+        """Join a caller-owned transaction or open one for a standalone operation."""
+
+        if connection is not None:
+            yield connection
+            return
+        with self.transaction() as owned:
+            yield owned
+
     def initialize(self) -> None:
+        existing_version: int | None = None
+        if self.path.exists():
+            # Inspect compatibility through a read-only handle before connect()
+            # can enable WAL or create sidecars. An older binary must leave a
+            # future database byte-for-byte untouched.
+            with sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True) as inspection:
+                schema_table = inspection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+                ).fetchone()
+                version_row = (
+                    inspection.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
+                    if schema_table
+                    else None
+                )
+                existing_version = int(version_row[0]) if version_row is not None else None
+        if existing_version is not None and existing_version not in {1, 2, SCHEMA_VERSION}:
+            raise RuntimeError(
+                f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
+            )
+
         with self.connect() as connection:
             connection.executescript(
                 """
@@ -153,6 +185,7 @@ class Database:
                     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     token_hash TEXT NOT NULL UNIQUE,
                     csrf_hash TEXT NOT NULL,
+                    csrf_token TEXT NOT NULL,
                     expires_at REAL NOT NULL,
                     created_at REAL NOT NULL
                 );
@@ -246,6 +279,10 @@ class Database:
                     object_key TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+                    materialized INTEGER NOT NULL DEFAULT 0
+                        CHECK (materialized IN (0,1)),
+                    purpose TEXT NOT NULL DEFAULT 'legacy'
+                        CHECK (purpose IN ('upload','artifact','legacy')),
                     expires_at REAL NOT NULL,
                     created_at REAL NOT NULL
                 );
@@ -275,36 +312,59 @@ class Database:
                 );
                 """
             )
-            version = connection.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
-            if version is None:
+            if existing_version is None:
                 connection.execute("INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,))
-            elif version[0] == 1:
-                migrations = (
-                    "ALTER TABLE tenants ADD COLUMN storage_limit_bytes "
-                    "INTEGER NOT NULL DEFAULT 5368709120",
-                    "ALTER TABLE tenants ADD COLUMN asset_limit INTEGER NOT NULL DEFAULT 100",
-                    "ALTER TABLE tenants ADD COLUMN unattached_asset_limit "
-                    "INTEGER NOT NULL DEFAULT 10",
-                    "ALTER TABLE tenants ADD COLUMN job_limit INTEGER NOT NULL DEFAULT 500",
-                    "ALTER TABLE tenants ADD COLUMN artifact_limit INTEGER NOT NULL DEFAULT 1500",
-                    "ALTER TABLE tenants ADD COLUMN share_limit INTEGER NOT NULL DEFAULT 250",
-                    "ALTER TABLE jobs ADD COLUMN attempt_token TEXT",
-                    "ALTER TABLE jobs ADD COLUMN worker_id TEXT",
-                    "ALTER TABLE artifacts ADD COLUMN attempt_token TEXT NOT NULL DEFAULT 'legacy'",
-                )
+            elif existing_version < SCHEMA_VERSION:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    for statement in migrations:
-                        connection.execute(statement)
+                    if existing_version == 1:
+                        migrations = (
+                            "ALTER TABLE tenants ADD COLUMN storage_limit_bytes "
+                            "INTEGER NOT NULL DEFAULT 5368709120",
+                            "ALTER TABLE tenants ADD COLUMN asset_limit "
+                            "INTEGER NOT NULL DEFAULT 100",
+                            "ALTER TABLE tenants ADD COLUMN unattached_asset_limit "
+                            "INTEGER NOT NULL DEFAULT 10",
+                            "ALTER TABLE tenants ADD COLUMN job_limit INTEGER NOT NULL DEFAULT 500",
+                            "ALTER TABLE tenants ADD COLUMN artifact_limit "
+                            "INTEGER NOT NULL DEFAULT 1500",
+                            "ALTER TABLE tenants ADD COLUMN share_limit "
+                            "INTEGER NOT NULL DEFAULT 250",
+                            "ALTER TABLE jobs ADD COLUMN attempt_token TEXT",
+                            "ALTER TABLE jobs ADD COLUMN worker_id TEXT",
+                            "ALTER TABLE artifacts ADD COLUMN attempt_token "
+                            "TEXT NOT NULL DEFAULT 'legacy'",
+                        )
+                        for statement in migrations:
+                            connection.execute(statement)
+                    session_columns = {
+                        row[1] for row in connection.execute("PRAGMA table_info(sessions)")
+                    }
+                    if "csrf_token" not in session_columns:
+                        connection.execute(
+                            "ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"
+                        )
+                        # Legacy sessions retained only the token hash, so they
+                        # cannot safely recover a stable browser CSRF value.
+                        connection.execute("DELETE FROM sessions")
+                    claim_columns = {
+                        row[1] for row in connection.execute("PRAGMA table_info(object_claims)")
+                    }
+                    if "materialized" not in claim_columns:
+                        connection.execute(
+                            "ALTER TABLE object_claims ADD COLUMN materialized "
+                            "INTEGER NOT NULL DEFAULT 0"
+                        )
+                    if "purpose" not in claim_columns:
+                        connection.execute(
+                            "ALTER TABLE object_claims ADD COLUMN purpose "
+                            "TEXT NOT NULL DEFAULT 'legacy'"
+                        )
                     connection.execute("UPDATE schema_meta SET version = ?", (SCHEMA_VERSION,))
                     connection.commit()
                 except Exception:
                     connection.rollback()
                     raise
-            elif version[0] != SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"database schema {version[0]} is unsupported; expected {SCHEMA_VERSION}"
-                )
 
     def bootstrap(
         self,
@@ -502,13 +562,18 @@ class Database:
             if stale:
                 connection.executemany("DELETE FROM sessions WHERE id = ?", stale)
             connection.execute(
-                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO sessions(
+                    id,tenant_id,user_id,token_hash,csrf_hash,csrf_token,expires_at,created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     _id("ses"),
                     principal["tenant_id"],
                     principal["user_id"],
                     token_digest(session_token),
                     token_digest(csrf_token),
+                    csrf_token,
                     now + ttl_seconds,
                     now,
                 ),
@@ -522,6 +587,7 @@ class Database:
                 connection.execute(
                     """
                     SELECT s.id AS session_id, s.tenant_id, s.user_id, s.csrf_hash,
+                           s.csrf_token,
                            u.display_name, n.name AS tenant_name
                     FROM sessions s
                     JOIN users u ON u.id = s.user_id
@@ -536,16 +602,17 @@ class Database:
         with self.transaction() as connection:
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
-    def rotate_csrf(self, session_id: str) -> str:
-        csrf_token = secrets.token_urlsafe(24)
-        with self.transaction() as connection:
-            changed = connection.execute(
-                "UPDATE sessions SET csrf_hash = ? WHERE id = ? AND expires_at > ?",
-                (token_digest(csrf_token), session_id, time.time()),
-            ).rowcount
-        if changed != 1:
+    def session_csrf(self, session_id: str) -> str:
+        """Return the stable per-session CSRF value without invalidating peer tabs."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT csrf_token FROM sessions WHERE id=? AND expires_at>?",
+                (session_id, time.time()),
+            ).fetchone()
+        if row is None:
             raise KeyError(session_id)
-        return csrf_token
+        return str(row["csrf_token"])
 
     def quota(self, tenant_id: str) -> dict[str, Any]:
         with self.connect() as connection:
@@ -669,12 +736,13 @@ class Database:
         metadata: dict[str, Any],
         rate_limit: int | None = None,
         rate_window_seconds: int = 60,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         asset_id, now = _id("ast"), time.time()
-        with self.transaction() as connection:
-            tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
-            claim = connection.execute(
+        with self.transaction_or(connection) as active:
+            tenant = self._tenant(active, tenant_id)
+            usage = self._resource_usage(active, tenant_id)
+            claim = active.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             ).fetchone()
@@ -686,14 +754,14 @@ class Database:
             if usage["unattached_asset_count"] >= tenant["unattached_asset_limit"]:
                 raise QuotaExceeded("delete or use an unattached upload before adding another")
             self._consume_rate(
-                connection,
+                active,
                 tenant_id,
                 "upload",
                 limit=rate_limit,
                 window_seconds=rate_window_seconds,
                 now=now,
             )
-            connection.execute(
+            active.execute(
                 """
                 INSERT INTO assets(
                     id,tenant_id,object_key,original_name,media_type,size_bytes,
@@ -712,23 +780,27 @@ class Database:
                     now,
                 ),
             )
-            connection.execute(
+            active.execute(
                 "DELETE FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             )
-        return self.get_asset(tenant_id, asset_id)
+            return self._get_asset(active, tenant_id, asset_id)
 
-    def get_asset(self, tenant_id: str, asset_id: str) -> dict[str, Any]:
-        with self.connect() as connection:
-            result = _row(
-                connection.execute(
-                    "SELECT * FROM assets WHERE id = ? AND tenant_id = ?", (asset_id, tenant_id)
-                ).fetchone()
-            )
+    @staticmethod
+    def _get_asset(connection: sqlite3.Connection, tenant_id: str, asset_id: str) -> dict[str, Any]:
+        result = _row(
+            connection.execute(
+                "SELECT * FROM assets WHERE id = ? AND tenant_id = ?", (asset_id, tenant_id)
+            ).fetchone()
+        )
         if result is None:
             raise KeyError(asset_id)
         result["metadata"] = json.loads(result.pop("metadata_json"))
         return result
+
+    def get_asset(self, tenant_id: str, asset_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            return self._get_asset(connection, tenant_id, asset_id)
 
     def page_assets(
         self, tenant_id: str, *, limit: int = 50, cursor: str | None = None
@@ -768,23 +840,24 @@ class Database:
         reserve_units: int,
         rate_limit: int | None = None,
         rate_window_seconds: int = 60,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         job_id, now = _id("job"), time.time()
-        with self.transaction() as connection:
-            tenant = connection.execute(
+        with self.transaction_or(connection) as active:
+            tenant = active.execute(
                 "SELECT quota_units, reserved_units, consumed_units FROM tenants WHERE id = ?",
                 (tenant_id,),
             ).fetchone()
             if tenant is None:
                 raise KeyError(tenant_id)
-            limits = connection.execute(
+            limits = active.execute(
                 "SELECT job_limit FROM tenants WHERE id=?", (tenant_id,)
             ).fetchone()
-            usage = self._resource_usage(connection, tenant_id)
+            usage = self._resource_usage(active, tenant_id)
             if usage["job_count"] >= limits["job_limit"]:
                 raise QuotaExceeded("tenant job count limit exceeded; delete retained jobs")
             self._consume_rate(
-                connection,
+                active,
                 tenant_id,
                 "job",
                 limit=rate_limit,
@@ -795,17 +868,17 @@ class Database:
             if reserve_units > available:
                 raise QuotaExceeded(f"job needs {reserve_units} units; {available} remain")
             if source_asset_id:
-                source = connection.execute(
+                source = active.execute(
                     "SELECT id FROM assets WHERE id = ? AND tenant_id = ?",
                     (source_asset_id, tenant_id),
                 ).fetchone()
                 if source is None:
                     raise KeyError(source_asset_id)
-            connection.execute(
+            active.execute(
                 "UPDATE tenants SET reserved_units = reserved_units + ? WHERE id = ?",
                 (reserve_units, tenant_id),
             )
-            connection.execute(
+            active.execute(
                 """
                 INSERT INTO jobs (
                     id, tenant_id, source_asset_id, engine_id, state, stage, progress,
@@ -824,11 +897,11 @@ class Database:
                     now,
                 ),
             )
-            connection.execute(
+            active.execute(
                 "INSERT INTO usage_ledger VALUES (?, ?, ?, 'reserve', ?, ?, ?)",
                 (_id("led"), tenant_id, job_id, reserve_units, "job capacity reservation", now),
             )
-        return self.get_job(tenant_id, job_id)
+            return self._get_job(active, tenant_id, job_id)
 
     def _decode_job(self, value: dict[str, Any]) -> dict[str, Any]:
         value["params"] = json.loads(value.pop("params_json"))
@@ -838,15 +911,20 @@ class Database:
 
     def get_job(self, tenant_id: str, job_id: str) -> dict[str, Any]:
         with self.connect() as connection:
-            value = _row(
-                connection.execute(
-                    "SELECT * FROM jobs WHERE id = ? AND tenant_id = ?", (job_id, tenant_id)
-                ).fetchone()
-            )
+            return self._get_job(connection, tenant_id, job_id)
+
+    def _get_job(
+        self, connection: sqlite3.Connection, tenant_id: str, job_id: str
+    ) -> dict[str, Any]:
+        value = _row(
+            connection.execute(
+                "SELECT * FROM jobs WHERE id = ? AND tenant_id = ?", (job_id, tenant_id)
+            ).fetchone()
+        )
         if value is None:
             raise KeyError(job_id)
         value = self._decode_job(value)
-        value["artifacts"] = self.list_artifacts(tenant_id, job_id)
+        value["artifacts"] = self._list_artifacts(connection, tenant_id, job_id)
         return value
 
     def list_jobs(self, tenant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -971,10 +1049,16 @@ class Database:
             or row["worker_id"] != worker_id
         )
 
-    def request_cancellation(self, tenant_id: str, job_id: str) -> str:
+    def request_cancellation(
+        self,
+        tenant_id: str,
+        job_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> str:
         now = time.time()
-        with self.transaction() as connection:
-            row = connection.execute(
+        with self.transaction_or(connection) as active:
+            row = active.execute(
                 "SELECT state, reserved_units FROM jobs WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
             ).fetchone()
@@ -983,7 +1067,7 @@ class Database:
             if row["state"] in {"ready", "failed", "cancelled"}:
                 raise InvalidTransition("only queued or running jobs can be cancelled")
             if row["state"] == "queued":
-                connection.execute(
+                active.execute(
                     """
                     UPDATE jobs SET state='cancelled', stage='cancelled', cancellation_requested=1,
                         finished_at=?, updated_at=? WHERE id=?
@@ -991,10 +1075,10 @@ class Database:
                     (now, now, job_id),
                 )
                 self._release_reservation(
-                    connection, tenant_id, job_id, row["reserved_units"], "cancel"
+                    active, tenant_id, job_id, row["reserved_units"], "cancel"
                 )
                 return "cancelled"
-            connection.execute(
+            active.execute(
                 """
                 UPDATE jobs SET cancellation_requested=1, stage='cancelling', updated_at=?
                 WHERE id=?
@@ -1359,14 +1443,20 @@ class Database:
 
     def list_artifacts(self, tenant_id: str, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT a.* FROM artifacts a JOIN jobs j ON j.id=a.job_id
-                WHERE a.tenant_id=? AND a.job_id=? AND j.tenant_id=? AND j.state='ready'
-                ORDER BY a.created_at
-                """,
-                (tenant_id, job_id, tenant_id),
-            ).fetchall()
+            return self._list_artifacts(connection, tenant_id, job_id)
+
+    @staticmethod
+    def _list_artifacts(
+        connection: sqlite3.Connection, tenant_id: str, job_id: str
+    ) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """
+            SELECT a.* FROM artifacts a JOIN jobs j ON j.id=a.job_id
+            WHERE a.tenant_id=? AND a.job_id=? AND j.tenant_id=? AND j.state='ready'
+            ORDER BY a.created_at
+            """,
+            (tenant_id, job_id, tenant_id),
+        ).fetchall()
         values = []
         for row in rows:
             value = dict(row)
@@ -1444,25 +1534,37 @@ class Database:
                 )
         return queued
 
-    def queue_delete_asset(self, tenant_id: str, asset_id: str) -> None:
-        with self.transaction() as connection:
-            asset = connection.execute(
+    def queue_delete_asset(
+        self,
+        tenant_id: str,
+        asset_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        with self.transaction_or(connection) as active:
+            asset = active.execute(
                 "SELECT object_key,size_bytes FROM assets WHERE id=? AND tenant_id=?",
                 (asset_id, tenant_id),
             ).fetchone()
             if asset is None:
                 raise KeyError(asset_id)
-            if connection.execute(
+            if active.execute(
                 "SELECT 1 FROM jobs WHERE source_asset_id=? AND tenant_id=? LIMIT 1",
                 (asset_id, tenant_id),
             ).fetchone():
                 raise InvalidTransition("assets referenced by jobs cannot be deleted directly")
-            self._enqueue_object(connection, tenant_id, asset["object_key"], asset["size_bytes"])
-            connection.execute("DELETE FROM assets WHERE id=?", (asset_id,))
+            self._enqueue_object(active, tenant_id, asset["object_key"], asset["size_bytes"])
+            active.execute("DELETE FROM assets WHERE id=?", (asset_id,))
 
-    def queue_delete_job(self, tenant_id: str, job_id: str) -> None:
-        with self.transaction() as connection:
-            job = connection.execute(
+    def queue_delete_job(
+        self,
+        tenant_id: str,
+        job_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        with self.transaction_or(connection) as active:
+            job = active.execute(
                 "SELECT state,source_asset_id FROM jobs WHERE id=? AND tenant_id=?",
                 (job_id, tenant_id),
             ).fetchone()
@@ -1470,49 +1572,108 @@ class Database:
                 raise KeyError(job_id)
             if job["state"] not in {"ready", "failed", "cancelled"}:
                 raise InvalidTransition("finish or cancel the job before deleting it")
-            artifacts = connection.execute(
+            artifacts = active.execute(
                 "SELECT object_key,size_bytes FROM artifacts WHERE job_id=? AND tenant_id=?",
                 (job_id, tenant_id),
             ).fetchall()
             for artifact in artifacts:
                 self._enqueue_object(
-                    connection, tenant_id, artifact["object_key"], artifact["size_bytes"]
+                    active, tenant_id, artifact["object_key"], artifact["size_bytes"]
                 )
             source_id = job["source_asset_id"]
-            connection.execute("DELETE FROM jobs WHERE id=? AND tenant_id=?", (job_id, tenant_id))
+            active.execute("DELETE FROM jobs WHERE id=? AND tenant_id=?", (job_id, tenant_id))
             if (
                 source_id
-                and not connection.execute(
+                and not active.execute(
                     "SELECT 1 FROM jobs WHERE source_asset_id=? LIMIT 1", (source_id,)
                 ).fetchone()
             ):
-                source = connection.execute(
+                source = active.execute(
                     "SELECT object_key,size_bytes FROM assets WHERE id=? AND tenant_id=?",
                     (source_id, tenant_id),
                 ).fetchone()
                 if source:
                     self._enqueue_object(
-                        connection, tenant_id, source["object_key"], source["size_bytes"]
+                        active, tenant_id, source["object_key"], source["size_bytes"]
                     )
-                    connection.execute("DELETE FROM assets WHERE id=?", (source_id,))
+                    active.execute("DELETE FROM assets WHERE id=?", (source_id,))
 
     def queue_orphan_object(self, tenant_id: str, object_key: str, size_bytes: int) -> None:
         with self.transaction() as connection:
             self._enqueue_object(connection, tenant_id, object_key, size_bytes)
 
-    def claim_object(self, tenant_id: str, object_key: str, *, ttl_seconds: int) -> None:
-        """Protect an in-flight object from storage reconciliation."""
+    @staticmethod
+    def _global_stored_bytes(connection: sqlite3.Connection) -> int:
+        row = connection.execute(
+            """
+            SELECT
+                (SELECT COALESCE(SUM(size_bytes),0) FROM assets) +
+                (SELECT COALESCE(SUM(size_bytes),0) FROM artifacts) +
+                (SELECT COALESCE(SUM(size_bytes),0) FROM deletion_outbox) +
+                (SELECT COALESCE(SUM(size_bytes),0) FROM object_claims)
+            """
+        ).fetchone()
+        return int(row[0])
 
+    def claim_object(
+        self,
+        tenant_id: str,
+        object_key: str,
+        *,
+        ttl_seconds: int,
+        reserve_bytes: int = 0,
+        purpose: str = "legacy",
+        global_storage_bytes: int | None = None,
+        physical_free_bytes: int | None = None,
+        min_free_bytes: int = 0,
+        global_inflight_limit: int | None = None,
+        tenant_inflight_limit: int | None = None,
+    ) -> None:
+        """Reserve storage bytes and an in-flight slot before object I/O."""
+
+        if reserve_bytes < 0:
+            raise ValueError("object reservation must not be negative")
+        if purpose not in {"upload", "artifact", "legacy"}:
+            raise ValueError("unsupported object-claim purpose")
         now = time.time()
         with self.transaction() as connection:
-            self._tenant(connection, tenant_id)
+            tenant = self._tenant(connection, tenant_id)
+            usage = self._resource_usage(connection, tenant_id)
+            if usage["stored_bytes"] + reserve_bytes > tenant["storage_limit_bytes"]:
+                raise QuotaExceeded("tenant storage byte limit exceeded")
+            global_used = self._global_stored_bytes(connection)
+            if (
+                global_storage_bytes is not None
+                and global_used + reserve_bytes > global_storage_bytes
+            ):
+                raise QuotaExceeded("global storage byte limit exceeded")
+            inflight_global = int(
+                connection.execute("SELECT COUNT(*) FROM object_claims").fetchone()[0]
+            )
+            inflight_tenant = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM object_claims WHERE tenant_id=?", (tenant_id,)
+                ).fetchone()[0]
+            )
+            if global_inflight_limit is not None and inflight_global >= global_inflight_limit:
+                raise QuotaExceeded("global in-flight storage-write limit exceeded")
+            if tenant_inflight_limit is not None and inflight_tenant >= tenant_inflight_limit:
+                raise QuotaExceeded("tenant in-flight storage-write limit exceeded")
+            if physical_free_bytes is not None:
+                unmaterialized = int(
+                    connection.execute(
+                        "SELECT COALESCE(SUM(size_bytes),0) FROM object_claims WHERE materialized=0"
+                    ).fetchone()[0]
+                )
+                if physical_free_bytes - unmaterialized - reserve_bytes < min_free_bytes:
+                    raise QuotaExceeded("storage minimum-free-space budget would be breached")
             connection.execute(
                 """
                 INSERT INTO object_claims(
-                    object_key,tenant_id,size_bytes,expires_at,created_at
-                ) VALUES(?,?,0,?,?)
+                    object_key,tenant_id,size_bytes,materialized,purpose,expires_at,created_at
+                ) VALUES(?,?,?,0,?,?,?)
                 """,
-                (object_key, tenant_id, now + ttl_seconds, now),
+                (object_key, tenant_id, reserve_bytes, purpose, now + ttl_seconds, now),
             )
 
     def size_object_claim(self, tenant_id: str, object_key: str, size_bytes: int) -> None:
@@ -1530,12 +1691,57 @@ class Database:
             if claim is None:
                 raise KeyError(object_key)
             current = int(claim["size_bytes"])
+            if current and size_bytes > current:
+                raise QuotaExceeded("object exceeded its pre-I/O storage reservation")
             if usage["stored_bytes"] - current + size_bytes > tenant["storage_limit_bytes"]:
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             connection.execute(
-                "UPDATE object_claims SET size_bytes=? WHERE object_key=? AND tenant_id=?",
+                """
+                UPDATE object_claims SET size_bytes=?,materialized=1
+                WHERE object_key=? AND tenant_id=?
+                """,
                 (size_bytes, object_key, tenant_id),
             )
+
+    def object_claims_due(self, *, force: bool = False) -> list[dict[str, Any]]:
+        predicate = "1=1" if force else "expires_at<=?"
+        parameters: tuple[Any, ...] = () if force else (time.time(),)
+        with self.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    f"SELECT * FROM object_claims WHERE {predicate} ORDER BY created_at",
+                    parameters,
+                ).fetchall()
+            ]
+
+    def recover_object_claim(
+        self,
+        tenant_id: str,
+        object_key: str,
+        *,
+        actual_size: int | None,
+    ) -> bool:
+        """Reconcile one abandoned claim using a measured object size."""
+
+        with self.transaction() as connection:
+            claim = connection.execute(
+                "SELECT 1 FROM object_claims WHERE object_key=? AND tenant_id=?",
+                (object_key, tenant_id),
+            ).fetchone()
+            if claim is None:
+                return False
+            active = connection.execute(
+                """
+                SELECT 1 FROM assets WHERE object_key=?
+                UNION SELECT 1 FROM artifacts WHERE object_key=? LIMIT 1
+                """,
+                (object_key, object_key),
+            ).fetchone()
+            if active is None and actual_size is not None:
+                self._enqueue_object(connection, tenant_id, object_key, actual_size)
+            connection.execute("DELETE FROM object_claims WHERE object_key=?", (object_key,))
+            return True
 
     def release_object_claim(self, tenant_id: str, object_key: str) -> None:
         with self.transaction() as connection:
@@ -1543,39 +1749,6 @@ class Database:
                 "DELETE FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             )
-
-    def expire_object_claims(self, *, force: bool = False) -> int:
-        """Queue abandoned claimed objects and forget claims for committed objects."""
-
-        now = time.time()
-        with self.transaction() as connection:
-            predicate = "1=1" if force else "expires_at<=?"
-            parameters: tuple[Any, ...] = () if force else (now,)
-            rows = connection.execute(
-                f"SELECT object_key,tenant_id,size_bytes FROM object_claims WHERE {predicate}",
-                parameters,
-            ).fetchall()
-            for row in rows:
-                active = connection.execute(
-                    """
-                    SELECT 1 FROM assets WHERE object_key=?
-                    UNION SELECT 1 FROM artifacts WHERE object_key=? LIMIT 1
-                    """,
-                    (row["object_key"], row["object_key"]),
-                ).fetchone()
-                if active is None:
-                    self._enqueue_object(
-                        connection,
-                        row["tenant_id"],
-                        row["object_key"],
-                        row["size_bytes"],
-                    )
-            if rows:
-                connection.executemany(
-                    "DELETE FROM object_claims WHERE object_key=?",
-                    [(row["object_key"],) for row in rows],
-                )
-        return len(rows)
 
     def known_object_keys(self) -> set[str]:
         with self.connect() as connection:
@@ -1642,11 +1815,12 @@ class Database:
         rate_limit: int | None = None,
         rate_window_seconds: int = 60,
         raw_token: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, Any], str]:
         raw_token = raw_token or secrets.token_urlsafe(32)
         now = time.time()
-        with self.transaction() as connection:
-            artifact = connection.execute(
+        with self.transaction_or(connection) as active:
+            artifact = active.execute(
                 """
                 SELECT a.id FROM artifacts a JOIN jobs j ON j.id=a.job_id
                 WHERE a.id=? AND a.tenant_id=? AND j.tenant_id=? AND j.state='ready'
@@ -1656,12 +1830,12 @@ class Database:
             ).fetchone()
             if artifact is None:
                 raise KeyError(artifact_id)
-            tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
+            tenant = self._tenant(active, tenant_id)
+            usage = self._resource_usage(active, tenant_id)
             if usage["share_count"] >= tenant["share_limit"]:
                 raise QuotaExceeded("tenant active share limit exceeded")
             self._consume_rate(
-                connection,
+                active,
                 tenant_id,
                 "share",
                 limit=rate_limit,
@@ -1669,7 +1843,7 @@ class Database:
                 now=now,
             )
             share_id = _id("shr")
-            connection.execute(
+            active.execute(
                 """
                 INSERT INTO shares(
                     id,tenant_id,artifact_id,token_hash,expires_at,revoked_at,created_at
@@ -1747,9 +1921,15 @@ class Database:
             ).fetchone()
         return bool(row and secrets.compare_digest(str(row["token_hash"]), token_digest(raw_token)))
 
-    def revoke_share(self, tenant_id: str, share_id: str) -> None:
-        with self.transaction() as connection:
-            changed = connection.execute(
+    def revoke_share(
+        self,
+        tenant_id: str,
+        share_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        with self.transaction_or(connection) as active:
+            changed = active.execute(
                 """
                 UPDATE shares SET revoked_at = ?
                 WHERE id = ? AND tenant_id = ? AND revoked_at IS NULL
@@ -1767,6 +1947,7 @@ class Database:
         request_hash: str,
         *,
         ttl_seconds: int,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any] | None:
         """Claim a route-scoped key or return its completed response."""
 
@@ -1776,8 +1957,8 @@ class Database:
             raise ValueError("Idempotency-Key must contain 8 to 200 characters")
         key_hash = token_digest(raw_key)
         now = time.time()
-        with self.transaction() as connection:
-            existing = connection.execute(
+        with self.transaction_or(connection) as active:
+            existing = active.execute(
                 """
                 SELECT * FROM idempotency_keys
                 WHERE tenant_id=? AND scope=? AND key_hash=?
@@ -1785,7 +1966,7 @@ class Database:
                 (tenant_id, scope, key_hash),
             ).fetchone()
             if existing and existing["expires_at"] <= now:
-                connection.execute(
+                active.execute(
                     "DELETE FROM idempotency_keys WHERE tenant_id=? AND scope=? AND key_hash=?",
                     (tenant_id, scope, key_hash),
                 )
@@ -1801,7 +1982,7 @@ class Database:
                     "status_code": int(existing["status_code"]),
                     "response": json.loads(existing["response_json"]),
                 }
-            connection.execute(
+            active.execute(
                 """
                 INSERT INTO idempotency_keys(
                     tenant_id,scope,key_hash,request_hash,state,status_code,response_json,
@@ -1821,11 +2002,12 @@ class Database:
         *,
         status_code: int,
         response: dict[str, Any],
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         if not raw_key:
             return
-        with self.transaction() as connection:
-            changed = connection.execute(
+        with self.transaction_or(connection) as active:
+            changed = active.execute(
                 """
                 UPDATE idempotency_keys
                 SET state='complete',status_code=?,response_json=?,updated_at=?
@@ -1846,12 +2028,18 @@ class Database:
             raise IdempotencyConflict("idempotency claim was lost before completion")
 
     def abandon_idempotency(
-        self, tenant_id: str, scope: str, raw_key: str | None, request_hash: str
+        self,
+        tenant_id: str,
+        scope: str,
+        raw_key: str | None,
+        request_hash: str,
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         if not raw_key:
             return
-        with self.transaction() as connection:
-            connection.execute(
+        with self.transaction_or(connection) as active:
+            active.execute(
                 """
                 DELETE FROM idempotency_keys WHERE tenant_id=? AND scope=? AND key_hash=?
                     AND request_hash=? AND state='in_progress'

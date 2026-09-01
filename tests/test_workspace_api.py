@@ -34,7 +34,7 @@ def test_authentication_and_security_headers(client, service):
     other = client.get("/api/jobs", headers={"Authorization": f"Bearer {other_token}"})
     assert other.headers["x-workspace-principal"] != marker
 
-    # Cookie-authenticated writes require the separate rotating CSRF token.
+    # Cookie-authenticated writes require the separate stable per-session CSRF token.
     assert client.post("/api/jobs/sample").status_code == 403
     client.headers["X-CSRF-Token"] = login.json()["csrfToken"]
     assert client.post("/api/jobs/sample").status_code == 202
@@ -59,15 +59,31 @@ def test_health_checks_database_storage_and_required_worker(client, service, mon
     assert response.json() == {"detail": "Workspace dependencies are not ready."}
 
 
-def test_me_rotates_csrf(authenticated_client):
+def test_me_keeps_csrf_stable_across_tabs_and_logout_revokes_with_stale_header(
+    authenticated_client,
+):
     previous = authenticated_client.headers["X-CSRF-Token"]
-    response = authenticated_client.get("/api/me")
-    assert response.status_code == 200
-    current = response.json()["csrfToken"]
-    assert current and current != previous
-    assert authenticated_client.post("/api/jobs/sample").status_code == 403
-    authenticated_client.headers["X-CSRF-Token"] = current
-    assert authenticated_client.post("/api/jobs/sample").status_code == 202
+    with TestClient(authenticated_client.app) as peer_tab:
+        peer_tab.cookies.update(authenticated_client.cookies)
+        peer_tab.headers["X-CSRF-Token"] = previous
+
+        response = authenticated_client.get("/api/me")
+        assert response.status_code == 200
+        assert response.json()["csrfToken"] == previous
+        assert peer_tab.post("/api/jobs/sample").status_code == 202
+
+        authenticated_client.headers["X-CSRF-Token"] = "stale-token-from-another-tab"
+        logout = authenticated_client.delete("/api/session")
+        assert logout.status_code == 204
+        assert peer_tab.get("/api/me").status_code == 401
+
+
+def test_authenticated_csrf_failure_still_identifies_the_principal(authenticated_client):
+    marker = authenticated_client.get("/api/me").headers["x-workspace-principal"]
+    authenticated_client.headers["X-CSRF-Token"] = "invalid-csrf-token"
+    rejected = authenticated_client.post("/api/jobs/sample")
+    assert rejected.status_code == 403
+    assert rejected.headers["x-workspace-principal"] == marker
 
 
 def test_bearer_authentication_does_not_use_csrf(client):
@@ -141,6 +157,22 @@ def test_request_body_ceiling_rejects_before_parsing(client):
     )
     assert response.status_code == 413
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_unhandled_500_keeps_security_headers(settings, service):
+    app = create_app(settings, service=service, start_worker=False)
+
+    @app.get("/test-only-unhandled-error")
+    def unhandled_error():
+        raise RuntimeError("private implementation detail")
+
+    with TestClient(app, raise_server_exceptions=False) as error_client:
+        response = error_client.get("/test-only-unhandled-error")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "The request could not be completed."}
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "private implementation detail" not in response.text
 
 
 def test_production_disables_schema_validates_host_and_leaves_hsts_to_edge(settings):

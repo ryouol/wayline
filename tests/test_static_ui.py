@@ -65,7 +65,8 @@ def test_share_markup_and_styles_avoid_external_fonts_and_motion_dependency():
 
 def test_client_code_never_injects_html_strings():
     scripts = "\n".join(
-        (STATIC / name).read_text(encoding="utf-8") for name in ("app.js", "share.js", "viewer.js")
+        (STATIC / name).read_text(encoding="utf-8")
+        for name in ("app.js", "session-events.js", "share.js", "viewer.js")
     )
     assert ".innerHTML" not in scripts
     assert "eval(" not in scripts
@@ -73,18 +74,46 @@ def test_client_code_never_injects_html_strings():
 
 
 def test_session_reset_aborts_requests_and_destroys_webgl_resources():
+    markup = (STATIC / "index.html").read_text(encoding="utf-8")
     app = (STATIC / "app.js").read_text(encoding="utf-8")
     viewer = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert markup.index("/static/session-events.js") < markup.index("/static/app.js")
     assert "function secureReset()" in app
     assert "controller.abort()" in app
     assert "state.epoch += 1" in app
     assert 'response.headers.get("X-Workspace-Principal")' in app
     assert "window.location.reload()" in app
+    assert "BroadcastChannel" in app
+    assert 'window.addEventListener("focus"' in app
+    assert 'byId("workspaceName").textContent = "Workspace"' in app
+    assert 'byId("assetList").replaceChildren()' in app
+    assert 'byId("shareList").replaceChildren()' in app
+    assert 'broadcastSession("signed-out")' in app
+    assert "WorkspaceSessionEvents.dispatch" in app
+    assert "secureReset();\n      window.location.reload();" in app
     assert "state.viewer.destroy()" in app
     assert "new AbortController()" in viewer
     assert "gl.deleteBuffer" in viewer
     assert "gl.deleteProgram" in viewer
     assert 'gl.getExtension("WEBGL_lose_context")' in viewer
+
+
+def test_management_ui_consumes_all_cursor_inventories_and_bulk_cleanup():
+    markup = (STATIC / "index.html").read_text(encoding="utf-8")
+    app = (STATIC / "app.js").read_text(encoding="utf-8")
+    for identifier in (
+        "loadMoreJobs",
+        "loadMoreAssets",
+        "loadMoreShares",
+        "assetList",
+        "shareList",
+        "bulkDeleteButton",
+    ):
+        assert f'id="{identifier}"' in markup
+    assert "result.nextCursor" in app
+    assert 'api("/api/bulk-delete"' in app
+    assert "Idempotency-Key" in app
+    assert "idempotency_in_progress" in app
 
 
 def test_public_share_has_persistent_research_warning():

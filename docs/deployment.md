@@ -14,10 +14,11 @@ public base URL, data directory, and explicit upload/job limits. Run as a
 dedicated unprivileged user with a read-only application filesystem and writable
 data mount only.
 
-Set the tenant byte/count limits, retention periods, durable upload/job/share
-rates, job timeout, and shutdown deadline from the environment rather than
-accepting defaults blindly. The local SQLite limits are safe for one instance;
-the Postgres migration must preserve their transaction boundaries.
+Set tenant/global byte limits, the filesystem minimum-free floor, tenant/global
+in-flight object limits, retention periods, durable upload/job/share rates, job
+timeout, and shutdown deadline from the environment rather than accepting
+defaults blindly. The local SQLite limits are safe for one instance; the
+Postgres migration must preserve their transaction boundaries.
 
 Set `LINGBOT_ALLOWED_HOSTS` to exact public DNS names. If omitted,
 `LINGBOT_PUBLIC_BASE_URL` supplies its hostname; production refuses to start if
@@ -43,10 +44,17 @@ its worker for up to `LINGBOT_SHUTDOWN_TIMEOUT_SECONDS`. Only expired leases are
 recovered on boot or maintenance; stale workers are fenced by attempt/worker
 identity.
 
-Uploads and artifact writes create bounded provisional object claims before
-touching storage. Startup recovers every leftover claim from a stopped process;
-periodic maintenance recovers expired claims. Alert on claim recovery because
-it indicates an interrupted write or database/storage availability gap.
+Uploads and artifact writes reserve their maximum bytes and an in-flight slot
+before touching storage. Claims enforce tenant/global logical budgets and the
+configured physical free-space floor, then shrink to the measured object size.
+Startup measures every leftover claim from a stopped process before exact-size
+orphan cleanup; periodic maintenance does the same for expired claims. Alert on
+claim recovery because it indicates an interrupted write or database/storage
+availability gap.
+
+The in-process worker has an iteration-level exception boundary with bounded
+backoff, so a transient queue or maintenance error cannot silently kill it.
+Readiness still fails if the worker thread itself is not alive.
 
 The built-in CLI disables Uvicorn access logs because public share capability
 tokens appear in URL paths. Configure every reverse proxy, CDN, APM agent, WAF,

@@ -32,11 +32,13 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
 ## What is implemented
 
 - High-entropy bearer-token login exchanged for an HTTP-only, SameSite session
-  and rotating CSRF token.
+  and stable per-session CSRF token. Peer tabs cannot invalidate one another;
+  logout remains revocable with a stale header.
 - Tenant checks on every asset, job, artifact, download, and share operation.
 - SQLite state with WAL mode, explicit job transitions, expiring worker leases,
   per-attempt/worker fencing, bounded retries, and attempt-scoped cleanup.
-- Transactional per-tenant limits for stored bytes, assets, unattached uploads,
+- Pre-I/O byte and in-flight-slot reservations plus transactional tenant and
+  global storage/minimum-free-space limits for assets, unattached uploads,
   jobs, artifacts, active shares, and compute reservations; durable upload/job/
   share rate buckets and configurable retention.
 - Atomic filesystem object storage behind an injectable `ObjectStore` protocol,
@@ -59,10 +61,16 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
   controls; no remote fonts, analytics, or third-party runtime scripts.
 - Expiring, hashed share tokens and tenant-scoped deletion of source uploads,
   artifacts, and related shares.
-- Cursor-paginated job/asset/share inventories, bounded bulk deletion, and
-  route-scoped request-hash idempotency for costly and mutation endpoints.
+- Cursor-paginated job/asset/share inventories with visible load-more, delete,
+  revoke, and bounded bulk-cleanup controls. Route-scoped request-hash
+  idempotency settles in the same transaction as every database mutation, and
+  browser transport retries reuse the original key.
 - Session-epoch browser isolation: logout, `401`, and account changes abort
-  in-flight requests, clear tenant state, and destroy WebGL resources.
+  in-flight requests, clear all private DOM/tenant state, and destroy WebGL
+  resources. Cross-tab notifications plus focus revalidation cover peer-tab
+  logout and account changes.
+- Worker iteration supervision catches transient maintenance/queue failures,
+  logs them, and retries with bounded exponential backoff.
 
 ## Architecture
 
@@ -111,6 +119,11 @@ Important environment variables:
 |---|---|---:|
 | `LINGBOT_ALLOWED_HOSTS` | Comma-separated exact Host allowlist; inferred from the public URL when present | required in production |
 | `LINGBOT_MAX_UPLOAD_BYTES` | Per-video byte limit | 250 MiB |
+| `LINGBOT_MAX_ARTIFACT_BYTES` | Per-artifact limit and pre-I/O reservation | 100 MiB |
+| `LINGBOT_GLOBAL_STORAGE_BYTES` | Assets, artifacts, pending-delete, and in-flight bytes across tenants | 20 GiB |
+| `LINGBOT_STORAGE_MIN_FREE_BYTES` | Filesystem free-space floor after outstanding reservations | 1 GiB |
+| `LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS` | Concurrent uploads/artifact writes across tenants | 8 |
+| `LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS` | Concurrent uploads/artifact writes per tenant | 3 |
 | `LINGBOT_MAX_VIDEO_SECONDS` | Decoded duration limit | 300 seconds |
 | `LINGBOT_MAX_VIDEO_FRAMES` | Source frame limit | 9,000 |
 | `LINGBOT_MAX_VIDEO_DIMENSION` | Largest width/height | 4,096 px |
@@ -167,14 +180,17 @@ secrets. This process boundary is not an OS sandbox; production research must
 run in a separately isolated worker/container. Research output license remains
 `NOASSERTION`.
 
-The separate [`modal_app.py`](modal_app.py) follows the same research-only gate,
-uploads this checkout rather than cloning a moving branch, uses pinned packages
-and model revision, validates archives, isolates every job, and writes artifact
-keys to a Volume instead of returning large GLB bytes over RPC. It is a reference
-runner, not an enabled hosted product path; no paid GPU run is required for the
-workspace demo. Its non-CUDA Python runtime is installed from the hash-locked
-`requirements/modal.lock`; CUDA PyTorch remains separately version- and index-
-pinned because those platform wheels are outside the PyPI lock.
+The separate [`modal_app.py`](modal_app.py) is compile-time disabled until its
+owner gates are recorded. It follows the same research-only gate, uploads this
+checkout rather than cloning a moving branch, uses pinned packages and model
+revision, validates archives, isolates every job, and writes artifact keys to a
+Volume instead of returning large GLB bytes over RPC. It is a reference runner,
+not an enabled hosted product path; changing an environment variable cannot
+enable it. CI installs the pinned Modal client, imports this module without
+credentials, and asserts the gate remains closed. Its non-CUDA Python runtime
+is installed from the hash-locked `requirements/modal.lock`; CUDA PyTorch
+remains separately version- and index-pinned because those platform wheels are
+outside the PyPI lock.
 
 ## Direct model research
 

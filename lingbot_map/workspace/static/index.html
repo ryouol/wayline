@@ -83,6 +83,40 @@
           </div>
           <ol class="job-list" id="jobList"></ol>
           <p class="empty-state" id="emptyJobs">No scenes yet. Create the synthetic sample to begin.</p>
+          <button class="text-button load-more" id="loadMoreJobs" type="button" hidden>Load older scenes</button>
+        </section>
+
+        <section class="management-section" aria-labelledby="managementTitle">
+          <div class="section-heading-row">
+            <div>
+              <p class="section-label">Retention</p>
+              <h2 id="managementTitle">Storage and shares</h2>
+            </div>
+            <button class="text-button danger" id="bulkDeleteButton" type="button" disabled>
+              Clean up selected
+            </button>
+          </div>
+          <p class="supporting">Select terminal scenes, unattached uploads, or shares for one bounded cleanup request.</p>
+          <p class="selection-summary" id="selectionSummary" aria-live="polite">Nothing selected</p>
+
+          <div class="inventory-group" aria-labelledby="assetsTitle">
+            <div class="inventory-heading">
+              <h3 id="assetsTitle">Uploads</h3>
+              <button class="text-button" id="refreshInventoryButton" type="button">Refresh</button>
+            </div>
+            <ul class="inventory-list" id="assetList"></ul>
+            <p class="empty-state" id="emptyAssets">No retained uploads.</p>
+            <button class="text-button load-more" id="loadMoreAssets" type="button" hidden>Load more uploads</button>
+          </div>
+
+          <div class="inventory-group" aria-labelledby="sharesTitle">
+            <div class="inventory-heading">
+              <h3 id="sharesTitle">Share links</h3>
+            </div>
+            <ul class="inventory-list" id="shareList"></ul>
+            <p class="empty-state" id="emptyShares">No share links.</p>
+            <button class="text-button load-more" id="loadMoreShares" type="button" hidden>Load more shares</button>
+          </div>
         </section>
       </aside>
 
@@ -165,6 +199,7 @@
     </form>
   </dialog>
 
+  <script src="/static/session-events.js"></script>
   <script src="/static/viewer.js"></script>
   <script src="/static/app.js"></script>
 </body>

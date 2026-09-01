@@ -33,6 +33,24 @@ def test_authentication_and_security_headers(client):
     assert client.post("/api/jobs/sample").status_code == 202
 
 
+def test_health_checks_database_storage_and_required_worker(client, service, monkeypatch):
+    assert client.get("/healthz").json() == {"status": "ok"}
+    assert service.ready(require_worker=True) is False
+    service.start_worker()
+    try:
+        assert service.ready(require_worker=True) is True
+    finally:
+        service.stop_worker()
+
+    def fail_storage_probe(_key, _payload, *, max_bytes):
+        raise OSError(f"private storage failure after {max_bytes} byte")
+
+    monkeypatch.setattr(service.store, "put_bytes", fail_storage_probe)
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Workspace dependencies are not ready."}
+
+
 def test_me_rotates_csrf(authenticated_client):
     previous = authenticated_client.headers["X-CSRF-Token"]
     response = authenticated_client.get("/api/me")

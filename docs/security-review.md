@@ -175,6 +175,26 @@ remain explicit launch gates.
 - False positive notes: a newly created `0700` directory already prevented
   traversal, but the fix closes the pre-existing-volume case too.
 
+## SEC-009 — Readiness could report healthy with failed dependencies
+
+- Rule ID: deployment health and fail-closed availability review
+- Severity: Medium
+- Status: Remediated
+- Location: `lingbot_map/workspace/service.py`, `WorkspaceService.ready`;
+  `lingbot_map/workspace/app.py`, `health`
+- Evidence: `/healthz` now returns success only when the database schema matches
+  the running code, the object store passes an atomic write/delete probe, and a
+  required worker thread is alive. Failures return a generic `503` without
+  disclosing paths or exception details.
+- Impact: the previous constant response could keep a broken instance in load
+  balancer rotation even when it could not persist or process customer work.
+- Fix: implemented with regression coverage for worker-required and dependency-
+  failure states.
+- Mitigation: keep a separate liveness probe for process supervision and avoid
+  routing customer traffic until readiness succeeds.
+- False positive notes: the single-instance local demo starts without a worker
+  by design, so its in-process test client checks storage and schema only.
+
 ## Browser review result
 
 The supported workspace frontend uses `textContent`, explicit DOM construction,

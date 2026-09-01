@@ -11,6 +11,8 @@
 - Durable quota reservation, success settlement, cancellation refund, atomic
   cancellation/completion ordering, partial-artifact discard, and restart
   recovery
+- Readiness fails closed on schema, object-store write/delete, or required-worker
+  failure without exposing internal paths
 - Atomic local object writes and path traversal rejection
 - Runtime data/object/work directories are forced to `0700`; SQLite, WAL/SHM,
   stored objects, runner manifests, and the runtime manifest are forced to `0600`
@@ -22,7 +24,7 @@
 - In-app browser pass of token sign-in, synthetic job creation, completed-scene
   review, WebGL load, viewer keyboard controls, expiring-share creation, and the
   unauthenticated share view at a 1280 x 720 viewport; no browser errors observed
-- 28 passing unit/integration tests, lint, type check, JavaScript syntax check,
+- 29 passing unit/integration tests, lint, type check, JavaScript syntax check,
   wheel build, and CI definition
 
 ## Owner gates before a public production launch

@@ -8,11 +8,12 @@ import re
 import shutil
 import threading
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from .config import Settings
-from .database import Database
+from .database import SCHEMA_VERSION, Database
 from .engines import (
     EngineContext,
     EngineResult,
@@ -392,6 +393,24 @@ class WorkspaceService:
             "storage": "local-object-store",
             "worker": bool(self._worker and self._worker.is_alive()),
         }
+
+    def ready(self, *, require_worker: bool) -> bool:
+        """Check the durable dependencies without exposing their paths."""
+
+        probe_key = f".health/{uuid.uuid4().hex}.probe"
+        try:
+            with self.database.connect() as connection:
+                row = connection.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
+            if row is None or int(row[0]) != SCHEMA_VERSION:
+                return False
+            self.store.put_bytes(probe_key, b"1", max_bytes=1)
+            self.store.delete(probe_key)
+            return not require_worker or bool(self._worker and self._worker.is_alive())
+        except Exception:
+            return False
+        finally:
+            with suppress(Exception):
+                self.store.delete(probe_key)
 
     def write_runtime_manifest(self) -> None:
         manifest = {

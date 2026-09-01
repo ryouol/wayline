@@ -390,6 +390,8 @@ def create_app(
 
     @application.get("/healthz", response_model=HealthResponse)
     async def health():
+        if not workspace.ready(require_worker=start_worker):
+            raise HTTPException(503, "Workspace dependencies are not ready.")
         return {"status": "ok"}
 
     @application.post("/api/session", response_model=LoginResponse)

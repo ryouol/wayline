@@ -27,10 +27,12 @@ known proxy IPs; never trust forwarded headers from the public network.
 
 ## Health and shutdown
 
-`GET /healthz` exposes only `{"status":"ok"}`. The process stops accepting work
-through the reverse proxy first, then joins its worker for up to five seconds.
-On the next boot, durable running jobs are requeued once or failed/refunded after
-their final attempt.
+`GET /healthz` exposes only `{"status":"ok"}` after the schema is current, the
+object store passes an atomic write/delete probe, and the required worker thread
+is alive; otherwise it returns `503` without revealing internal paths. The
+process stops accepting work through the reverse proxy first, then joins its
+worker for up to five seconds. On the next boot, durable running jobs are
+requeued once or failed/refunded after their final attempt.
 
 ## Backups
 

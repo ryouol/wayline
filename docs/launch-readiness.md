@@ -8,22 +8,27 @@
 - Exact production Host allowlisting, disabled OpenAPI/docs, security headers,
   strict CSP/Trusted Types, and application declared-body ceilings
 - Byte, media, container, duration, frame, and dimension upload gates
-- Durable quota reservation, success settlement, cancellation refund, and
-  restart recovery
+- Durable quota reservation, success settlement, cancellation refund, atomic
+  cancellation/completion ordering, partial-artifact discard, and restart
+  recovery
 - Atomic local object writes and path traversal rejection
 - Exact checkpoint digest verification and restricted PyTorch loading
 - Separate auxiliary-model digest gate and no automatic moving-weight downloads
 - Synthetic GLB provenance and CC0 license
 - Static UI with system fonts, visible focus, semantic progress, responsive
   reflow, reduced-motion handling, and keyboard viewer controls
-- Unit/integration tests, lint, type check, JavaScript syntax check, wheel build,
-  and CI definition
+- In-app browser pass of token sign-in, synthetic job creation, completed-scene
+  review, WebGL load, viewer keyboard controls, expiring-share creation, and the
+  unauthenticated share view at a 1280 x 720 viewport; no browser errors observed
+- 27 passing unit/integration tests, lint, type check, JavaScript syntax check,
+  wheel build, and CI definition
 
 ## Owner gates before a public production launch
 
 - [ ] Legal clearance or a replacement commercial engine
-- [ ] Full browser visual and keyboard/assistive-technology QA; the current
-      implementation environment could not provide the in-app browser
+- [ ] Complete mobile-viewport, screen-reader, contrast, and cross-browser QA;
+      the desktop in-app browser workflow and keyboard viewer pass are recorded
+      above, but they do not close this broader accessibility gate
 - [ ] Postgres and S3-compatible implementations plus migration tests
 - [ ] TLS host, DNS, private networking, secret manager, and restrictive IAM
 - [ ] Distributed rate limits, malware scanning, direct multipart uploads, and

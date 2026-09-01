@@ -193,6 +193,41 @@ def test_queued_cancellation_releases_reservation(authenticated_client, service,
     assert events[-2:] == [("reserve", 1), ("cancel", -1)]
 
 
+def test_committed_running_cancel_wins_atomic_finish_and_discards_artifacts(
+    service, tenant_id, monkeypatch
+):
+    job = service.submit_sample(tenant_id)
+    original_finish = service.database.finish_job
+
+    def cancel_then_finish(tenant, job_id, *, used_units):
+        assert service.database.request_cancellation(tenant, job_id) == "cancelling"
+        return original_finish(tenant, job_id, used_units=used_units)
+
+    monkeypatch.setattr(service.database, "finish_job", cancel_then_finish)
+    assert service.process_next_job() is True
+
+    cancelled = service.database.get_job(tenant_id, job["id"])
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["artifacts"] == []
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+    assert service.database.quota(tenant_id)["consumed_units"] == 0
+    assert list((service.settings.data_dir / "objects").rglob("*.glb")) == []
+
+
+def test_cancel_request_wins_when_running_job_fails(service, tenant_id):
+    job = service.submit_sample(tenant_id)
+    claimed = service.database.claim_next_job(lease_seconds=10, max_attempts=2)
+    assert claimed and claimed["id"] == job["id"]
+    assert service.database.request_cancellation(tenant_id, job["id"]) == "cancelling"
+
+    service.database.fail_job(tenant_id, job["id"], code="job_failed", message="provider failed")
+
+    cancelled = service.database.get_job(tenant_id, job["id"])
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["error_code"] == "cancelled"
+    assert service.database.quota(tenant_id)["reserved_units"] == 0
+
+
 def test_worker_recovery_requeues_once_then_fails_with_refund(service, tenant_id):
     job = service.submit_sample(tenant_id)
     claimed = service.database.claim_next_job(lease_seconds=1, max_attempts=2)

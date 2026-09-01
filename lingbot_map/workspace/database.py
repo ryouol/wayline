@@ -579,17 +579,33 @@ class Database:
             (_id("led"), tenant_id, job_id, event, -units, "reservation released", time.time()),
         )
 
-    def finish_job(self, tenant_id: str, job_id: str, *, used_units: int) -> None:
+    def finish_job(self, tenant_id: str, job_id: str, *, used_units: int) -> bool:
+        """Atomically settle a result unless a committed cancellation won the race."""
+
         now = time.time()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT state, reserved_units FROM jobs WHERE id = ? AND tenant_id = ?",
+                "SELECT state, reserved_units, cancellation_requested FROM jobs "
+                "WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
             ).fetchone()
             if row is None or row["state"] != "running":
                 raise InvalidTransition("only a running job can finish")
             if used_units < 0 or used_units > row["reserved_units"]:
                 raise ValueError("used units must fit within the reservation")
+            if row["cancellation_requested"]:
+                self._release_reservation(
+                    connection, tenant_id, job_id, row["reserved_units"], "cancelled"
+                )
+                connection.execute(
+                    """
+                    UPDATE jobs SET state='cancelled', stage='cancelled',
+                        error_code='cancelled', error_message='Job cancelled.',
+                        lease_expires_at=NULL, finished_at=?, updated_at=? WHERE id=?
+                    """,
+                    (now, now, job_id),
+                )
+                return False
             self._release_reservation(
                 connection, tenant_id, job_id, row["reserved_units"], "release"
             )
@@ -609,6 +625,7 @@ class Database:
                 """,
                 (used_units, now, now, job_id),
             )
+        return True
 
     def fail_job(
         self,
@@ -620,16 +637,20 @@ class Database:
         cancelled: bool = False,
     ) -> None:
         now = time.time()
-        state = "cancelled" if cancelled else "failed"
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT state, reserved_units FROM jobs WHERE id = ? AND tenant_id = ?",
+                "SELECT state, reserved_units, cancellation_requested FROM jobs "
+                "WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
             ).fetchone()
             if row is None:
                 raise KeyError(job_id)
             if row["state"] in {"ready", "failed", "cancelled"}:
                 return
+            cancelled = cancelled or bool(row["cancellation_requested"])
+            state = "cancelled" if cancelled else "failed"
+            if cancelled:
+                code, message = "cancelled", "Job cancelled."
             self._release_reservation(connection, tenant_id, job_id, row["reserved_units"], state)
             connection.execute(
                 """

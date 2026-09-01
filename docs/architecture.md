@@ -36,8 +36,11 @@ queued → running(validating → generating/reconstructing → exporting → st
 
 Only queued jobs are claimed. A startup moves an interrupted running job back to
 queued once; the next interruption fails it and releases its reservation. A
-running cancellation sets a durable flag that the engine observes. Terminal
-jobs are immutable except deletion.
+running cancellation sets a durable flag that the engine observes. Final result
+settlement rechecks that flag in the same transaction as the `ready` transition;
+if cancellation already committed, it releases the reservation, records
+`cancelled`, and the service discards every stored artifact. Terminal jobs are
+immutable except deletion.
 
 ## Production migration boundary
 

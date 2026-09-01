@@ -127,12 +127,38 @@ remain explicit launch gates.
 - False positive notes: an external worker implementation may provide the
   sandbox; the local command adapter alone does not.
 
+## SEC-007 — Cancellation could lose to late worker completion
+
+- Rule ID: application business-logic and durable-state race review
+- Severity: High
+- Status: Remediated
+- Location: `lingbot_map/workspace/database.py`, `Database.finish_job` and
+  `Database.fail_job`; `lingbot_map/workspace/service.py`,
+  `WorkspaceService._process_job`
+- Evidence: result settlement now reads `cancellation_requested` and performs
+  the `ready` or `cancelled` transition in the same SQLite transaction. A
+  committed cancellation releases the reservation and causes the service to
+  delete both database artifact rows and stored objects. Failure settlement also
+  gives a committed cancellation precedence over a provider error.
+- Impact: before the fix, cancellation could commit while a worker was storing
+  output and the subsequent completion transaction could still mark the job
+  ready, exposing an artifact the user had cancelled.
+- Fix: implemented with regression tests for cancellation immediately before
+  completion and cancellation immediately before worker failure.
+- Mitigation: the production Postgres repository must preserve this atomic
+  ordering and include the same race tests; provider cancellation remains an
+  efficiency control, not the source of truth for state.
+- False positive notes: if completion commits first, the terminal ready state
+  correctly wins and a later cancellation request is rejected.
+
 ## Browser review result
 
 The supported workspace frontend uses `textContent`, explicit DOM construction,
 same-origin fetches, HttpOnly session cookies, CSRF headers, no browser storage,
 no third-party scripts, and no eval/HTML insertion sinks. CSP includes Trusted
 Types enforcement. The offline benchmark report retains audited escaped HTML
-templates; generated artifact URLs now pass a same-origin/protocol gate. A final
-visual, keyboard, and assistive-technology browser pass remains separately open
-because the review environment did not provide the in-app browser.
+templates; generated artifact URLs now pass a same-origin/protocol gate. The
+in-app browser verified token sign-in, job creation/review, WebGL loading,
+keyboard viewer controls, share creation, the unauthenticated share view, and no
+browser errors at 1280 x 720. Mobile-viewport, screen-reader, contrast, and
+cross-browser coverage remains an owner gate.

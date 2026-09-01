@@ -334,19 +334,17 @@ class WorkspaceService:
                     license_id=artifact.license_id,
                     metadata=artifact.metadata,
                 )
-            self.database.finish_job(tenant_id, job_id, used_units=result.used_units)
+            completed = self.database.finish_job(tenant_id, job_id, used_units=result.used_units)
+            if not completed:
+                self._discard_job_artifacts(tenant_id, job_id, stored_keys)
         except JobCancelled as error:
-            keys = set(stored_keys + self.database.delete_artifacts_for_job(tenant_id, job_id))
-            for key in keys:
-                self.store.delete(key)
+            self._discard_job_artifacts(tenant_id, job_id, stored_keys)
             self.database.fail_job(
                 tenant_id, job_id, code="cancelled", message=str(error), cancelled=True
             )
         except Exception as error:  # keep the worker alive; details remain server-side
             logger.exception("job %s failed", job_id)
-            keys = set(stored_keys + self.database.delete_artifacts_for_job(tenant_id, job_id))
-            for key in keys:
-                self.store.delete(key)
+            self._discard_job_artifacts(tenant_id, job_id, stored_keys)
             code = "engine_unavailable" if isinstance(error, EngineUnavailable) else "job_failed"
             self.database.fail_job(
                 tenant_id,
@@ -357,6 +355,11 @@ class WorkspaceService:
         finally:
             cleanup_result(result)
             self._cleanup_job_workdirs(job_id)
+
+    def _discard_job_artifacts(self, tenant_id: str, job_id: str, stored_keys: list[str]) -> None:
+        keys = set(stored_keys + self.database.delete_artifacts_for_job(tenant_id, job_id))
+        for key in keys:
+            self.store.delete(key)
 
     def _cleanup_job_workdirs(self, job_id: str) -> None:
         """Remove private runner directories even when an engine exits before returning."""

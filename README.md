@@ -42,7 +42,9 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
 - Deletion of unsubmitted uploads, including browser cleanup when job submission
   fails; referenced uploads remain protected by a database invariant.
 - Capacity reservations released on cancellation/failure and settled on
-  success. These are operational compute units, not money or paid credits.
+  success. Completion and cancellation are resolved in one transaction so a
+  committed cancellation cannot publish late artifacts. These are operational
+  compute units, not money or paid credits.
 - A pluggable `ReconstructionEngine` interface with a production-safe synthetic
   engine and a gated LingBot command adapter.
 - Stored GLB and manifest artifacts with SHA-256, media type, license, and
@@ -185,9 +187,9 @@ node --check lingbot_map/workspace/static/viewer.js
 CI also builds the wheel and verifies that the packaged static UI is present.
 The automated suite covers authentication, CSRF, host/body gates, tenant
 isolation, upload rejection and orphan cleanup, job reservations/refunds,
-cancellation, recovery, sample artifact generation, viewing bytes, sharing,
-expiry, deletion, path traversal, sanitized runner provenance, and checkpoint
-integrity.
+atomic cancellation/completion races, recovery, sample artifact generation,
+viewing bytes, sharing, expiry, deletion, path traversal, sanitized runner
+provenance, and checkpoint integrity.
 
 ## Product and launch documents
 

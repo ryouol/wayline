@@ -11,6 +11,8 @@ Subclasses implement mode-specific attention logic.
 """
 
 import logging
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from abc import ABC, abstractmethod
@@ -20,6 +22,7 @@ from lingbot_map.layers import PatchEmbed
 from lingbot_map.layers.block import Block
 from lingbot_map.layers.rope import RotaryPositionEmbedding2D, PositionGetter
 from lingbot_map.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +221,8 @@ class AggregatorBase(nn.Module, ABC):
 
             # Load pretrained weights
             try:
-                ckpt = torch.load(pretrained_path)
+                load_path = verified_checkpoint_path(Path(pretrained_path), None)
+                ckpt = torch.load(load_path, weights_only=True)
                 del ckpt['pos_embed']
                 logger.info("Loading pretrained weights for DINOv2")
                 missing, unexpected = self.patch_embed.load_state_dict(ckpt, strict=False)

@@ -25,6 +25,8 @@ import onnxruntime as ort
 from PIL import Image
 from tqdm import tqdm
 
+from lingbot_map.checkpoints import verified_checkpoint_path
+
 
 # Default ONNX model path
 DEFAULT_MODEL_PATH = Path("sky_seg/skyseg_batch.onnx")
@@ -55,7 +57,7 @@ def get_model(model_path: Optional[str] = None) -> Path:
 class SkySegmenter:
     """ONNX-based sky segmenter."""
 
-    def __init__(self, onnx_path: str):
+    def __init__(self, onnx_path: str, model_sha256: Optional[str] = None):
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         available = ort.get_available_providers()
@@ -63,7 +65,12 @@ class SkySegmenter:
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         else:
             providers = ['CPUExecutionProvider']
-        self.session = ort.InferenceSession(str(onnx_path), providers=providers)
+        load_path = verified_checkpoint_path(
+            Path(onnx_path),
+            model_sha256,
+            max_bytes=512 * 1024 * 1024,
+        )
+        self.session = ort.InferenceSession(str(load_path), providers=providers)
         inp = self.session.get_inputs()[0]
         self.input_name = inp.name
         self.providers = self.session.get_providers()
@@ -147,6 +154,12 @@ def main():
     parser.add_argument("--rgb_dir", type=str, required=True, help="Path to folder of RGB images.")
     parser.add_argument("--model_path", type=str, default=None,
                         help=f"Path to ONNX model file (default: {DEFAULT_MODEL_PATH}).")
+    parser.add_argument(
+        "--model_sha256",
+        type=str,
+        default=None,
+        help="Expected model SHA-256 (or provide <model_path>.sha256)",
+    )
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Images per forward pass (default: 4). Reduce if OOM.")
     args = parser.parse_args()
@@ -157,7 +170,7 @@ def main():
         print(f"[error] rgb_dir not found: {rgb_dir}")
         sys.exit(1)
 
-    segmenter = SkySegmenter(model_path)
+    segmenter = SkySegmenter(model_path, args.model_sha256)
     print(f"Providers: {segmenter.providers}")
     process(rgb_dir, segmenter, args.batch_size)
     print("Done.")

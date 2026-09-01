@@ -10,11 +10,14 @@ Sky segmentation utilities for filtering sky points from point clouds.
 
 import glob
 import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import cv2
 from tqdm.auto import tqdm
+
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 try:
     import onnxruntime
@@ -26,46 +29,38 @@ except ImportError:
 _SKYSEG_INPUT_SIZE = (320, 320)
 _SKYSEG_SOFT_THRESHOLD = 0.1
 _SKYSEG_CACHE_VERSION = "imagenet_norm_softmap_inverted_v3"
-_SKYSEG_MODEL_URL = "https://huggingface.co/JianyuanWang/skyseg/resolve/main/skyseg.onnx"
 
 
 def _get_cache_version_path(sky_mask_dir: str) -> str:
     return os.path.join(sky_mask_dir, ".skyseg_cache_version")
 
 
-def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> None:
-    """Ensure the sky mask cache directory exists and write the version stamp."""
+def _prepare_sky_mask_cache(sky_mask_dir: Optional[str], model_identity: str) -> bool:
+    """Prepare a cache bound to both preprocessing behavior and model bytes."""
     if sky_mask_dir is None:
-        return
+        return False
     os.makedirs(sky_mask_dir, exist_ok=True)
     version_path = _get_cache_version_path(sky_mask_dir)
-    if not os.path.exists(version_path):
-        with open(version_path, "w", encoding="utf-8") as f:
-            f.write(_SKYSEG_CACHE_VERSION)
+    expected = f"{_SKYSEG_CACHE_VERSION}:{model_identity}"
+    current = ""
+    if os.path.exists(version_path):
+        with open(version_path, encoding="utf-8") as source:
+            current = source.read().strip()
+    refresh = current != expected
+    if refresh:
+        with open(version_path, "w", encoding="utf-8") as output:
+            output.write(expected)
+    return refresh
 
 
 def _ensure_skyseg_model(skyseg_model_path: str) -> None:
-    """Download the skyseg model when the requested path is not a regular file."""
+    """Require an operator-provisioned sky model; never fetch moving weights."""
     if os.path.isfile(skyseg_model_path):
         return
-
-    print(f"Sky segmentation model not found at {skyseg_model_path}, downloading...")
-    try:
-        download_skyseg_model(skyseg_model_path)
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to download the sky segmentation model to {skyseg_model_path} "
-            f"from {_SKYSEG_MODEL_URL}: {error}. Download it manually from "
-            f"{_SKYSEG_MODEL_URL} and set skyseg_model_path to the downloaded model file."
-        ) from error
-
-    if not os.path.isfile(skyseg_model_path):
-        raise RuntimeError(
-            f"Sky segmentation model download to {skyseg_model_path} from "
-            f"{_SKYSEG_MODEL_URL} completed, but no model file was created. "
-            f"Download it manually from {_SKYSEG_MODEL_URL} and set "
-            "skyseg_model_path to the downloaded model file."
-        )
+    raise RuntimeError(
+        f"Sky segmentation model not found at {skyseg_model_path}. Automatic, moving-revision "
+        "model downloads are disabled; provision a rights-reviewed, digest-verified file."
+    )
 
 
 def run_skyseg(
@@ -237,6 +232,7 @@ def load_or_create_sky_masks(
     image_paths: Optional[list[str]] = None,
     images: Optional[np.ndarray] = None,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
     target_shape: Optional[Tuple[int, int]] = None,
@@ -250,6 +246,7 @@ def load_or_create_sky_masks(
         image_paths: Optional explicit image file list, in the exact order to process.
         images: Optional image array with shape (S, 3, H, W) or (S, H, W, 3).
         skyseg_model_path: Path to the sky segmentation ONNX model.
+        skyseg_sha256: Expected digest (or provide ``<path>.sha256``).
         sky_mask_dir: Optional directory for cached raw masks.
         sky_mask_visualization_dir: Optional directory for side-by-side visualizations.
         target_shape: Optional output mask shape (H, W) after resizing.
@@ -267,8 +264,13 @@ def load_or_create_sky_masks(
         return None
 
     _ensure_skyseg_model(skyseg_model_path)
-
-    skyseg_session = onnxruntime.InferenceSession(skyseg_model_path)
+    load_path = verified_checkpoint_path(
+        Path(skyseg_model_path),
+        skyseg_sha256,
+        max_bytes=512 * 1024 * 1024,
+    )
+    model_identity = load_path.stem
+    skyseg_session = onnxruntime.InferenceSession(str(load_path))
     sky_masks = []
 
     if sky_mask_visualization_dir is not None:
@@ -287,7 +289,7 @@ def load_or_create_sky_masks(
 
         if sky_mask_dir is None and image_folder is not None:
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print("Generating sky masks from image array...")
         for i in tqdm(range(num_images)):
@@ -296,7 +298,7 @@ def load_or_create_sky_masks(
             image_name = _get_mask_filename(image_paths, i)
             mask_filepath = os.path.join(sky_mask_dir, image_name) if sky_mask_dir is not None else None
 
-            if mask_filepath is not None and os.path.exists(mask_filepath):
+            if mask_filepath is not None and os.path.exists(mask_filepath) and not refresh_cache:
                 sky_mask = cv2.imread(mask_filepath, cv2.IMREAD_GRAYSCALE)
                 if sky_mask is not None and sky_mask.shape[:2] == (image_h, image_w):
                     # Reuse cached mask
@@ -341,14 +343,14 @@ def load_or_create_sky_masks(
             if image_folder is None:
                 image_folder = os.path.dirname(image_paths[0])
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print("Generating sky masks from image files...")
         for image_path in tqdm(image_paths):
             image_name = os.path.basename(image_path)
             mask_filepath = os.path.join(sky_mask_dir, image_name)
 
-            if os.path.exists(mask_filepath):
+            if os.path.exists(mask_filepath) and not refresh_cache:
                 sky_mask = cv2.imread(mask_filepath, cv2.IMREAD_GRAYSCALE)
                 if sky_mask is None:
                     print(f"Warning: Failed to read cached sky mask {mask_filepath}, regenerating it")
@@ -395,6 +397,7 @@ def apply_sky_segmentation(
     image_paths: Optional[list[str]] = None,
     images: Optional[np.ndarray] = None,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
 ) -> np.ndarray:
@@ -407,6 +410,7 @@ def apply_sky_segmentation(
         image_paths: Optional explicit image file list in processing order
         images: Image array with shape (S, 3, H, W) or (S, H, W, 3) (optional if image_folder provided)
         skyseg_model_path: Path to the sky segmentation ONNX model
+        skyseg_sha256: Expected digest (or provide ``<path>.sha256``)
         sky_mask_dir: Optional directory for cached raw masks
         sky_mask_visualization_dir: Optional directory for side-by-side mask visualization images
 
@@ -420,6 +424,7 @@ def apply_sky_segmentation(
         image_paths=image_paths,
         images=images,
         skyseg_model_path=skyseg_model_path,
+        skyseg_sha256=skyseg_sha256,
         sky_mask_dir=sky_mask_dir,
         sky_mask_visualization_dir=sky_mask_visualization_dir,
         target_shape=(H, W),
@@ -447,54 +452,9 @@ def apply_sky_segmentation(
 
 
 def download_skyseg_model(output_path: str = "skyseg.onnx") -> str:
-    """
-    Download sky segmentation model from HuggingFace.
+    """Reject legacy unverified acquisition; use an operator-pinned asset instead."""
 
-    Args:
-        output_path: Path to save the model
-
-    Returns:
-        Path to the downloaded model
-    """
-    import tempfile
-
-    import requests
-
-    url = _SKYSEG_MODEL_URL
-
-    print(f"Downloading sky segmentation model from {url}...")
-    response = requests.get(url, stream=True)
-    temp_path = None
-    try:
-        response.raise_for_status()
-
-        total_size = int(response.headers.get('content-length', 0))
-        output_dir = os.path.dirname(output_path) or "."
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=output_dir,
-            prefix=f".{os.path.basename(output_path)}.",
-            suffix=".tmp",
-            delete=False,
-        ) as model_file:
-            temp_path = model_file.name
-            with tqdm(total=total_size, unit='B', unit_scale=True, desc="Downloading") as pbar:
-                for chunk in response.iter_content(chunk_size=8192):
-                    model_file.write(chunk)
-                    pbar.update(len(chunk))
-
-        os.replace(temp_path, output_path)
-        temp_path = None
-    finally:
-        if temp_path is not None:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-        try:
-            response.close()
-        except Exception:
-            pass
-
-    print(f"Model saved to {output_path}")
-    return output_path
+    raise RuntimeError(
+        f"Automatic download to {output_path} is disabled. Provision a rights-reviewed, "
+        "digest-verified sky segmentation model explicitly."
+    )

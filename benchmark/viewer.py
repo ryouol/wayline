@@ -157,7 +157,7 @@ class SceneCache:
             Tuple of (trajectory_dict, point_clouds_list, is_aligned)
         """
         try:
-            data = np.load(self.cache_file, allow_pickle=True)
+            data = np.load(self.cache_file, allow_pickle=False)
             
             # Load trajectory
             traj_dict = {}

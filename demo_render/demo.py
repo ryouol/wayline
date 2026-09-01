@@ -22,12 +22,14 @@ import argparse
 import glob
 import os
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 from tqdm.auto import tqdm
 
+from lingbot_map.checkpoints import verified_checkpoint_path
 from lingbot_map.utils.pose_enc import pose_encoding_to_extri_intri
 from lingbot_map.utils.geometry import closed_form_inverse_se3_general
 from lingbot_map.utils.load_fn import load_and_preprocess_images
@@ -114,7 +116,8 @@ def load_model(args, device):
 
     if args.model_path:
         print(f"Loading checkpoint: {args.model_path}")
-        ckpt = torch.load(args.model_path, map_location=device, weights_only=False)
+        load_path = verified_checkpoint_path(Path(args.model_path), args.model_sha256)
+        ckpt = torch.load(load_path, map_location=device, weights_only=True)
         state_dict = ckpt.get("model", ckpt)
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing:
@@ -230,6 +233,12 @@ def main():
 
     # Model
     parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument(
+        "--model_sha256",
+        type=str,
+        default=None,
+        help="Expected checkpoint SHA-256 (or provide <model_path>.sha256)",
+    )
     parser.add_argument("--image_size", type=int, default=518)
     parser.add_argument("--patch_size", type=int, default=14)
 
@@ -278,6 +287,12 @@ def main():
     parser.add_argument("--mask_sky", action="store_true", help="Apply sky segmentation to filter sky points")
     parser.add_argument("--skyseg_model_path", type=str, default="skyseg.onnx",
                         help="Path to sky segmentation ONNX model")
+    parser.add_argument(
+        "--skyseg_sha256",
+        type=str,
+        default=None,
+        help="Expected sky-model SHA-256 (or provide <skyseg_model_path>.sha256)",
+    )
 
     # Output
     parser.add_argument("--save_predictions", type=str, default=None, help="Save predictions to .npz file")
@@ -292,7 +307,7 @@ def main():
     # ── Load from saved predictions ──────────────────────────────────────────
     if args.load_predictions:
         print(f"Loading predictions from {args.load_predictions}...")
-        data = np.load(args.load_predictions, allow_pickle=True)
+        data = np.load(args.load_predictions, allow_pickle=False)
         predictions = {k: torch.from_numpy(data[k]) for k in data.files}
         print(f"  Keys: {list(predictions.keys())}")
 
@@ -324,6 +339,8 @@ def main():
                     point_size=args.point_size,
                     mask_sky=args.mask_sky,
                     image_folder=args.image_folder,
+                    skyseg_model_path=args.skyseg_model_path,
+                    skyseg_sha256=args.skyseg_sha256,
                 )
                 print(f"3D viewer at http://localhost:{args.port}")
                 viewer.run()
@@ -407,6 +424,8 @@ def main():
             point_size=args.point_size,
             mask_sky=args.mask_sky,
             image_folder=args.image_folder,
+            skyseg_model_path=args.skyseg_model_path,
+            skyseg_sha256=args.skyseg_sha256,
         )
         print(f"3D viewer at http://localhost:{args.port}")
         viewer.run()

@@ -7,12 +7,15 @@ Both streaming and windowed inference modes are supported via ``GCTStream``.
 """
 
 import logging
+from pathlib import Path
+
 import torch
 import numpy as np
 from typing import Any, Dict, List, Optional
 
 from benchmark.method.base import BaseMethod
 from benchmark.core.loader import BSSLoader
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 
 # Mirrors lingbot-map/demo.py:413-421 — above this frame count, the KV cache
@@ -48,6 +51,7 @@ class LingbotMapMethod(BaseMethod):
     def __init__(
         self,
         checkpoint: str = None,
+        checkpoint_sha256: str = None,
         device: str = 'cuda',
         mode: str = 'streaming',
         use_amp: bool = True,
@@ -77,6 +81,7 @@ class LingbotMapMethod(BaseMethod):
         )
 
         self.checkpoint = checkpoint
+        self.checkpoint_sha256 = checkpoint_sha256
         self.device = device
         self.mode = mode
         self.use_amp = use_amp
@@ -127,7 +132,10 @@ class LingbotMapMethod(BaseMethod):
 
         if self.checkpoint:
             print(f"  → Loading checkpoint: {self.checkpoint}")
-            ckpt = torch.load(self.checkpoint, map_location=self.device, weights_only=False)
+            load_path = verified_checkpoint_path(
+                Path(self.checkpoint), self.checkpoint_sha256
+            )
+            ckpt = torch.load(load_path, map_location=self.device, weights_only=True)
             state_dict = ckpt.get("model", ckpt)
             missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
             if missing:

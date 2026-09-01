@@ -59,7 +59,7 @@ def _load_perframe_dir(dir_path: str, num_workers: int = 16) -> Dict[str, np.nda
     # Merge metadata if present (filtered the same way)
     meta_path = os.path.join(dir_path, 'meta.npz')
     if os.path.exists(meta_path):
-        meta = np.load(meta_path, allow_pickle=True)
+        meta = np.load(meta_path, allow_pickle=False)
         for key in meta.files:
             if key in _NEEDED_KEYS:
                 data[key] = meta[key]

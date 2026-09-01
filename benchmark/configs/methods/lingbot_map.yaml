@@ -1,6 +1,7 @@
 model: lingbot_map
 env: lingbot-map
 _checkpoint: /path/to/lingbot-map.pt
+_checkpoint_sha256: /replace/with/exact/lowercase/sha256
 _device: cuda
 _mode: streaming
 _use_amp: true

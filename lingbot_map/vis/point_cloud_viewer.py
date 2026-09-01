@@ -90,6 +90,8 @@ class PointCloudViewer:
         use_point_map: bool = False,
         mask_sky: bool = False,
         image_folder: Optional[str] = None,
+        skyseg_model_path: str = "skyseg.onnx",
+        skyseg_sha256: Optional[str] = None,
         sky_mask_dir: Optional[str] = None,
         sky_mask_visualization_dir: Optional[str] = None,
         depth_stride: int = 1,
@@ -108,7 +110,12 @@ class PointCloudViewer:
         # Process the prediction dictionary to create pc_list, color_list, conf_list
         if pred_dict is not None:
             pc_list, color_list, conf_list, cam_dict = self._process_pred_dict(
-                pred_dict, use_point_map, mask_sky, image_folder,
+                pred_dict,
+                use_point_map,
+                mask_sky,
+                image_folder,
+                skyseg_model_path=skyseg_model_path,
+                skyseg_sha256=skyseg_sha256,
                 sky_mask_dir=sky_mask_dir,
                 sky_mask_visualization_dir=sky_mask_visualization_dir,
                 depth_stride=depth_stride,
@@ -138,6 +145,8 @@ class PointCloudViewer:
         use_point_map: bool,
         mask_sky: bool,
         image_folder: Optional[str],
+        skyseg_model_path: str = "skyseg.onnx",
+        skyseg_sha256: Optional[str] = None,
         sky_mask_dir: Optional[str] = None,
         sky_mask_visualization_dir: Optional[str] = None,
         depth_stride: int = 1,
@@ -175,6 +184,8 @@ class PointCloudViewer:
         if mask_sky:
             conf = apply_sky_segmentation(
                 conf, image_folder=image_folder, images=images,
+                skyseg_model_path=skyseg_model_path,
+                skyseg_sha256=skyseg_sha256,
                 sky_mask_dir=sky_mask_dir,
                 sky_mask_visualization_dir=sky_mask_visualization_dir,
             )

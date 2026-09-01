@@ -644,11 +644,11 @@ def load_predictions_from_npz(input_path, num_workers=None):
             # Load metadata if present
             meta_path = os.path.join(input_path, 'meta.npz')
             if os.path.exists(meta_path):
-                meta = np.load(meta_path, allow_pickle=True)
+                meta = np.load(meta_path, allow_pickle=False)
                 for key in meta.files:
                     predictions[key] = meta[key]
     else:
-        data = np.load(input_path, allow_pickle=True)
+        data = np.load(input_path, allow_pickle=False)
         predictions = {key: data[key] for key in data.files}
     print(f"Loaded predictions from {input_path}")
     print(f"  Keys: {list(predictions.keys())}")
@@ -709,6 +709,7 @@ def visualize_sky_masks(
         image_paths=image_paths,
         images=images,
         skyseg_model_path=args.skyseg_model_path,
+        skyseg_sha256=args.skyseg_sha256,
         sky_mask_dir=sky_mask_dir,
         sky_mask_visualization_dir=sky_mask_visualization_dir,
         num_frames=num_frames,
@@ -750,6 +751,7 @@ def export_glb(predictions, output_path, args):
         target_dir=os.path.dirname(output_path),
         prediction_mode=prediction_mode,
         skyseg_model_path=getattr(args, "skyseg_model_path", "skyseg.onnx"),
+        skyseg_sha256=getattr(args, "skyseg_sha256", None),
         sky_mask_dir=sky_mask_dir,
         sky_mask_visualization_dir=sky_mask_visualization_dir,
     )
@@ -826,6 +828,7 @@ def render_with_pipeline(npz_path, output_video, args, artifact_name=None):
     _apply('preprocess.conf_threshold', 'conf_threshold')
     _apply('preprocess.mask_sky', 'mask_sky')
     _apply('preprocess.sky_model', 'skyseg_model_path')
+    _apply('preprocess.sky_model_sha256', 'skyseg_sha256')
     artifact_name = artifact_name or os.path.splitext(os.path.basename(output_video))[0]
     sky_mask_dir, sky_mask_viz_dir = get_sky_artifact_dirs(args, artifact_name)
     cfg.preprocess.sky_mask_dir = sky_mask_dir
@@ -1093,6 +1096,12 @@ Examples:
     )
 
     parser.add_argument("--model_path", type=str, default=None, help="Path to model checkpoint")
+    parser.add_argument(
+        "--model_sha256",
+        type=str,
+        default=None,
+        help="Expected checkpoint SHA-256 (or provide <model_path>.sha256)",
+    )
     parser.add_argument("--image_size", type=int, default=518)
     parser.add_argument("--patch_size", type=int, default=14)
     parser.add_argument(
@@ -1168,6 +1177,12 @@ Examples:
     parser.add_argument("--conf_threshold", type=float, default=0.0)
     parser.add_argument("--mask_sky", action="store_true")
     parser.add_argument("--skyseg_model_path", type=str, default="skyseg.onnx")
+    parser.add_argument(
+        "--skyseg_sha256",
+        type=str,
+        default=None,
+        help="Expected sky-model SHA-256 (or provide <skyseg_model_path>.sha256)",
+    )
     parser.add_argument("--sky_mask_dir", type=str, default=None)
     parser.add_argument("--sky_mask_visualization_dir", type=str, default=None)
     parser.add_argument(
@@ -1435,6 +1450,7 @@ def _run_sky_mask_only_mode(args, scenes):
         args.output_folder, results,
         input_folder=args.input_folder,
         skyseg_model_path=args.skyseg_model_path,
+        skyseg_sha256=args.skyseg_sha256,
         total_duration=time.time() - total_start,
         mode="visualize_sky_mask_only",
     )

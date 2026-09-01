@@ -47,6 +47,7 @@ class SceneConfig:
 class PreprocessConfig:
     mask_sky: bool = False
     sky_model: str = 'skyseg.onnx'
+    sky_model_sha256: Optional[str] = None
     sky_batch_size: int = 32
     conf_threshold: float = 0.0
     vis_threshold: float = 4.0
@@ -209,6 +210,7 @@ class PipelineConfig:
             # preprocess
             'mask_sky': 'preprocess.mask_sky',
             'sky_model': 'preprocess.sky_model',
+            'sky_model_sha256': 'preprocess.sky_model_sha256',
             'sky_batch_size': 'preprocess.sky_batch_size',
             'sky_mask_dir': 'preprocess.sky_mask_dir',
             'sky_mask_visualization_dir': 'preprocess.sky_mask_visualization_dir',

@@ -311,6 +311,8 @@ def main() -> None:
 
     for frame_count in args.frame_counts:
         print(f"\nBenchmarking GCT {frame_count} frames")
+        model = None
+        images = None
         try:
             cleanup()
             if args.keep_model_between_counts:
@@ -349,9 +351,9 @@ def main() -> None:
                 num_scale_frames=args.num_scale_frames,
                 keyframe_interval=args.keyframe_interval,
             )
-            del images
+            images = None
             if not args.keep_model_between_counts:
-                del model
+                model = None
             cleanup()
             row = {
                 "frames": frame_count,
@@ -373,16 +375,13 @@ def main() -> None:
                 f"reserved={row['peak_reserved_gib']}GiB"
             )
         except torch.cuda.OutOfMemoryError as exc:
-            if "model" in locals() and model is not None:
+            if model is not None:
                 model.clean_kv_cache()
-            if "images" in locals():
-                del images
+            images = None
             if (
-                "model" in locals()
-                and model is not None
-                and not args.keep_model_between_counts
+                model is not None and not args.keep_model_between_counts
             ):
-                del model
+                model = None
             cleanup()
             row = {
                 "frames": frame_count,

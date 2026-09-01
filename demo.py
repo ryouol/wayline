@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 # Must be set before `import torch` / any CUDA init. Reduces the reserved-vs-allocated
 # memory gap by letting the caching allocator grow segments on demand instead of
@@ -47,6 +48,7 @@ from tqdm.auto import tqdm
 from lingbot_map.utils.pose_enc import pose_encoding_to_extri_intri
 from lingbot_map.utils.geometry import closed_form_inverse_se3_general
 from lingbot_map.utils.load_fn import load_and_preprocess_images
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 
 # =============================================================================
@@ -151,7 +153,12 @@ def load_model(args, device):
 
     if args.model_path:
         print(f"Loading checkpoint: {args.model_path}")
-        ckpt = torch.load(args.model_path, map_location=device, weights_only=False)
+        checkpoint_path = Path(args.model_path)
+        load_path = verified_checkpoint_path(
+            checkpoint_path, getattr(args, "model_sha256", None)
+        )
+        print(f"  Loading private verified copy: {load_path.name}")
+        ckpt = torch.load(load_path, map_location=device, weights_only=True)
         state_dict = ckpt.get("model", ckpt)
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing:
@@ -354,6 +361,12 @@ def main():
 
     # Model
     parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument(
+        "--model_sha256",
+        type=str,
+        default=None,
+        help="Expected checkpoint SHA-256 (or provide <model_path>.sha256)",
+    )
     parser.add_argument("--image_size", type=int, default=518)
     parser.add_argument("--patch_size", type=int, default=14)
 
@@ -407,6 +420,13 @@ def main():
     parser.add_argument("--downsample_factor", type=int, default=10)
     parser.add_argument("--point_size", type=float, default=0.00001)
     parser.add_argument("--mask_sky", action="store_true", help="Apply sky segmentation to filter out sky points")
+    parser.add_argument("--skyseg_model_path", type=str, default="skyseg.onnx")
+    parser.add_argument(
+        "--skyseg_sha256",
+        type=str,
+        default=None,
+        help="Expected sky-model SHA-256 (or provide <skyseg_model_path>.sha256)",
+    )
     parser.add_argument("--sky_mask_dir", type=str, default=None,
                         help="Directory for cached sky masks (default: <image_folder>_sky_masks/)")
     parser.add_argument("--sky_mask_visualization_dir", type=str, default=None,
@@ -591,6 +611,8 @@ def main():
             point_size=args.point_size,
             mask_sky=args.mask_sky,
             image_folder=resolved_image_folder,
+            skyseg_model_path=args.skyseg_model_path,
+            skyseg_sha256=args.skyseg_sha256,
             sky_mask_dir=args.sky_mask_dir,
             sky_mask_visualization_dir=args.sky_mask_visualization_dir,
         )

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shared 3D scene</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="share-body">
+  <main class="share-shell">
+    <header class="share-header">
+      <div>
+        <p class="product-kicker">3D Scene Workspace</p>
+        <h1 id="shareTitle">Shared scene</h1>
+      </div>
+      <span class="status-label" id="shareLicense">Loading</span>
+    </header>
+    <section class="shared-viewer" aria-labelledby="shareViewerTitle">
+      <div class="viewer-heading">
+        <div>
+          <p class="section-label">Read-only share</p>
+          <h2 id="shareViewerTitle">Interactive point cloud</h2>
+        </div>
+        <p class="viewer-help">Drag to orbit · scroll to zoom · arrow keys supported</p>
+      </div>
+      <canvas id="sharedCanvas" class="scene-canvas share-canvas" tabindex="0" aria-label="Interactive shared 3D point-cloud viewer."></canvas>
+      <p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p>
+      <p class="legal-note research-warning" id="shareCommercialWarning" role="note" hidden></p>
+      <a class="secondary" id="sharedDownload" href="#">Download artifact</a>
+      <p class="legal-note" id="shareExpiry"></p>
+    </section>
+  </main>
+  <script src="/static/viewer.js"></script>
+  <script src="/static/share.js"></script>
+</body>
+</html>

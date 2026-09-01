@@ -1,26 +1,75 @@
 [project]
 name = "lingbot-map"
-version = "0.1.0"
-description = "LingBot-Map: Geometric Context Transformer for Streaming 3D Reconstruction"
-requires-python = ">= 3.10"
+version = "0.2.0"
+description = "Authenticated 3D scene workspace with a gated LingBot research adapter"
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 dependencies = [
-    "Pillow",
-    "huggingface_hub",
-    "einops",
-    "safetensors",
-    "opencv-python",
-    "tqdm",
-    "scipy"
+    "fastapi==0.141.1",
+    "opencv-python-headless==4.11.0.86",
+    "python-multipart==0.0.32",
+    "uvicorn==0.52.4",
 ]
 
 [project.optional-dependencies]
-vis = ["viser>=0.2.23", "trimesh", "matplotlib", "onnxruntime", "requests"]
-demo = ["lingbot-map[vis]"]
+research = [
+    "Pillow==12.3.0",
+    "einops==0.8.1",
+    "huggingface-hub==0.34.4",
+    "numpy==1.26.4",
+    "safetensors==0.6.2",
+    "scipy==1.16.1",
+    "tqdm==4.67.1",
+]
+vis = [
+    "matplotlib==3.8.4",
+    "onnxruntime==1.22.1",
+    "requests==2.33.0",
+    "trimesh==4.8.1",
+    "viser==0.2.23",
+]
+demo = ["lingbot-map[research,vis]"]
+dev = [
+    "httpx2==2.12.0",
+    "modal==1.5.5",
+    "mypy==1.19.1",
+    "pytest==9.0.3",
+    "ruff==0.14.13",
+    "setuptools==83.0.0",
+    "wheel==0.46.3",
+]
+
+[project.scripts]
+lingbot-workspace = "lingbot_map.workspace.app:main"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools==83.0.0", "wheel==0.46.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lingbot_map*"]
+
+[tool.setuptools.package-data]
+"lingbot_map.workspace" = ["static/*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["example", "demo_render"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["benchmark/"]

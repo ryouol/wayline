@@ -439,11 +439,15 @@ function doRenderVideo() {
 function updateKeyframeList(keyframes, count) {
   document.getElementById('kf-count').textContent = count;
   const list = document.getElementById('kf-list');
-  list.innerHTML = '';
+  list.replaceChildren();
   keyframes.forEach((kf, i) => {
     const div = document.createElement('div');
     div.className = 'kf-item';
-    div.innerHTML = `<span>KF ${i+1}</span><span>Frame ${kf.frame_idx}</span>`;
+    const keyframeLabel = document.createElement('span');
+    keyframeLabel.textContent = `KF ${i + 1}`;
+    const frameLabel = document.createElement('span');
+    frameLabel.textContent = `Frame ${Number(kf.frame_idx)}`;
+    div.append(keyframeLabel, frameLabel);
     div.addEventListener('click', () => send({type: 'goto_keyframe', index: i}));
     list.appendChild(div);
   });

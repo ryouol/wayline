@@ -135,6 +135,7 @@ class SceneBuilder:
             soft_masks = load_or_create_sky_masks(
                 images=self.images,
                 skyseg_model_path=pp.sky_model,
+                skyseg_sha256=pp.sky_model_sha256,
                 sky_mask_dir=sky_mask_dir,
                 sky_mask_visualization_dir=sky_mask_visualization_dir,
                 target_shape=self.images.shape[1:3],

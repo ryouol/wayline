@@ -619,14 +619,14 @@ function renderArtifactViewer(detail) {
     const jsonArtifacts = detail.artifacts?.json || {};
     const imageArtifacts = detail.artifacts?.images || {};
     const jsonLinks = Object.entries(jsonArtifacts).sort().map(([category, path]) => (
-        `<a class="artifact-link" href="${escapeAttr(path)}" target="_blank" rel="noreferrer">${escapeHtml(categoryLabel(category))} JSON</a>`
+        `<a class="artifact-link" href="${escapeAttr(safeLocalPath(path))}" target="_blank" rel="noreferrer">${escapeHtml(categoryLabel(category))} JSON</a>`
     )).join('');
     const imageSections = sortCategories(Object.keys(imageArtifacts)).map((category) => {
         const images = imageArtifacts[category] || [];
         const gallery = images.length > 0
             ? images.map((path) => `
-                <a href="${escapeAttr(path)}" target="_blank" rel="noreferrer">
-                    <img src="${escapeAttr(path)}" alt="${escapeAttr(categoryLabel(category))}">
+                <a href="${escapeAttr(safeLocalPath(path))}" target="_blank" rel="noreferrer">
+                    <img src="${escapeAttr(safeLocalPath(path))}" alt="${escapeAttr(categoryLabel(category))}">
                 </a>
             `).join('')
             : '<div class="empty">No image artifacts.</div>';
@@ -653,7 +653,7 @@ function renderArtifactViewer(detail) {
 function sourceLink(category, sources) {
     const path = sources[category];
     if (!path) return '';
-    return `<a class="source-link" href="${escapeAttr(path)}" target="_blank" rel="noreferrer">source</a>`;
+    return `<a class="source-link" href="${escapeAttr(safeLocalPath(path))}" target="_blank" rel="noreferrer">source</a>`;
 }
 
 function flattenMetrics(value, prefix = '') {
@@ -826,4 +826,15 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
     return escapeHtml(value);
+}
+
+function safeLocalPath(value) {
+    try {
+        const url = new URL(String(value), window.location.href);
+        const allowedProtocol = ['http:', 'https:', 'file:'].includes(url.protocol);
+        const sameOrigin = url.protocol === 'file:' || url.origin === window.location.origin;
+        return allowedProtocol && sameOrigin ? url.href : '#';
+    } catch (_) {
+        return '#';
+    }
 }

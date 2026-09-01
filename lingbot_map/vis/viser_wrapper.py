@@ -29,6 +29,8 @@ def viser_wrapper(
     background_mode: bool = False,
     mask_sky: bool = False,
     image_folder: Optional[str] = None,
+    skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
 ):
     """
     Visualize predicted 3D points and camera poses with viser.
@@ -81,7 +83,12 @@ def viser_wrapper(
 
     # Apply sky segmentation if enabled
     if mask_sky and image_folder is not None:
-        conf = apply_sky_segmentation(conf, image_folder)
+        conf = apply_sky_segmentation(
+            conf,
+            image_folder,
+            skyseg_model_path=skyseg_model_path,
+            skyseg_sha256=skyseg_sha256,
+        )
 
     # Convert images from (S, 3, H, W) to (S, H, W, 3)
     colors = images.transpose(0, 2, 3, 1)  # now (S, H, W, 3)

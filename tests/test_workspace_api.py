@@ -15,7 +15,7 @@ def fake_mp4(size: int = 64) -> bytes:
     return b"\x00\x00\x00\x18ftypisom" + b"\x00" * max(0, size - 12)
 
 
-def test_authentication_and_security_headers(client):
+def test_authentication_and_security_headers(client, service):
     response = client.get("/api/jobs")
     assert response.status_code == 401
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -26,6 +26,13 @@ def test_authentication_and_security_headers(client):
     assert login.status_code == 200
     assert "HttpOnly" in login.headers["set-cookie"]
     assert "SameSite=strict" in login.headers["set-cookie"]
+    marker = login.headers["x-workspace-principal"]
+    assert len(marker) == 64
+
+    other_token = "other-principal-marker-token-long-enough"
+    service.database.provision_tenant(token=other_token, tenant_name="Other", quota_units=10)
+    other = client.get("/api/jobs", headers={"Authorization": f"Bearer {other_token}"})
+    assert other.headers["x-workspace-principal"] != marker
 
     # Cookie-authenticated writes require the separate rotating CSRF token.
     assert client.post("/api/jobs/sample").status_code == 403
@@ -46,6 +53,7 @@ def test_health_checks_database_storage_and_required_worker(client, service, mon
         raise OSError(f"private storage failure after {max_bytes} byte")
 
     monkeypatch.setattr(service.store, "put_bytes", fail_storage_probe)
+    service._readiness_checked_at = 0
     response = client.get("/healthz")
     assert response.status_code == 503
     assert response.json() == {"detail": "Workspace dependencies are not ready."}
@@ -108,7 +116,8 @@ def test_orphan_upload_can_be_deleted(authenticated_client, service):
     )
     assert upload.status_code == 201
     response = authenticated_client.delete(f"/api/assets/{upload.json()['id']}")
-    assert response.status_code == 204
+    assert response.status_code == 202
+    assert response.json()["state"] == "deleting"
     assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
 
 
@@ -181,6 +190,14 @@ def test_complete_sample_view_download_share_and_delete(authenticated_client, se
     assert content.content[:4] == b"glTF"
     assert content.headers["content-type"].startswith("model/gltf-binary")
 
+    manifest = next(item for item in job["artifacts"] if item["kind"] == "manifest")
+    assert (
+        authenticated_client.post(
+            f"/api/artifacts/{manifest['id']}/shares", json={"ttlSeconds": 300}
+        ).status_code
+        == 404
+    )
+
     share = authenticated_client.post(
         f"/api/artifacts/{scene['id']}/shares", json={"ttlSeconds": 300}
     )
@@ -194,7 +211,8 @@ def test_complete_sample_view_download_share_and_delete(authenticated_client, se
     assert public_content.content[:4] == b"glTF"
 
     deleted = authenticated_client.delete(f"/api/jobs/{job_id}")
-    assert deleted.status_code == 204
+    assert deleted.status_code == 202
+    assert deleted.json()["state"] == "deleting"
     assert authenticated_client.get(scene["viewUrl"]).status_code == 404
     assert authenticated_client.get(f"/api/public/shares/{token}").status_code == 404
     assert list((service.settings.data_dir / "objects").rglob("*.glb")) == []
@@ -217,9 +235,15 @@ def test_committed_running_cancel_wins_atomic_finish_and_discards_artifacts(
     job = service.submit_sample(tenant_id)
     original_finish = service.database.finish_job
 
-    def cancel_then_finish(tenant, job_id, *, used_units):
+    def cancel_then_finish(tenant, job_id, *, attempt_token, worker_id, used_units):
         assert service.database.request_cancellation(tenant, job_id) == "cancelling"
-        return original_finish(tenant, job_id, used_units=used_units)
+        return original_finish(
+            tenant,
+            job_id,
+            attempt_token=attempt_token,
+            worker_id=worker_id,
+            used_units=used_units,
+        )
 
     monkeypatch.setattr(service.database, "finish_job", cancel_then_finish)
     assert service.process_next_job() is True
@@ -234,11 +258,20 @@ def test_committed_running_cancel_wins_atomic_finish_and_discards_artifacts(
 
 def test_cancel_request_wins_when_running_job_fails(service, tenant_id):
     job = service.submit_sample(tenant_id)
-    claimed = service.database.claim_next_job(lease_seconds=10, max_attempts=2)
+    claimed = service.database.claim_next_job(
+        worker_id="test-worker", lease_seconds=10, max_attempts=2
+    )
     assert claimed and claimed["id"] == job["id"]
     assert service.database.request_cancellation(tenant_id, job["id"]) == "cancelling"
 
-    service.database.fail_job(tenant_id, job["id"], code="job_failed", message="provider failed")
+    service.database.fail_job(
+        tenant_id,
+        job["id"],
+        attempt_token=claimed["attempt_token"],
+        worker_id=claimed["worker_id"],
+        code="job_failed",
+        message="provider failed",
+    )
 
     cancelled = service.database.get_job(tenant_id, job["id"])
     assert cancelled["state"] == "cancelled"
@@ -248,7 +281,7 @@ def test_cancel_request_wins_when_running_job_fails(service, tenant_id):
 
 def test_worker_recovery_requeues_once_then_fails_with_refund(service, tenant_id):
     job = service.submit_sample(tenant_id)
-    claimed = service.database.claim_next_job(lease_seconds=1, max_attempts=2)
+    claimed = service.database.claim_next_job(worker_id="worker-a", lease_seconds=1, max_attempts=2)
     assert claimed and claimed["id"] == job["id"] and claimed["attempt"] == 1
     partial = service.store.put_bytes(
         f"tenants/{tenant_id}/jobs/{job['id']}/partial.glb", b"partial", max_bytes=64
@@ -256,6 +289,8 @@ def test_worker_recovery_requeues_once_then_fails_with_refund(service, tenant_id
     service.database.create_artifact(
         tenant_id=tenant_id,
         job_id=job["id"],
+        attempt_token=claimed["attempt_token"],
+        worker_id=claimed["worker_id"],
         kind="scene",
         object_key=partial.key,
         filename="partial.glb",
@@ -265,12 +300,20 @@ def test_worker_recovery_requeues_once_then_fails_with_refund(service, tenant_id
         license_id="NOASSERTION",
         metadata={},
     )
-    assert service.initialize() == {"requeued": 1, "failed": 0}
+    with service.database.transaction() as connection:
+        connection.execute("UPDATE jobs SET lease_expires_at=0 WHERE id=?", (job["id"],))
+    assert service.initialize() == {"requeued": 1, "failed": 0, "cancelled": 0}
     assert service.database.list_artifacts(tenant_id, job["id"]) == []
     assert not (service.settings.data_dir / "objects" / partial.key).exists()
-    claimed = service.database.claim_next_job(lease_seconds=1, max_attempts=2)
+    claimed = service.database.claim_next_job(worker_id="worker-b", lease_seconds=1, max_attempts=2)
     assert claimed and claimed["attempt"] == 2
-    assert service.database.recover_jobs(max_attempts=2) == {"requeued": 0, "failed": 1}
+    with service.database.transaction() as connection:
+        connection.execute("UPDATE jobs SET lease_expires_at=0 WHERE id=?", (job["id"],))
+    assert service.database.recover_jobs(max_attempts=2) == {
+        "requeued": 0,
+        "failed": 1,
+        "cancelled": 0,
+    }
     failed = service.database.get_job(tenant_id, job["id"])
     assert failed["state"] == "failed"
     assert failed["error_code"] == "worker_lost"

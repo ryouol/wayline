@@ -43,6 +43,7 @@ def predictions_to_glb(
     target_dir: Optional[str] = None,
     prediction_mode: str = "Predicted Pointmap",
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
 ) -> "trimesh.Scene":
@@ -68,6 +69,7 @@ def predictions_to_glb(
         target_dir: Output directory for intermediate files
         prediction_mode: "Predicted Pointmap" or "Predicted Depthmap"
         skyseg_model_path: Path to the sky segmentation ONNX model
+        skyseg_sha256: Expected digest (or provide ``<path>.sha256``)
         sky_mask_dir: Optional directory for cached sky masks
         sky_mask_visualization_dir: Optional directory for mask visualizations
 
@@ -128,6 +130,7 @@ def predictions_to_glb(
             target_dir,
             images,
             skyseg_model_path=skyseg_model_path,
+            skyseg_sha256=skyseg_sha256,
             sky_mask_dir=sky_mask_dir,
             sky_mask_visualization_dir=sky_mask_visualization_dir,
         )
@@ -239,6 +242,7 @@ def _apply_sky_mask(
     target_dir: Optional[str],
     images: np.ndarray,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
 ) -> np.ndarray:
@@ -256,6 +260,7 @@ def _apply_sky_mask(
         image_folder=image_folder,
         images=images,
         skyseg_model_path=skyseg_model_path,
+        skyseg_sha256=skyseg_sha256,
         sky_mask_dir=sky_mask_dir,
         sky_mask_visualization_dir=sky_mask_visualization_dir,
     )

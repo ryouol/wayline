@@ -8,6 +8,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from lingbot_map.checkpoints import verified_checkpoint_path
+
 
 DEFAULT_MODEL_PATH = Path.home() / ".cache" / "benchmark" / "skyseg.onnx"
 INPUT_SIZE = 320
@@ -32,7 +34,7 @@ def get_model(model_path: Optional[str] = None) -> Path:
     return path
 
 
-def create_session(model_path: Path):
+def create_session(model_path: Path, model_sha256: Optional[str] = None):
     """Create onnxruntime.InferenceSession; raises ImportError if not installed.
 
     Args:
@@ -51,7 +53,12 @@ def create_session(model_path: Path):
             "onnxruntime is required for sky segmentation. "
             "Install it with: pip install onnxruntime"
         )
-    return onnxruntime.InferenceSession(str(model_path))
+    load_path = verified_checkpoint_path(
+        model_path,
+        model_sha256,
+        max_bytes=512 * 1024 * 1024,
+    )
+    return onnxruntime.InferenceSession(str(load_path))
 
 
 def segment_sky_rgb(rgb: np.ndarray, session) -> np.ndarray:

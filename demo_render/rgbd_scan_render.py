@@ -65,6 +65,7 @@ def parse_args():
     p.add_argument('--follow_scale_frames', type=int, default=None)
     p.add_argument('--mask_sky', action='store_true', default=None)
     p.add_argument('--sky_model', default=None)
+    p.add_argument('--sky_model_sha256', default=None)
     p.add_argument('--sky_batch_size', type=int, default=None)
     p.add_argument('--sky_mask_dir', type=str, default=None,
                    help='Directory for cached sky masks')

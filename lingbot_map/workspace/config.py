@@ -48,6 +48,20 @@ class Settings:
     max_video_frames: int = 9_000
     max_video_dimension: int = 4_096
     tenant_quota_units: int = 10_000
+    tenant_storage_bytes: int = 5 * 1024 * 1024 * 1024
+    tenant_max_assets: int = 100
+    tenant_max_unattached_assets: int = 10
+    tenant_max_jobs: int = 500
+    tenant_max_artifacts: int = 1_500
+    tenant_max_shares: int = 250
+    upload_rate_per_minute: int = 10
+    job_rate_per_minute: int = 30
+    share_rate_per_minute: int = 30
+    terminal_job_retention_seconds: int = 30 * 24 * 60 * 60
+    unattached_asset_retention_seconds: int = 24 * 60 * 60
+    idempotency_ttl_seconds: int = 24 * 60 * 60
+    shutdown_timeout_seconds: int = 30
+    readiness_probe_ttl_seconds: float = 2.0
     worker_poll_seconds: float = 0.25
     job_timeout_seconds: int = 60 * 60
     max_job_attempts: int = 2
@@ -90,6 +104,32 @@ class Settings:
             max_video_frames=int(os.getenv("LINGBOT_MAX_VIDEO_FRAMES", "9000")),
             max_video_dimension=int(os.getenv("LINGBOT_MAX_VIDEO_DIMENSION", "4096")),
             tenant_quota_units=int(os.getenv("LINGBOT_TENANT_QUOTA_UNITS", "10000")),
+            tenant_storage_bytes=int(
+                os.getenv("LINGBOT_TENANT_STORAGE_BYTES", str(5 * 1024 * 1024 * 1024))
+            ),
+            tenant_max_assets=int(os.getenv("LINGBOT_TENANT_MAX_ASSETS", "100")),
+            tenant_max_unattached_assets=int(
+                os.getenv("LINGBOT_TENANT_MAX_UNATTACHED_ASSETS", "10")
+            ),
+            tenant_max_jobs=int(os.getenv("LINGBOT_TENANT_MAX_JOBS", "500")),
+            tenant_max_artifacts=int(os.getenv("LINGBOT_TENANT_MAX_ARTIFACTS", "1500")),
+            tenant_max_shares=int(os.getenv("LINGBOT_TENANT_MAX_SHARES", "250")),
+            upload_rate_per_minute=int(os.getenv("LINGBOT_UPLOAD_RATE_PER_MINUTE", "10")),
+            job_rate_per_minute=int(os.getenv("LINGBOT_JOB_RATE_PER_MINUTE", "30")),
+            share_rate_per_minute=int(os.getenv("LINGBOT_SHARE_RATE_PER_MINUTE", "30")),
+            terminal_job_retention_seconds=int(
+                os.getenv("LINGBOT_TERMINAL_JOB_RETENTION_SECONDS", str(30 * 24 * 60 * 60))
+            ),
+            unattached_asset_retention_seconds=int(
+                os.getenv("LINGBOT_UNATTACHED_ASSET_RETENTION_SECONDS", str(24 * 60 * 60))
+            ),
+            idempotency_ttl_seconds=int(
+                os.getenv("LINGBOT_IDEMPOTENCY_TTL_SECONDS", str(24 * 60 * 60))
+            ),
+            shutdown_timeout_seconds=int(os.getenv("LINGBOT_SHUTDOWN_TIMEOUT_SECONDS", "30")),
+            readiness_probe_ttl_seconds=float(
+                os.getenv("LINGBOT_READINESS_PROBE_TTL_SECONDS", "2")
+            ),
             worker_poll_seconds=float(os.getenv("LINGBOT_WORKER_POLL_SECONDS", "0.25")),
             job_timeout_seconds=int(os.getenv("LINGBOT_JOB_TIMEOUT_SECONDS", "3600")),
             max_job_attempts=int(os.getenv("LINGBOT_MAX_JOB_ATTEMPTS", "2")),
@@ -146,6 +186,28 @@ class Settings:
             raise ValueError("upload limits must be positive")
         if self.max_job_attempts < 1:
             raise ValueError("max job attempts must be at least one")
+        bounded_values = {
+            "LINGBOT_TENANT_STORAGE_BYTES": self.tenant_storage_bytes,
+            "LINGBOT_TENANT_MAX_ASSETS": self.tenant_max_assets,
+            "LINGBOT_TENANT_MAX_UNATTACHED_ASSETS": self.tenant_max_unattached_assets,
+            "LINGBOT_TENANT_MAX_JOBS": self.tenant_max_jobs,
+            "LINGBOT_TENANT_MAX_ARTIFACTS": self.tenant_max_artifacts,
+            "LINGBOT_TENANT_MAX_SHARES": self.tenant_max_shares,
+            "LINGBOT_UPLOAD_RATE_PER_MINUTE": self.upload_rate_per_minute,
+            "LINGBOT_JOB_RATE_PER_MINUTE": self.job_rate_per_minute,
+            "LINGBOT_SHARE_RATE_PER_MINUTE": self.share_rate_per_minute,
+            "LINGBOT_TERMINAL_JOB_RETENTION_SECONDS": self.terminal_job_retention_seconds,
+            "LINGBOT_UNATTACHED_ASSET_RETENTION_SECONDS": self.unattached_asset_retention_seconds,
+            "LINGBOT_IDEMPOTENCY_TTL_SECONDS": self.idempotency_ttl_seconds,
+            "LINGBOT_SHUTDOWN_TIMEOUT_SECONDS": self.shutdown_timeout_seconds,
+        }
+        if any(value <= 0 for value in bounded_values.values()):
+            invalid = next(name for name, value in bounded_values.items() if value <= 0)
+            raise ValueError(f"{invalid} must be positive")
+        if self.tenant_max_unattached_assets > self.tenant_max_assets:
+            raise ValueError("unattached asset limit cannot exceed the asset limit")
+        if self.readiness_probe_ttl_seconds < 0 or self.readiness_probe_ttl_seconds > 30:
+            raise ValueError("LINGBOT_READINESS_PROBE_TTL_SECONDS must be between 0 and 30")
         for name, digest in (
             ("LINGBOT_CHECKPOINT_SHA256", self.checkpoint_sha256),
             ("LINGBOT_SKYSEG_SHA256", self.skyseg_sha256),

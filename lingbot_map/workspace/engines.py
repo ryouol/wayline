@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lingbot_map.checkpoints import CheckpointRejected, verify_checkpoint
+from lingbot_map.checkpoints import CheckpointRejected, materialize_verified_checkpoint
 
 from .config import RESEARCH_ACKNOWLEDGEMENT, Settings
 from .sample import SAMPLE_LICENSE_ID, SAMPLE_VERSION, build_synthetic_scene, sample_manifest
@@ -227,8 +227,7 @@ class LingbotResearchEngine(ReconstructionEngine):
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._verified_checkpoint: dict[str, Any] | None = None
-        self._verified_skyseg: dict[str, Any] | None = None
+        self._checkpoint_cache = settings.data_dir / "verified-checkpoints"
 
     def _reasons(self) -> list[str]:
         reasons = []
@@ -277,32 +276,30 @@ class LingbotResearchEngine(ReconstructionEngine):
         }
 
     def _checkpoint(self) -> dict[str, Any]:
-        if self._verified_checkpoint is None:
-            if not self.settings.checkpoint_path:
-                raise EngineUnavailable("checkpoint path is not configured")
-            try:
-                self._verified_checkpoint = verify_checkpoint(
-                    self.settings.checkpoint_path,
-                    self.settings.checkpoint_sha256,
-                    self.settings.checkpoint_max_bytes,
-                )
-            except CheckpointRejected as error:
-                raise EngineUnavailable(str(error)) from error
-        return self._verified_checkpoint
+        if not self.settings.checkpoint_path:
+            raise EngineUnavailable("checkpoint path is not configured")
+        try:
+            return materialize_verified_checkpoint(
+                self.settings.checkpoint_path,
+                self.settings.checkpoint_sha256,
+                self.settings.checkpoint_max_bytes,
+                self._checkpoint_cache,
+            )
+        except CheckpointRejected as error:
+            raise EngineUnavailable(str(error)) from error
 
     def _skyseg(self) -> dict[str, Any]:
-        if self._verified_skyseg is None:
-            if not self.settings.skyseg_path:
-                raise EngineUnavailable("sky segmentation path is not configured")
-            try:
-                self._verified_skyseg = verify_checkpoint(
-                    self.settings.skyseg_path,
-                    self.settings.skyseg_sha256,
-                    self.settings.skyseg_max_bytes,
-                )
-            except CheckpointRejected as error:
-                raise EngineUnavailable(f"sky segmentation model: {error}") from error
-        return self._verified_skyseg
+        if not self.settings.skyseg_path:
+            raise EngineUnavailable("sky segmentation path is not configured")
+        try:
+            return materialize_verified_checkpoint(
+                self.settings.skyseg_path,
+                self.settings.skyseg_sha256,
+                self.settings.skyseg_max_bytes,
+                self._checkpoint_cache,
+            )
+        except CheckpointRejected as error:
+            raise EngineUnavailable(f"sky segmentation model: {error}") from error
 
     def run(
         self,
@@ -445,6 +442,9 @@ class LingbotResearchEngine(ReconstructionEngine):
         except (ProcessLookupError, subprocess.TimeoutExpired):
             with suppress(ProcessLookupError):
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            # Always reap the direct child. A second timeout is exceptional and
+            # must surface rather than leaving a zombie behind silently.
+            process.wait(timeout=5)
 
 
 def engine_registry(settings: Settings) -> dict[str, ReconstructionEngine]:

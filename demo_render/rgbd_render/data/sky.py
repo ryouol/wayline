@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import glob
 import os
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 from tqdm.auto import tqdm
+
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 try:
     import onnxruntime
@@ -32,7 +35,7 @@ def _get_cache_version_path(sky_mask_dir: str) -> str:
     return os.path.join(sky_mask_dir, ".skyseg_cache_version")
 
 
-def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> bool:
+def _prepare_sky_mask_cache(sky_mask_dir: Optional[str], model_identity: str) -> bool:
     if sky_mask_dir is None:
         return False
 
@@ -41,7 +44,7 @@ def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> bool:
     refresh_cache = True
     if os.path.exists(version_path):
         with open(version_path, "r", encoding="utf-8") as f:
-            refresh_cache = f.read().strip() != _SKYSEG_CACHE_VERSION
+            refresh_cache = f.read().strip() != f"{_SKYSEG_CACHE_VERSION}:{model_identity}"
 
     if refresh_cache:
         print(
@@ -49,7 +52,7 @@ def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> bool:
             "regenerating masks with ImageNet-normalized skyseg input"
         )
         with open(version_path, "w", encoding="utf-8") as f:
-            f.write(_SKYSEG_CACHE_VERSION)
+            f.write(f"{_SKYSEG_CACHE_VERSION}:{model_identity}")
 
     return refresh_cache
 
@@ -286,6 +289,7 @@ def load_or_create_sky_masks(
     image_paths: Optional[list[str]] = None,
     images: Optional[np.ndarray] = None,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
     target_shape: Optional[Tuple[int, int]] = None,
@@ -310,8 +314,13 @@ def load_or_create_sky_masks(
         return None
 
     _ensure_skyseg_model(skyseg_model_path)
-
-    skyseg_session = onnxruntime.InferenceSession(skyseg_model_path)
+    load_path = verified_checkpoint_path(
+        Path(skyseg_model_path),
+        skyseg_sha256,
+        max_bytes=512 * 1024 * 1024,
+    )
+    model_identity = load_path.stem
+    skyseg_session = onnxruntime.InferenceSession(str(load_path))
     sky_masks: List[np.ndarray] = []
 
     if sky_mask_visualization_dir is not None:
@@ -330,7 +339,7 @@ def load_or_create_sky_masks(
 
         if sky_mask_dir is None and image_folder is not None:
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print(f"Generating sky masks from image array (batch_size={batch_size})...")
         for bs in tqdm(range(0, num_images, batch_size),
@@ -412,7 +421,7 @@ def load_or_create_sky_masks(
             if image_folder is None:
                 image_folder = os.path.dirname(image_paths[0])
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print(f"Generating sky masks from image files (batch_size={batch_size})...")
         for bs in tqdm(range(0, len(image_paths), batch_size),

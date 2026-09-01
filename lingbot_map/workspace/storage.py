@@ -32,6 +32,10 @@ class ObjectStore(Protocol):
 
     def delete(self, key: str) -> None: ...
 
+    def copy_from_path(self, key: str, source: Path, *, max_bytes: int) -> StoredObject: ...
+
+    def iter_keys(self, prefix: str = "") -> list[str]: ...
+
 
 class ObjectTooLarge(ValueError):
     pass
@@ -128,3 +132,21 @@ class LocalObjectStore:
         path = self._path(prefix)
         if path.exists():
             shutil.rmtree(path)
+
+    def iter_keys(self, prefix: str = "") -> list[str]:
+        """Return stable object keys for reconciliation.
+
+        Production object-store adapters may implement this with paginated list
+        operations while preserving the same logical contract.
+        """
+
+        base = self.root if not prefix else self._path(prefix)
+        if not base.exists():
+            return []
+        if base.is_file():
+            return [base.relative_to(self.root).as_posix()]
+        return sorted(
+            path.relative_to(self.root).as_posix()
+            for path in base.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )

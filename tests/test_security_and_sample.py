@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from lingbot_map.checkpoints import CheckpointRejected, expected_digest, verify_checkpoint
+from lingbot_map.checkpoints import (
+    CheckpointRejected,
+    expected_digest,
+    materialize_verified_checkpoint,
+    verify_checkpoint,
+)
 from lingbot_map.workspace.config import Settings
 from lingbot_map.workspace.sample import build_synthetic_scene
 from lingbot_map.workspace.storage import LocalObjectStore, ObjectTooLarge, validate_object_key
@@ -73,6 +78,10 @@ def test_checkpoint_requires_exact_digest_and_safe_file(tmp_path):
     sidecar = tmp_path / "model.pt.sha256"
     sidecar.write_text(f"{digest}  model.pt\n", encoding="utf-8")
     assert expected_digest(checkpoint) == digest
+    sidecar.chmod(0o620)
+    with pytest.raises(CheckpointRejected, match="group- or world-writable"):
+        expected_digest(checkpoint)
+    sidecar.chmod(0o600)
     with pytest.raises(CheckpointRejected, match="does not match"):
         verify_checkpoint(checkpoint, "0" * 64, 1024)
 
@@ -84,6 +93,33 @@ def test_checkpoint_requires_exact_digest_and_safe_file(tmp_path):
     link.symlink_to(checkpoint)
     with pytest.raises(CheckpointRejected, match="non-symlink"):
         verify_checkpoint(link, digest, 1024)
+
+    checkpoint.chmod(0o620)
+    with pytest.raises(CheckpointRejected, match="group- or world-writable"):
+        verify_checkpoint(checkpoint, digest, 1024)
+
+
+def test_checkpoint_is_materialized_to_private_immutable_copy(tmp_path):
+    checkpoint = tmp_path / "operator-model.pt"
+    checkpoint.write_bytes(b"pinned model bytes")
+    checkpoint.chmod(0o600)
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    record = materialize_verified_checkpoint(checkpoint, digest, 1024, tmp_path / "private-cache")
+    private = Path(record["path"])
+    assert private != checkpoint
+    assert private.read_bytes() == b"pinned model bytes"
+    assert stat.S_IMODE(private.stat().st_mode) == 0o400
+
+    checkpoint.chmod(0o600)
+    checkpoint.write_bytes(b"operator path changed later")
+    assert private.read_bytes() == b"pinned model bytes"
+
+    redirected = tmp_path / "redirected-cache"
+    redirected.mkdir()
+    cache_link = tmp_path / "cache-link"
+    cache_link.symlink_to(redirected, target_is_directory=True)
+    with pytest.raises(CheckpointRejected, match="non-symlink directory"):
+        materialize_verified_checkpoint(checkpoint, digest, 1024, cache_link)
 
 
 def test_production_settings_require_long_secure_token(tmp_path):
@@ -203,7 +239,8 @@ output = Path(os.environ["LINGBOT_OUTPUT_DIR"])
 
 
 def test_modal_research_runner_keeps_sky_masking_opt_in():
-    module = ast.parse((Path(__file__).parents[1] / "modal_app.py").read_text(encoding="utf-8"))
+    source = (Path(__file__).parents[1] / "modal_app.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
     reconstruct = next(
         node
         for node in module.body
@@ -219,3 +256,57 @@ def test_modal_research_runner_keeps_sky_masking_opt_in():
     mask_sky = keyword_defaults["mask_sky"]
     assert isinstance(mask_sky, ast.Constant)
     assert mask_sky.value is False
+    assert "requirements/modal.lock" in source
+    assert "--require-hashes" in source
+
+
+def test_every_direct_torch_loader_uses_a_private_verified_path():
+    root = Path(__file__).parents[1]
+    candidates = [
+        root / "demo.py",
+        root / "demo_render" / "demo.py",
+        root / "benchmark" / "methods" / "lingbot_map.py",
+        root / "lingbot_map" / "aggregator" / "base.py",
+    ]
+    for candidate in candidates:
+        module = ast.parse(candidate.read_text(encoding="utf-8"))
+        loads = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "torch"
+            and node.func.attr == "load"
+        ]
+        assert loads, candidate
+        assert all(
+            call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == "load_path"
+            for call in loads
+        ), candidate
+
+
+def test_every_direct_onnx_loader_uses_a_private_verified_path():
+    root = Path(__file__).parents[1]
+    candidates = [
+        root / "lingbot_map" / "vis" / "sky_segmentation.py",
+        root / "demo_render" / "rgbd_render" / "data" / "sky.py",
+        root / "benchmark" / "sky_seg" / "seg_sky.py",
+        root / "benchmark" / "benchmark" / "utils" / "sky_segmentation.py",
+    ]
+    for candidate in candidates:
+        module = ast.parse(candidate.read_text(encoding="utf-8"))
+        loads = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "InferenceSession"
+        ]
+        assert loads, candidate
+        for node in loads:
+            first_arg = node.args[0]
+            assert isinstance(first_arg, ast.Call), candidate
+            assert isinstance(first_arg.func, ast.Name) and first_arg.func.id == "str", candidate
+            assert isinstance(first_arg.args[0], ast.Name), candidate
+            assert first_arg.args[0].id == "load_path", candidate

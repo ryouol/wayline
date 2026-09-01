@@ -127,6 +127,9 @@
       this.count = 0;
       this.drag = null;
       this.loadSequence = 0;
+      this.destroyed = false;
+      this.events = new AbortController();
+      this.loadController = null;
       this.initializeGraphics();
       this.bindControls();
       this.resizeObserver = new ResizeObserver(() => this.draw());
@@ -173,6 +176,8 @@
         throw new Error(gl.getProgramInfoLog(program) || "WebGL program failed to link.");
       }
       this.program = program;
+      this.vertexShader = vertex;
+      this.fragmentShader = fragment;
       this.locations = {
         position: gl.getAttribLocation(program, "aPosition"),
         color: gl.getAttribLocation(program, "aColor"),
@@ -187,10 +192,11 @@
     }
 
     bindControls() {
+      const signal = this.events.signal;
       this.canvas.addEventListener("pointerdown", (event) => {
         this.canvas.setPointerCapture(event.pointerId);
         this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
-      });
+      }, { signal });
       this.canvas.addEventListener("pointermove", (event) => {
         if (!this.drag || event.pointerId !== this.drag.id) return;
         this.yaw += (event.clientX - this.drag.x) * 0.008;
@@ -198,17 +204,17 @@
         this.drag.x = event.clientX;
         this.drag.y = event.clientY;
         this.draw();
-      });
+      }, { signal });
       const stopDrag = (event) => {
         if (this.drag?.id === event.pointerId) this.drag = null;
       };
-      this.canvas.addEventListener("pointerup", stopDrag);
-      this.canvas.addEventListener("pointercancel", stopDrag);
+      this.canvas.addEventListener("pointerup", stopDrag, { signal });
+      this.canvas.addEventListener("pointercancel", stopDrag, { signal });
       this.canvas.addEventListener("wheel", (event) => {
         event.preventDefault();
         this.distance = Math.max(1.4, Math.min(8, this.distance * Math.exp(event.deltaY * 0.001)));
         this.draw();
-      }, { passive: false });
+      }, { passive: false, signal });
       this.canvas.addEventListener("keydown", (event) => {
         const key = event.key;
         if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-", "0"].includes(key)) {
@@ -223,16 +229,22 @@
         else if (key === "0") { this.yaw = -0.65; this.pitch = -0.38; this.distance = 3.2; }
         else return;
         this.draw();
-      });
+      }, { signal });
     }
 
     async load(url) {
+      if (this.destroyed) throw new Error("The viewer has been closed.");
       const sequence = ++this.loadSequence;
+      if (this.loadController) this.loadController.abort();
+      this.loadController = new AbortController();
       this.status.textContent = "Loading stored point cloud.";
-      const response = await fetch(url, { credentials: "same-origin" });
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        signal: this.loadController.signal,
+      });
       if (!response.ok) throw new Error("The stored scene could not be loaded.");
       const parsed = parseGlb(await response.arrayBuffer());
-      if (sequence !== this.loadSequence) return;
+      if (this.destroyed || sequence !== this.loadSequence) return;
       const raw = parsed.positions.values;
       const minimum = [Infinity, Infinity, Infinity];
       const maximum = [-Infinity, -Infinity, -Infinity];
@@ -275,6 +287,7 @@
     }
 
     draw() {
+      if (this.destroyed) return;
       const gl = this.gl;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const width = Math.max(1, Math.round(this.canvas.clientWidth * ratio));
@@ -301,6 +314,26 @@
       gl.uniform1f(this.locations.aspect, width / height);
       gl.uniform1f(this.locations.pointSize, Math.max(2, 2.4 * ratio));
       gl.drawArrays(gl.POINTS, 0, this.count);
+    }
+
+    destroy() {
+      if (this.destroyed) return;
+      this.destroyed = true;
+      this.loadSequence += 1;
+      if (this.loadController) this.loadController.abort();
+      this.events.abort();
+      this.resizeObserver.disconnect();
+      const gl = this.gl;
+      if (this.positionBuffer) gl.deleteBuffer(this.positionBuffer);
+      if (this.colorBuffer) gl.deleteBuffer(this.colorBuffer);
+      if (this.program) gl.deleteProgram(this.program);
+      if (this.vertexShader) gl.deleteShader(this.vertexShader);
+      if (this.fragmentShader) gl.deleteShader(this.fragmentShader);
+      const loseContext = gl.getExtension("WEBGL_lose_context");
+      if (loseContext) loseContext.loseContext();
+      this.count = 0;
+      this.drag = null;
+      this.status.textContent = "Viewer closed.";
     }
   }
 

@@ -1,7 +1,11 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const state = { csrf: "", jobs: [], selectedId: null, engine: null, viewer: null, pollTimer: null };
+const state = {
+  csrf: "", jobs: [], selectedId: null, engine: null, viewer: null, viewerArtifact: null,
+  pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(), principal: "",
+  principalMarker: "",
+};
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
 const stageOrder = ["queued", "validating", "generating", "reconstructing", "exporting", "storing", "ready"];
 
@@ -16,14 +20,35 @@ function formatDate(value) {
 }
 
 async function api(path, options = {}) {
+  const requestEpoch = state.epoch;
   const method = options.method || "GET";
   const headers = new Headers(options.headers || {});
   if (method !== "GET" && method !== "HEAD" && state.csrf) headers.set("X-CSRF-Token", state.csrf);
+  if (options.idempotent && !headers.has("Idempotency-Key")) {
+    headers.set("Idempotency-Key", crypto.randomUUID());
+  }
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
     options.body = JSON.stringify(options.json);
   }
-  const response = await fetch(path, { ...options, method, headers, credentials: "same-origin" });
+  const controller = new AbortController();
+  state.controllers.add(controller);
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options, method, headers, credentials: "same-origin", signal: controller.signal,
+    });
+  } finally {
+    state.controllers.delete(controller);
+  }
+  if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+  const principalMarker = response.headers.get("X-Workspace-Principal");
+  if (principalMarker && state.principalMarker && principalMarker !== state.principalMarker) {
+    secureReset();
+    window.location.reload();
+    throw new DOMException("Workspace account changed", "AbortError");
+  }
+  if (principalMarker) state.principalMarker = principalMarker;
   if (response.status === 401) {
     showLogin();
     throw new Error("Your session ended. Sign in again.");
@@ -37,15 +62,54 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+function clearDetail() {
+  byId("jobDetail").hidden = true;
+  byId("emptyDetail").hidden = false;
+  byId("viewerSection").hidden = true;
+  byId("downloadLink").removeAttribute("href");
+  byId("shareButton").removeAttribute("data-artifact-id");
+  byId("artifactFacts").replaceChildren();
+  byId("provenanceList").replaceChildren();
+  if (state.viewer) state.viewer.destroy();
+  state.viewer = null;
+  state.viewerArtifact = null;
+}
+
+function secureReset() {
+  state.epoch += 1;
+  state.controllers.forEach((controller) => controller.abort());
+  state.controllers.clear();
+  if (state.pollTimer) clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+  state.csrf = "";
+  state.jobs = [];
+  state.selectedId = null;
+  state.engine = null;
+  state.principal = "";
+  state.principalMarker = "";
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  state.toastTimer = null;
+  byId("toast").hidden = true;
+  byId("toast").textContent = "";
+  byId("jobList").replaceChildren();
+  byId("video").value = "";
+  byId("shareUrl").value = "";
+  if (byId("shareDialog").open) byId("shareDialog").close();
+  clearDetail();
+}
+
 function showLogin() {
+  secureReset();
   byId("loginView").hidden = false;
   byId("appView").hidden = true;
-  state.csrf = "";
-  if (state.pollTimer) clearTimeout(state.pollTimer);
   byId("token").focus();
 }
 
-function showApp(user) {
+function showApp(user, csrfToken) {
+  const principal = `${user.tenantName}\u0000${user.displayName}`;
+  if (state.principal && state.principal !== principal) secureReset();
+  state.principal = principal;
+  state.csrf = csrfToken || "";
   byId("loginView").hidden = true;
   byId("appView").hidden = false;
   byId("workspaceName").textContent = `${user.tenantName} · ${user.displayName}`;
@@ -53,9 +117,18 @@ function showApp(user) {
 
 function toast(message) {
   const node = byId("toast");
+  if (state.toastTimer) clearTimeout(state.toastTimer);
   node.textContent = message;
   node.hidden = false;
-  window.setTimeout(() => { node.hidden = true; }, 4000);
+  state.toastTimer = window.setTimeout(() => {
+    node.hidden = true;
+    node.textContent = "";
+    state.toastTimer = null;
+  }, 4000);
+}
+
+function report(error) {
+  if (error?.name !== "AbortError") toast(error.message);
 }
 
 function addFact(list, label, value) {
@@ -100,14 +173,14 @@ async function loadJobs({ selectNewest = false } = {}) {
   if (selectNewest && state.jobs.length) state.selectedId = state.jobs[0].id;
   if (state.selectedId && !state.jobs.some((job) => job.id === state.selectedId)) state.selectedId = null;
   renderJobs();
-  if (state.selectedId) await renderJobDetail();
+  if (state.selectedId) await renderJobDetail(); else clearDetail();
   schedulePoll();
 }
 
 function schedulePoll() {
   if (state.pollTimer) clearTimeout(state.pollTimer);
   const hasActive = state.jobs.some((job) => !terminalStates.has(job.state));
-  state.pollTimer = window.setTimeout(() => loadJobs().catch((error) => toast(error.message)), hasActive ? 900 : 5000);
+  state.pollTimer = window.setTimeout(() => loadJobs().catch(report), hasActive ? 900 : 5000);
 }
 
 async function selectJob(jobId) {
@@ -127,8 +200,10 @@ function updateStages(job) {
 }
 
 async function renderJobDetail() {
-  if (!state.selectedId) return;
+  if (!state.selectedId) { clearDetail(); return; }
+  const selected = state.selectedId;
   const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
+  if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;
   byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample engine" : "LingBot research adapter";
@@ -176,6 +251,10 @@ async function renderJobDetail() {
     } catch (error) {
       byId("viewerStatus").textContent = error.message;
     }
+  } else if (state.viewer) {
+    state.viewer.destroy();
+    state.viewer = null;
+    state.viewerArtifact = null;
   }
 }
 
@@ -194,8 +273,7 @@ async function loadEngines() {
 async function initialize() {
   try {
     const result = await api("/api/me");
-    state.csrf = result.csrfToken || "";
-    showApp(result.user);
+    showApp(result.user, result.csrfToken);
     await Promise.all([loadEngines(), loadJobs({ selectNewest: true })]);
   } catch (_) {
     showLogin();
@@ -207,9 +285,8 @@ byId("loginForm").addEventListener("submit", async (event) => {
   byId("loginMessage").textContent = "";
   try {
     const result = await api("/api/session", { method: "POST", json: { token: byId("token").value } });
-    state.csrf = result.csrfToken;
     byId("token").value = "";
-    showApp(result.user);
+    showApp(result.user, result.csrfToken);
     await Promise.all([loadEngines(), loadJobs({ selectNewest: true })]);
   } catch (error) {
     byId("loginMessage").textContent = error.message;
@@ -224,7 +301,7 @@ byId("sampleButton").addEventListener("click", async () => {
   const button = byId("sampleButton");
   button.disabled = true;
   try {
-    const job = await api("/api/jobs/sample", { method: "POST" });
+    const job = await api("/api/jobs/sample", { method: "POST", idempotent: true });
     state.selectedId = job.id;
     await loadJobs();
     toast("Synthetic scene queued.");
@@ -245,9 +322,10 @@ byId("researchForm").addEventListener("submit", async (event) => {
   try {
     const body = new FormData();
     body.append("file", file);
-    asset = await api("/api/assets", { method: "POST", body });
+    asset = await api("/api/assets", { method: "POST", body, idempotent: true });
     const job = await api("/api/jobs/research", {
       method: "POST",
+      idempotent: true,
       json: {
         assetId: asset.id,
         extractFps: Number(byId("sampleFps").value),
@@ -263,7 +341,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     await loadJobs();
   } catch (error) {
     if (asset) {
-      try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE" }); }
+      try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }
     toast(error.message);
@@ -272,24 +350,22 @@ byId("researchForm").addEventListener("submit", async (event) => {
   }
 });
 
-byId("refreshButton").addEventListener("click", () => loadJobs().catch((error) => toast(error.message)));
+byId("refreshButton").addEventListener("click", () => loadJobs().catch(report));
 byId("cancelButton").addEventListener("click", async () => {
   if (!state.selectedId) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(state.selectedId)}/cancel`, { method: "POST" });
+    await api(`/api/jobs/${encodeURIComponent(state.selectedId)}/cancel`, { method: "POST", idempotent: true });
     await loadJobs();
   } catch (error) { toast(error.message); }
 });
 byId("deleteButton").addEventListener("click", async () => {
   if (!state.selectedId || !window.confirm("Delete this job, its source upload, artifacts, and shares? This cannot be undone.")) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { method: "DELETE" });
+    await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { method: "DELETE", idempotent: true });
     state.selectedId = null;
-    state.viewerArtifact = null;
-    byId("jobDetail").hidden = true;
-    byId("emptyDetail").hidden = false;
+    clearDetail();
     await loadJobs({ selectNewest: true });
-    toast("Scene and stored objects deleted.");
+    toast("Deletion accepted. Stored objects are being removed.");
   } catch (error) { toast(error.message); }
 });
 
@@ -299,6 +375,7 @@ byId("shareButton").addEventListener("click", async () => {
   try {
     const result = await api(`/api/artifacts/${encodeURIComponent(artifactId)}/shares`, {
       method: "POST", json: { ttlSeconds: 86400 },
+      idempotent: true,
     });
     byId("shareUrl").value = new URL(result.url, window.location.origin).href;
     byId("shareDialog").showModal();

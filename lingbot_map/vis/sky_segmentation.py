@@ -10,11 +10,14 @@ Sky segmentation utilities for filtering sky points from point clouds.
 
 import glob
 import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import cv2
 from tqdm.auto import tqdm
+
+from lingbot_map.checkpoints import verified_checkpoint_path
 
 try:
     import onnxruntime
@@ -32,15 +35,22 @@ def _get_cache_version_path(sky_mask_dir: str) -> str:
     return os.path.join(sky_mask_dir, ".skyseg_cache_version")
 
 
-def _prepare_sky_mask_cache(sky_mask_dir: Optional[str]) -> None:
-    """Ensure the sky mask cache directory exists and write the version stamp."""
+def _prepare_sky_mask_cache(sky_mask_dir: Optional[str], model_identity: str) -> bool:
+    """Prepare a cache bound to both preprocessing behavior and model bytes."""
     if sky_mask_dir is None:
-        return
+        return False
     os.makedirs(sky_mask_dir, exist_ok=True)
     version_path = _get_cache_version_path(sky_mask_dir)
-    if not os.path.exists(version_path):
-        with open(version_path, "w", encoding="utf-8") as f:
-            f.write(_SKYSEG_CACHE_VERSION)
+    expected = f"{_SKYSEG_CACHE_VERSION}:{model_identity}"
+    current = ""
+    if os.path.exists(version_path):
+        with open(version_path, encoding="utf-8") as source:
+            current = source.read().strip()
+    refresh = current != expected
+    if refresh:
+        with open(version_path, "w", encoding="utf-8") as output:
+            output.write(expected)
+    return refresh
 
 
 def _ensure_skyseg_model(skyseg_model_path: str) -> None:
@@ -222,6 +232,7 @@ def load_or_create_sky_masks(
     image_paths: Optional[list[str]] = None,
     images: Optional[np.ndarray] = None,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
     target_shape: Optional[Tuple[int, int]] = None,
@@ -235,6 +246,7 @@ def load_or_create_sky_masks(
         image_paths: Optional explicit image file list, in the exact order to process.
         images: Optional image array with shape (S, 3, H, W) or (S, H, W, 3).
         skyseg_model_path: Path to the sky segmentation ONNX model.
+        skyseg_sha256: Expected digest (or provide ``<path>.sha256``).
         sky_mask_dir: Optional directory for cached raw masks.
         sky_mask_visualization_dir: Optional directory for side-by-side visualizations.
         target_shape: Optional output mask shape (H, W) after resizing.
@@ -252,8 +264,13 @@ def load_or_create_sky_masks(
         return None
 
     _ensure_skyseg_model(skyseg_model_path)
-
-    skyseg_session = onnxruntime.InferenceSession(skyseg_model_path)
+    load_path = verified_checkpoint_path(
+        Path(skyseg_model_path),
+        skyseg_sha256,
+        max_bytes=512 * 1024 * 1024,
+    )
+    model_identity = load_path.stem
+    skyseg_session = onnxruntime.InferenceSession(str(load_path))
     sky_masks = []
 
     if sky_mask_visualization_dir is not None:
@@ -272,7 +289,7 @@ def load_or_create_sky_masks(
 
         if sky_mask_dir is None and image_folder is not None:
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print("Generating sky masks from image array...")
         for i in tqdm(range(num_images)):
@@ -281,7 +298,7 @@ def load_or_create_sky_masks(
             image_name = _get_mask_filename(image_paths, i)
             mask_filepath = os.path.join(sky_mask_dir, image_name) if sky_mask_dir is not None else None
 
-            if mask_filepath is not None and os.path.exists(mask_filepath):
+            if mask_filepath is not None and os.path.exists(mask_filepath) and not refresh_cache:
                 sky_mask = cv2.imread(mask_filepath, cv2.IMREAD_GRAYSCALE)
                 if sky_mask is not None and sky_mask.shape[:2] == (image_h, image_w):
                     # Reuse cached mask
@@ -326,14 +343,14 @@ def load_or_create_sky_masks(
             if image_folder is None:
                 image_folder = os.path.dirname(image_paths[0])
             sky_mask_dir = image_folder.rstrip("/") + "_sky_masks"
-        _prepare_sky_mask_cache(sky_mask_dir)
+        refresh_cache = _prepare_sky_mask_cache(sky_mask_dir, model_identity)
 
         print("Generating sky masks from image files...")
         for image_path in tqdm(image_paths):
             image_name = os.path.basename(image_path)
             mask_filepath = os.path.join(sky_mask_dir, image_name)
 
-            if os.path.exists(mask_filepath):
+            if os.path.exists(mask_filepath) and not refresh_cache:
                 sky_mask = cv2.imread(mask_filepath, cv2.IMREAD_GRAYSCALE)
                 if sky_mask is None:
                     print(f"Warning: Failed to read cached sky mask {mask_filepath}, regenerating it")
@@ -380,6 +397,7 @@ def apply_sky_segmentation(
     image_paths: Optional[list[str]] = None,
     images: Optional[np.ndarray] = None,
     skyseg_model_path: str = "skyseg.onnx",
+    skyseg_sha256: Optional[str] = None,
     sky_mask_dir: Optional[str] = None,
     sky_mask_visualization_dir: Optional[str] = None,
 ) -> np.ndarray:
@@ -392,6 +410,7 @@ def apply_sky_segmentation(
         image_paths: Optional explicit image file list in processing order
         images: Image array with shape (S, 3, H, W) or (S, H, W, 3) (optional if image_folder provided)
         skyseg_model_path: Path to the sky segmentation ONNX model
+        skyseg_sha256: Expected digest (or provide ``<path>.sha256``)
         sky_mask_dir: Optional directory for cached raw masks
         sky_mask_visualization_dir: Optional directory for side-by-side mask visualization images
 
@@ -405,6 +424,7 @@ def apply_sky_segmentation(
         image_paths=image_paths,
         images=images,
         skyseg_model_path=skyseg_model_path,
+        skyseg_sha256=skyseg_sha256,
         sky_mask_dir=sky_mask_dir,
         sky_mask_visualization_dir=sky_mask_visualization_dir,
         target_shape=(H, W),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -69,3 +70,41 @@ def test_client_code_never_injects_html_strings():
     assert ".innerHTML" not in scripts
     assert "eval(" not in scripts
     assert "new Function" not in scripts
+
+
+def test_session_reset_aborts_requests_and_destroys_webgl_resources():
+    app = (STATIC / "app.js").read_text(encoding="utf-8")
+    viewer = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "function secureReset()" in app
+    assert "controller.abort()" in app
+    assert "state.epoch += 1" in app
+    assert 'response.headers.get("X-Workspace-Principal")' in app
+    assert "window.location.reload()" in app
+    assert "state.viewer.destroy()" in app
+    assert "new AbortController()" in viewer
+    assert "gl.deleteBuffer" in viewer
+    assert "gl.deleteProgram" in viewer
+    assert 'gl.getExtension("WEBGL_lose_context")' in viewer
+
+
+def test_public_share_has_persistent_research_warning():
+    markup = (STATIC / "share.html").read_text(encoding="utf-8")
+    script = (STATIC / "share.js").read_text(encoding="utf-8")
+    assert 'id="shareCommercialWarning"' in markup
+    assert "data.commercialWarning" in script
+
+
+def test_builtin_server_disables_capability_token_access_logs():
+    module = ast.parse((STATIC.parent / "app.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "uvicorn"
+    ]
+    assert len(calls) == 1
+    access_log = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "access_log")
+    assert isinstance(access_log, ast.Constant) and access_log.value is False

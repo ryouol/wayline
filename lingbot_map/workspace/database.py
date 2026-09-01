@@ -228,6 +228,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_jobs_tenant_created
                     ON jobs(tenant_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(state, created_at);
+                CREATE INDEX IF NOT EXISTS idx_jobs_source_asset
+                    ON jobs(tenant_id, source_asset_id);
                 CREATE TABLE IF NOT EXISTS artifacts (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -790,7 +792,13 @@ class Database:
     def _get_asset(connection: sqlite3.Connection, tenant_id: str, asset_id: str) -> dict[str, Any]:
         result = _row(
             connection.execute(
-                "SELECT * FROM assets WHERE id = ? AND tenant_id = ?", (asset_id, tenant_id)
+                """
+                SELECT a.*,(SELECT COUNT(*) FROM jobs j
+                    WHERE j.source_asset_id=a.id AND j.tenant_id=a.tenant_id
+                ) AS linked_job_count
+                FROM assets a WHERE a.id=? AND a.tenant_id=?
+                """,
+                (asset_id, tenant_id),
             ).fetchone()
         )
         if result is None:
@@ -802,20 +810,43 @@ class Database:
         with self.connect() as connection:
             return self._get_asset(connection, tenant_id, asset_id)
 
+    def existing_asset_ids(
+        self,
+        tenant_id: str,
+        asset_ids: list[str],
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> set[str]:
+        """Return the tenant-owned IDs that exist in the caller's transaction snapshot."""
+
+        if not asset_ids:
+            return set()
+        placeholders = ",".join("?" for _ in asset_ids)
+        with self.transaction_or(connection) as active:
+            rows = active.execute(
+                f"SELECT id FROM assets WHERE tenant_id=? AND id IN ({placeholders})",
+                [tenant_id, *asset_ids],
+            ).fetchall()
+        return {str(row["id"]) for row in rows}
+
     def page_assets(
         self, tenant_id: str, *, limit: int = 50, cursor: str | None = None
     ) -> tuple[list[dict[str, Any]], str | None]:
         limit = min(100, max(1, limit))
         parameters: list[Any] = [tenant_id]
-        predicate = "tenant_id=?"
+        predicate = "a.tenant_id=?"
         if cursor:
             created_at, item_id = decode_cursor(cursor)
-            predicate += " AND (created_at<? OR (created_at=? AND id<?))"
+            predicate += " AND (a.created_at<? OR (a.created_at=? AND a.id<?))"
             parameters.extend([created_at, created_at, item_id])
         parameters.append(limit + 1)
         with self.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM assets WHERE {predicate} ORDER BY created_at DESC,id DESC LIMIT ?",
+                f"""SELECT a.*,(SELECT COUNT(*) FROM jobs j
+                    WHERE j.source_asset_id=a.id AND j.tenant_id=a.tenant_id
+                ) AS linked_job_count
+                FROM assets a WHERE {predicate}
+                ORDER BY a.created_at DESC,a.id DESC LIMIT ?""",
                 parameters,
             ).fetchall()
         more = len(rows) > limit

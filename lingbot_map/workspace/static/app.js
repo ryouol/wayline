@@ -350,12 +350,15 @@ function renderAssets() {
   list.replaceChildren();
   byId("emptyAssets").hidden = state.assets.length > 0;
   state.assets.forEach((asset) => {
+    const deleteBlocked = !asset.deletable;
+    const metadata = `${formatBytes(asset.sizeBytes)} · ${formatDate(asset.createdAt)}`;
     list.append(inventoryRow({
       id: asset.id,
       name: asset.name,
-      meta: `${formatBytes(asset.sizeBytes)} · ${formatDate(asset.createdAt)}`,
+      meta: deleteBlocked ? `${metadata} · ${asset.deleteBlockedReason}` : metadata,
       selected: state.selectedAssets.has(asset.id),
-      actionLabel: "Delete",
+      disabled: deleteBlocked,
+      actionLabel: deleteBlocked ? `Linked to ${asset.linkedJobCount}` : "Delete",
       onSelect: (checked) => {
         if (checked) state.selectedAssets.add(asset.id); else state.selectedAssets.delete(asset.id);
         updateSelectionSummary();
@@ -396,6 +399,9 @@ async function loadAssets({ append = false } = {}) {
     const seen = new Set(state.assets.map((asset) => asset.id));
     state.assets.push(...result.assets.filter((asset) => !seen.has(asset.id)));
   } else state.assets = result.assets;
+  result.assets.filter((asset) => !asset.deletable).forEach((asset) => {
+    state.selectedAssets.delete(asset.id);
+  });
   state.assetCursor = result.nextCursor;
   byId("loadMoreAssets").hidden = !state.assetCursor;
   renderAssets();
@@ -422,6 +428,10 @@ async function loadInventory() {
 }
 
 async function deleteAsset(asset) {
+  if (!asset.deletable) {
+    toast(asset.deleteBlockedReason);
+    return;
+  }
   if (!window.confirm(`Delete retained upload “${asset.name}”?`)) return;
   try {
     await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true });

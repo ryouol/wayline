@@ -6,6 +6,8 @@ import io
 import json
 import stat
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -260,8 +262,8 @@ output = Path(os.environ["LINGBOT_OUTPUT_DIR"])
         cleanup_result(result)
 
 
-def test_modal_research_runner_keeps_sky_masking_opt_in():
-    source = (Path(__file__).parents[1] / "modal_app.py").read_text(encoding="utf-8")
+def test_opt_in_modal_runner_keeps_sky_masking_opt_in():
+    source = (Path(__file__).parents[1] / "modal_enabled.py").read_text(encoding="utf-8")
     module = ast.parse(source)
     reconstruct = next(
         node
@@ -282,15 +284,48 @@ def test_modal_research_runner_keeps_sky_masking_opt_in():
     assert "--require-hashes" in source
 
 
-def test_modal_reference_imports_without_credentials_and_remains_disabled():
-    import modal
+def test_modal_release_mode_registers_no_sdk_resources_or_entrypoints():
+    root = Path(__file__).parents[1]
+    script = """
+import importlib
+import sys
 
-    import modal_app
+assert "modal" not in sys.modules
+release = importlib.import_module("modal_app")
+assert release.LINGBOT_RESEARCH_RUNNER_COMPILED is False
+assert "modal" not in sys.modules
+assert not any(callable(getattr(value, "remote", None)) for value in vars(release).values())
+for forbidden in (
+    "app", "weights", "jobs", "image", "fetch_weights", "reconstruct", "main"
+):
+    assert not hasattr(release, forbidden), forbidden
+try:
+    importlib.import_module("modal_enabled")
+except RuntimeError as error:
+    assert "not compiled into this release" in str(error)
+else:
+    raise AssertionError("disabled opt-in runner imported")
+assert "modal" not in sys.modules
+assert "modal_enabled" not in sys.modules
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
-    assert modal.__version__ == "1.5.5"
-    assert modal_app.MODAL_REFERENCE_ENABLED is False
-    with pytest.raises(RuntimeError, match="disabled pending"):
-        modal_app._acknowledge(modal_app.RESEARCH_ACK)
+    release_tree = ast.parse((root / "modal_app.py").read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in release_tree.body
+    )
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name == "modal" for alias in node.names)
+        for node in release_tree.body
+    )
 
 
 def test_every_direct_torch_loader_uses_a_private_verified_path():

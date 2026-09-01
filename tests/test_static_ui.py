@@ -114,6 +114,10 @@ def test_management_ui_consumes_all_cursor_inventories_and_bulk_cleanup():
     assert 'api("/api/bulk-delete"' in app
     assert "Idempotency-Key" in app
     assert "idempotency_in_progress" in app
+    assert "asset.deletable" in app
+    assert "asset.linkedJobCount" in app
+    assert "asset.deleteBlockedReason" in app
+    assert "disabled: deleteBlocked" in app
 
 
 def test_public_share_has_persistent_research_warning():

@@ -39,12 +39,16 @@
   stale-response epoch fencing, complete private-DOM erasure, cross-tab/focus
   revalidation, immediate peer clearing on `signed-out`/`account-changed`
   broadcasts, and explicit WebGL resource/context teardown
-- Cursor load-more controls for all job/asset/share pages, direct deletion and
-  revocation, and bounded multi-inventory cleanup
+- Cursor load-more controls for all job/asset/share pages, linked-upload count
+  and deletability metadata with an explanatory disabled state, direct deletion
+  and revocation, and bounded multi-inventory cleanup whose overlapping job plus
+  source-upload selection is normalized as one accepted cascade
 - Worker iteration exception supervision with bounded backoff and a regression
   proving the sole worker survives a transient dependency failure
-- Modal reference runner compile-time disabled; CI installs the pinned client,
-  imports without credentials, and asserts the gate is closed
+- Modal release surface structurally inert: `modal_app.py` imports no SDK and
+  registers no App, Volume, Image, remote/GPU function, or local entrypoint;
+  CI also proves the explicitly selected `modal_enabled.py` path fails at the
+  source compile gate before loading the SDK
 - The hardened UI passed an isolated in-app-browser run through authentication,
   peer-tab session reuse, synthetic generation, point-cloud review, and rendering
   of download and management controls at the desktop default and a 390 x 844 mobile
@@ -54,9 +58,13 @@
   revokes the shared server session even when the initiating tab presents a stale
   CSRF header. A JavaScript behavior regression separately proves peer state is
   cleared synchronously on `signed-out` and `account-changed` broadcasts, while
-  `session-changed` performs revalidation. External cross-browser, screen-reader,
-  contrast, and real account-switch testing remain owner gates below.
-- 69 passing Python unit/integration tests plus the executable JavaScript
+  `session-changed` performs revalidation. That browser pass predates the linked-
+  upload disabled-row change recorded above; its API contract, visible DOM copy,
+  disabled controls, and overlapping cleanup behavior have executable Python and
+  static-JavaScript regressions, while a fresh in-app browser was unavailable for
+  this follow-up. External cross-browser, screen-reader, contrast, and real
+  account-switch testing remain owner gates below.
+- 70 passing Python unit/integration tests plus the executable JavaScript
   session-event regression in the remediation gate, with lint, type check,
   JavaScript/shell checks, wheel build, and CI definition validation
 

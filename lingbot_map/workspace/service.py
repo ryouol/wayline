@@ -987,6 +987,9 @@ class WorkspaceService:
                 return replay
             result: dict[str, list[str]] = {"jobs": [], "assets": [], "shares": []}
             errors: dict[str, str] = {}
+            preexisting_assets = self.database.existing_asset_ids(
+                tenant_id, payload["assetIds"], connection=connection
+            )
             for share_id in payload["shareIds"]:
                 try:
                     self.database.revoke_share(tenant_id, share_id, connection=connection)
@@ -1003,7 +1006,15 @@ class WorkspaceService:
                 try:
                     self.database.queue_delete_asset(tenant_id, asset_id, connection=connection)
                     result["assets"].append(asset_id)
-                except (KeyError, InvalidTransition) as error:
+                except KeyError as error:
+                    # A selected terminal job can atomically cascade its last source
+                    # upload.  An explicitly selected upload that existed at the start
+                    # is therefore already accepted, not a false per-record failure.
+                    if asset_id in preexisting_assets:
+                        result["assets"].append(asset_id)
+                    else:
+                        errors[asset_id] = str(error)
+                except InvalidTransition as error:
                     errors[asset_id] = str(error)
             response: dict[str, Any] = {
                 "state": "deleting",

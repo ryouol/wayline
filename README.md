@@ -62,9 +62,11 @@ result can be orbited in the bundled WebGL viewer, downloaded, shared through a
 - Expiring, hashed share tokens and tenant-scoped deletion of source uploads,
   artifacts, and related shares.
 - Cursor-paginated job/asset/share inventories with visible load-more, delete,
-  revoke, and bounded bulk-cleanup controls. Route-scoped request-hash
-  idempotency settles in the same transaction as every database mutation, and
-  browser transport retries reuse the original key.
+  revoke, and bounded bulk-cleanup controls. Upload rows expose retained-scene
+  link counts and disable deletion with an explanation; selecting a terminal job
+  and its source upload is normalized as one accepted cleanup cascade.
+  Route-scoped request-hash idempotency settles in the same transaction as every
+  database mutation, and browser transport retries reuse the original key.
 - Session-epoch browser isolation: logout, `401`, and account changes abort
   in-flight requests, clear all private DOM/tenant state, and destroy WebGL
   resources. Cross-tab notifications plus focus revalidation cover peer-tab
@@ -180,17 +182,19 @@ secrets. This process boundary is not an OS sandbox; production research must
 run in a separately isolated worker/container. Research output license remains
 `NOASSERTION`.
 
-The separate [`modal_app.py`](modal_app.py) is compile-time disabled until its
-owner gates are recorded. It follows the same research-only gate, uploads this
-checkout rather than cloning a moving branch, uses pinned packages and model
-revision, validates archives, isolates every job, and writes artifact keys to a
-Volume instead of returning large GLB bytes over RPC. It is a reference runner,
-not an enabled hosted product path; changing an environment variable cannot
-enable it. CI installs the pinned Modal client, imports this module without
-credentials, and asserts the gate remains closed. Its non-CUDA Python runtime
-is installed from the hash-locked `requirements/modal.lock`; CUDA PyTorch
-remains separately version- and index-pinned because those platform wheels are
-outside the PyPI lock.
+The shipped [`modal_app.py`](modal_app.py) is an inert release manifest: it does
+not import the Modal SDK or construct an App, Volume, Image, remote/GPU function,
+or local entrypoint. The former runner lives only in the explicitly selected
+[`modal_enabled.py`](modal_enabled.py) deployment module. That module checks the
+source-controlled `LINGBOT_RESEARCH_RUNNER_COMPILED` gate before importing Modal,
+so this release rejects even a direct import without allocating or registering
+anything. Enabling it requires a reviewed source change, explicit deployment of
+that module, and closure of the owner gates below; no environment variable can
+enable it. CI verifies the pinned client metadata, imports the inert manifest,
+asserts there are zero remote/resource/entrypoint surfaces, and proves the opt-in
+module fails before the SDK is loaded. The prospective runner otherwise uses the
+hash-locked `requirements/modal.lock`; CUDA PyTorch remains separately version-
+and index-pinned because those platform wheels are outside the PyPI lock.
 
 ## Direct model research
 

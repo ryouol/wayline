@@ -137,6 +137,52 @@ def test_orphan_upload_can_be_deleted(authenticated_client, service):
     assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
 
 
+def test_linked_upload_metadata_and_overlapping_bulk_cleanup(
+    authenticated_client, service, tenant_id
+):
+    upload = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("linked.mp4", fake_mp4(), "video/mp4")},
+    ).json()
+    assert upload["linkedJobCount"] == 0
+    assert upload["deletable"] is True
+    assert upload["deleteBlockedReason"] is None
+
+    job = service.database.create_job(
+        tenant_id=tenant_id,
+        engine_id="synthetic-sample-v1",
+        source_asset_id=upload["id"],
+        params={},
+        provenance={"fixture": True},
+        reserve_units=0,
+    )
+    service.cancel_job(tenant_id, job["id"])
+
+    linked = authenticated_client.get("/api/assets").json()["assets"][0]
+    assert linked["linkedJobCount"] == 1
+    assert linked["deletable"] is False
+    assert linked["deleteBlockedReason"] == (
+        "This upload is retained by 1 scene. Delete the linked scene first."
+    )
+    blocked = authenticated_client.delete(f"/api/assets/{upload['id']}")
+    assert blocked.status_code == 409
+    assert "referenced by jobs" in blocked.json()["detail"]
+
+    cleanup = authenticated_client.post(
+        "/api/bulk-delete",
+        json={"jobIds": [job["id"]], "assetIds": [upload["id"]], "shareIds": []},
+        headers={"Idempotency-Key": "linked-overlap-bulk-delete-0001"},
+    )
+    assert cleanup.status_code == 202
+    assert cleanup.json() == {
+        "state": "deleting",
+        "accepted": {"jobs": [job["id"]], "assets": [upload["id"]], "shares": []},
+        "errors": {},
+    }
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+
+
 def test_upload_limit_returns_413(settings):
     from .conftest import StubInspector
 

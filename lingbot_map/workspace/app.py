@@ -129,6 +129,9 @@ class AssetResponse(BaseModel):
     sha256: str
     metadata: dict[str, Any]
     createdAt: float
+    linkedJobCount: int
+    deletable: bool
+    deleteBlockedReason: str | None
 
 
 class ArtifactResponse(BaseModel):
@@ -335,6 +338,8 @@ def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str,
 
 
 def _asset(value: dict[str, Any]) -> dict[str, Any]:
+    linked_job_count = int(value.get("linked_job_count", 0))
+    linked_label = "scene" if linked_job_count == 1 else "scenes"
     return {
         "id": value["id"],
         "name": value["original_name"],
@@ -343,6 +348,16 @@ def _asset(value: dict[str, Any]) -> dict[str, Any]:
         "sha256": value["sha256"],
         "metadata": value["metadata"],
         "createdAt": value["created_at"],
+        "linkedJobCount": linked_job_count,
+        "deletable": linked_job_count == 0,
+        "deleteBlockedReason": (
+            None
+            if linked_job_count == 0
+            else (
+                f"This upload is retained by {linked_job_count} {linked_label}. "
+                f"Delete the linked {linked_label} first."
+            )
+        ),
     }
 
 

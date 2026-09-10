@@ -1,17 +1,19 @@
 # Single persistent service: frontend, API, durable queue, SQLite and private objects.
-# The Modal worker runs GPU inference only. No user video passes through Vercel.
+# Fixed hosting is $8.25/month; provider overages are not a hard project spend cap.
 services:
   - type: web
     name: wayline
     runtime: docker
-    plan: standard
+    repo: https://github.com/ryouol/lingbot-map
+    plan: starter
+    branch: codex/production-ready-lingbot-map
     numInstances: 1
     healthCheckPath: /healthz
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: "off"
     disk:
       name: wayline-data
       mountPath: /data
-      sizeGB: 20
+      sizeGB: 5
     envVars:
       - key: LINGBOT_ENV
         value: production
@@ -32,7 +34,21 @@ services:
       - key: LINGBOT_MAX_JOB_ATTEMPTS
         value: "1"
       - key: LINGBOT_GLOBAL_STORAGE_BYTES
-        value: "15000000000"
+        value: "3500000000"
+      - key: LINGBOT_TENANT_STORAGE_BYTES
+        value: "268435456"
+      - key: LINGBOT_MAX_UPLOAD_BYTES
+        value: "67108864"
+      - key: LINGBOT_MAX_ARTIFACT_BYTES
+        value: "41943040"
+      - key: LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS
+        value: "2"
+      - key: LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS
+        value: "1"
+      - key: LINGBOT_UPLOAD_RATE_PER_MINUTE
+        value: "2"
+      - key: WAYLINE_SCENE_DELIVERY_BUDGET_BYTES
+        value: "2000000000"
       - key: WAYLINE_SIGNUP_ENABLED
         value: "false"
       - key: WAYLINE_GOOGLE_CLIENT_ID
@@ -50,7 +66,7 @@ services:
       - key: LINGBOT_RESEARCH_ACK
         value: "I understand LingBot is research-only"
       - key: WAYLINE_GPU_SECONDS_BUDGET
-        value: "14400"
+        value: "3600"
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET

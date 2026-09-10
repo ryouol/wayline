@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,6 +24,8 @@ def smoke(image: str, port: int) -> None:
             f"LINGBOT_BOOTSTRAP_TOKEN={token}\n"
             "LINGBOT_PUBLIC_BASE_URL=https://wayline-test.example\n"
             "LINGBOT_ALLOWED_HOSTS=wayline-test.example\nPORT=10000\n"
+            "LINGBOT_MAX_UPLOAD_BYTES=67108864\n"
+            "LINGBOT_MAX_ARTIFACT_BYTES=41943040\n"
         )
     try:
         subprocess.run(
@@ -34,8 +37,14 @@ def smoke(image: str, port: int) -> None:
                 "--name",
                 name,
                 "--read-only",
-                "--tmpfs",
-                "/tmp:rw,noexec,nosuid,size=512m",
+                "--memory",
+                "512m",
+                "--memory-swap",
+                "512m",
+                "--cpus",
+                "0.5",
+                "--mount",
+                "type=volume,destination=/tmp",
                 "--mount",
                 "type=volume,destination=/data",
                 "--publish",
@@ -78,6 +87,20 @@ def smoke(image: str, port: int) -> None:
             )
             assert session.get(base + "/api/config", timeout=3).json()["googleSignIn"] is False
             print("Production health, host and authentication checks passed")
+            source = Path(__file__).resolve().parents[1] / "tests/fixtures/vfr-test-pattern.mp4"
+            with source.open("rb") as capture:
+                uploaded = session.post(
+                    base + "/api/assets",
+                    files={"file": ("generated-test-pattern.mp4", capture, "video/mp4")},
+                    timeout=15,
+                )
+            assert uploaded.status_code == 201, "Generated capture inspection failed"
+            assert uploaded.json()["metadata"]["frames"] == 10
+            assert (
+                session.delete(base + "/api/assets/" + uploaded.json()["id"], timeout=3).status_code
+                == 202
+            )
+            print("Authenticated multipart upload, video inspection and deletion passed")
             for _ in range(2):
                 response = session.post(base + "/api/jobs/sample", timeout=5)
                 assert response.status_code == 202, "Sample submission failed"
@@ -111,6 +134,35 @@ def smoke(image: str, port: int) -> None:
                 requests.get(base + "/api/public/share/content", headers=public, timeout=3).content
                 == content.content
             )
+            # Pad the owned synthetic fixture to the deployed upload ceiling.
+            # Issue scene requests alongside the client upload task; server overlap
+            # is not synchronized. Small decoded dimensions do not establish
+            # worst-case decoder memory.
+            with tempfile.TemporaryFile() as capture, ThreadPoolExecutor(max_workers=1) as pool:
+                capture.write(source.read_bytes())
+                capture.truncate(64 * 1024 * 1024)
+                capture.seek(0)
+                upload = pool.submit(
+                    requests.post,
+                    base + "/api/assets",
+                    headers=dict(session.headers),
+                    files={"file": ("padded-test-pattern.mp4", capture, "video/mp4")},
+                    timeout=60,
+                )
+                for _ in range(3):
+                    response = requests.get(
+                        base + "/api/public/share/content", headers=public, timeout=10
+                    )
+                    assert response.status_code == 200 and response.content == content.content
+                padded = upload.result(timeout=65)
+            assert padded.status_code == 201, "Maximum-size generated upload failed"
+            assert padded.json()["sizeBytes"] == 64 * 1024 * 1024
+            assert padded.json()["metadata"]["frames"] == 10
+            assert (
+                session.delete(base + "/api/assets/" + padded.json()["id"], timeout=3).status_code
+                == 202
+            )
+            print("64 MiB multipart upload and shared scene delivery passed")
             revoked = session.delete(base + "/api/shares/" + share["id"], timeout=3)
             assert revoked.status_code == 202, "Share revocation was not accepted"
             assert (
@@ -118,6 +170,10 @@ def smoke(image: str, port: int) -> None:
                 == 404
             )
             print("GLB download, header-authenticated sharing and revocation passed")
+            peak = subprocess.check_output(
+                ["docker", "exec", name, "cat", "/sys/fs/cgroup/memory.peak"], text=True
+            ).strip()
+            print(f"512 MiB / 0.5 CPU smoke peak memory: {int(peak) / 1024**2:.1f} MiB")
     finally:
         subprocess.run(["docker", "stop", name], check=True, stdout=subprocess.DEVNULL)
 

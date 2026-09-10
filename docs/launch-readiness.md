@@ -6,7 +6,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 
 - Isolated, expiring visitor playgrounds generate a CC0 synthetic scene without sharing an operator token.
 - Private jobs, uploads, artifacts, quota reservations, idempotency, cancellation, retention and deletion use the existing SQLite/object-store transaction boundaries.
-- Request parsing has declared-length and observed-stream byte ceilings, including chunked JSON/multipart bodies. Rejected multipart uploads close partial spool files; deployed aggregate concurrency/timeouts remain required.
+- Request parsing has declared-length and observed-stream byte ceilings, including chunked JSON/multipart bodies. Authentication/rates/free-space checks precede the single-file parser; one upload runs at a time with a 15-minute server deadline. Timeout/disconnect/storage-failure recovery is tested. Deployed edge behavior remains unverified.
 - Google OAuth has browser-bound one-use state, PKCE, nonce and signed ID-token verification. Protocol/identity tests use a mocked provider; actual Google sign-in remains unverified.
 - Google accounts receive one successful video reconstruction, with bounded attempts and capacity. Scene deletion does not replenish the allowance. Synthetic jobs settle zero compute units.
 - The original LingBot Modal deployment, pinned checkpoint preparation, private per-attempt staging, transport deadlines and durable cleanup are implemented. Disabling new submissions retains cleanup responsibilities. A real GPU run on a generated diagnostic clip passed; owned-capture quality remains unverified. See `MODAL_QA.md`.
@@ -15,7 +15,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
-- A Dockerfile and single-instance Render Blueprint exist. They are not a deployed service.
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project and Production environment exist in the authenticated Render account, but no paid service has been created. The strict $20 cap is unresolved because Render does not document a per-project hard invoice limit. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total.
 
 ## Verification boundary
 

@@ -99,9 +99,9 @@ version/index-pinned; the other runner dependencies use the hashed Modal lock.
 Install the CUDA runtime separately and exactly as required by your host:
 
 ```bash
-.venv/bin/pip install torch==2.8.0 torchvision==0.23.0 \
+uv pip install --python .venv/bin/python torch==2.8.0 torchvision==0.23.0 \
   --index-url https://download.pytorch.org/whl/cu128
-.venv/bin/pip install -e '.[research,vis]'
+uv pip install --python .venv/bin/python -e '.[research,vis]'
 LINGBOT_RESEARCH_ACK='I understand LingBot is research-only' ./download_weights.sh
 .venv/bin/python demo.py \
   --model_path ./lingbot-map.pt \

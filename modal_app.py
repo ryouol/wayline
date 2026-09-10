@@ -24,7 +24,9 @@ from lingbot_map.workspace.runner_contract import (
 )
 
 SAFE_ATTEMPT = re.compile(r"^[0-9a-f]{32}$")
-app = modal.App(MODAL_APP, include_source=False)
+app = modal.App(
+    MODAL_APP, include_source=False, tags={"project": "wayline", "environment": "production"}
+)
 weights = modal.Volume.from_name(WEIGHTS_VOLUME, create_if_missing=True)
 jobs = modal.Volume.from_name(CAPTURE_VOLUME, create_if_missing=True)
 image = (

@@ -27,7 +27,12 @@ rejects oversized declared bodies before parsing. Its ASGI receive wrapper also
 counts streamed bytes, including chunked bodies and understated lengths, before
 passing each chunk to the parser. Ordinary requests are capped at 64 KiB; the
 upload route allows the configured file ceiling plus 1 MiB multipart overhead.
-Multipart failures close partial parser files. The reverse proxy must still
+Authentication, guest rejection, tenant request rates, a single-parser admission
+lock and temporary free-space checks precede multipart parsing. Only one file
+and no text fields are accepted. A 15-minute server parser deadline closes
+partial files and releases admission on timeout or disconnect. OpenAPI retains
+the required binary file schema without an eager body dependency.
+The reverse proxy must still
 bound concurrent requests, slow uploads, multipart complexity and buffering:
 per-request byte limits do not bound aggregate edge/parser resource use.
 
@@ -39,13 +44,23 @@ known proxy IPs; never trust forwarded headers from the public network.
 
 The committed Dockerfile builds a pinned Python 3.11 image, installs the hashed
 workspace dependency lock and runs as an unprivileged user. `render.yaml` selects
-one Standard/1c-2g service, a 20 GB persistent `/data` disk, `/healthz`, secure
-cookies, upload/retention limits and private environment settings. The legacy
-`standard` plan identifier remains valid; see
+one Starter/0.5 CPU/512 MB service, a 5 GB persistent `/data` disk, `/healthz`, secure
+cookies, 64 MiB uploads, 40 MiB artifacts and private environment settings.
+Automatic deploys are off; use a reviewed commit for each manual deployment. See
 [Render compute plans](https://render.com/docs/compute-plans).
 
-1. Connect the intended GitHub repository/branch to Render and review the
-   Blueprint. Select the approved region and paid compute/disk plan.
+The Render CLI is authenticated to `My Workspace`; a dedicated **Wayline** project
+and **Production** environment were created on 2026-09-10. No paid service exists
+yet. Keep all Wayline resources there; do not alter the user's other projects.
+Blueprint validation succeeds. Hosting is $8.25/month before tax and overages,
+but Render has no documented per-project hard invoice cap. The requested $20
+maximum still needs resolution before paid service creation; see
+[operating costs](operating-costs.md). Do not treat application limits as approval
+to exceed that maximum.
+
+1. Once the spending condition is resolved, connect `ryouol/lingbot-map` and
+   `codex/production-ready-lingbot-map` within Wayline / Production. Review the
+   Blueprint's Starter service and 5 GB disk and deploy the exact reviewed commit.
 2. Supply `LINGBOT_PUBLIC_BASE_URL` and its exact `LINGBOT_ALLOWED_HOSTS` hostname.
    Keep the generated bootstrap token private as an operator credential.
 3. Supply a Google Web OAuth client and secret through Render's secret environment
@@ -64,10 +79,18 @@ cookies, upload/retention limits and private environment settings. The legacy
 The private Modal worker is deployed and the pinned original checkpoint was
 prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
-Render deployment, real Google sign-in, an owned capture, final host, operator
+Render service deployment, real Google sign-in, an owned capture, final host, operator
 legal/contact identity, provider budgets and live logging/edge-limit checks remain
 pending. The Modal CLI connection is configured locally; Render still needs its
 own private, suitably scoped Modal credential.
+
+The production image passes `scripts/smoke_container.py` with a read-only root,
+non-root user, 512 MiB memory and 0.5 CPU. Both `/data` and `/tmp` use disposable
+disk-backed volumes for this test; a 512 MiB tmpfs would be below the upload
+storage floor. Sample creation, multipart video upload, download, sharing and revocation
+passed. A generated clip padded to the deployed 64 MiB ceiling uploaded and shared scene requests passed; peak cgroup memory was 210.4 MiB.
+Actual server request overlap was not synchronized or established. Decoded dimensions
+remain small, so this does not establish worst-case decoder or real-capture load.
 
 ## Modal execution
 

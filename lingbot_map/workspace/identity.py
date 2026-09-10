@@ -86,13 +86,7 @@ class IdentityStore:
             return row[0] if row else "operator"
 
     def is_guest(self, user_id: str) -> bool:
-        with self.database.connect() as connection:
-            return (
-                connection.execute(
-                    "SELECT 1 FROM identities WHERE user_id=? AND provider='trial'", (user_id,)
-                ).fetchone()
-                is not None
-            )
+        return self.account_type(user_id) == "trial"
 
     def expire_trials(self) -> int:
         """Retire expired playgrounds without racing an active artifact write."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import io
 import sqlite3
 import threading
@@ -29,6 +30,39 @@ from lingbot_map.workspace.storage import LocalObjectStore
 
 from .conftest import BOOTSTRAP_TOKEN, StubInspector
 from .test_workspace_api import fake_mp4
+
+
+def test_database_operations_close_handles_without_garbage_collection(service, monkeypatch):
+    connections = []
+    original = sqlite3.connect
+
+    def track_connection(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", track_connection)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        service.database.initialize()
+        for _ in range(100):
+            assert service.database.authenticate_api_token(BOOTSTRAP_TOKEN)
+        with (
+            pytest.raises(RuntimeError, match="abort transaction"),
+            service.database.transaction() as connection,
+        ):
+            connection.execute("UPDATE tenants SET name='must roll back'")
+            raise RuntimeError("abort transaction")
+        principal = service.database.authenticate_api_token(BOOTSTRAP_TOKEN)
+        assert principal["tenant_name"] != "must roll back"
+        assert len(connections) >= 100
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
@@ -66,7 +100,7 @@ def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
     database = Database(path)
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
         assert connection.execute("SELECT name FROM tenants").fetchone()[0] == "Legacy"
         tenant_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(tenants)").fetchall()
@@ -118,7 +152,7 @@ def test_schema_two_invalidates_unrecoverable_sessions_and_preserves_claims(tmp_
 
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
         assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         claim = connection.execute(
             "SELECT size_bytes,materialized,purpose FROM object_claims"

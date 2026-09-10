@@ -12,11 +12,11 @@ import time
 import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _id(prefix: str) -> str:
@@ -84,20 +84,23 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path.parent.chmod(0o700)
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        for candidate in (
-            self.path,
-            Path(f"{self.path}-wal"),
-            Path(f"{self.path}-shm"),
-        ):
-            if candidate.exists():
-                os.chmod(candidate, 0o600)
-        return connection
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        # SQLite's transaction context does not close its connection.
+        with closing(sqlite3.connect(self.path, timeout=10, isolation_level=None)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA journal_mode = WAL")
+            for candidate in (
+                self.path,
+                Path(f"{self.path}-wal"),
+                Path(f"{self.path}-shm"),
+            ):
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
+            with connection:
+                yield connection
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -129,7 +132,7 @@ class Database:
             # Inspect compatibility through a read-only handle before connect()
             # can enable WAL or create sidecars. An older binary must leave a
             # future database byte-for-byte untouched.
-            with sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True) as inspection:
+            with closing(sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)) as inspection:
                 schema_table = inspection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
                 ).fetchone()
@@ -139,7 +142,7 @@ class Database:
                     else None
                 )
                 existing_version = int(version_row[0]) if version_row is not None else None
-        if existing_version is not None and existing_version not in {1, 2, 3, SCHEMA_VERSION}:
+        if existing_version is not None and existing_version not in {1, 2, 3, 4, SCHEMA_VERSION}:
             raise RuntimeError(
                 f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
             )
@@ -179,6 +182,10 @@ class Database:
                     cleaned INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_remote_cleanup ON remote_runs(cleaned,cleanup_after);
+                CREATE TABLE IF NOT EXISTS delivery_budget (
+                    day INTEGER PRIMARY KEY,
+                    reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes >= 0)
+                );
                 CREATE TABLE IF NOT EXISTS identities (
                     provider TEXT NOT NULL CHECK(provider IN ('google','trial')),
                     subject TEXT NOT NULL,
@@ -697,6 +704,32 @@ class Database:
             raise KeyError(tenant_id)
         return tenant
 
+    def reserve_delivery_bytes(self, size_bytes: int, *, limit: int) -> None:
+        """Reserve whole responses across all tenants for at least 31 rolling days.
+
+        Aborted/partial responses remain charged to this application allowance.
+        Static responses, transport overhead and provider billing are outside it.
+        """
+        if size_bytes < 0 or limit <= 0:
+            raise ValueError("Invalid scene delivery allowance")
+        day = int(time.time() // 86400)
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM delivery_budget WHERE day < ?", (day - 31,))
+            used = connection.execute(
+                "SELECT COALESCE(SUM(reserved_bytes), 0) FROM delivery_budget"
+            ).fetchone()[0]
+            if used + size_bytes > limit:
+                raise QuotaExceeded(
+                    "The site's scene viewing and download allowance has been reached. "
+                    "Please try again later."
+                )
+            connection.execute(
+                "INSERT INTO delivery_budget(day,reserved_bytes) VALUES(?,?) "
+                "ON CONFLICT(day) DO UPDATE "
+                "SET reserved_bytes=reserved_bytes+excluded.reserved_bytes",
+                (day, size_bytes),
+            )
+
     @staticmethod
     def _consume_rate(
         connection: sqlite3.Connection,
@@ -899,12 +932,7 @@ class Database:
     ) -> dict[str, Any]:
         job_id, now = _id("job"), time.time()
         with self.transaction_or(connection) as active:
-            tenant = active.execute(
-                "SELECT quota_units, reserved_units, consumed_units FROM tenants WHERE id = ?",
-                (tenant_id,),
-            ).fetchone()
-            if tenant is None:
-                raise KeyError(tenant_id)
+            tenant = self._tenant(active, tenant_id)
             if (
                 engine_id == "lingbot-research-v1"
                 and active.execute(
@@ -936,11 +964,8 @@ class Database:
                         "The preview allows three reconstruction attempts per day. "
                         "Please try again tomorrow."
                     )
-            limits = active.execute(
-                "SELECT job_limit FROM tenants WHERE id=?", (tenant_id,)
-            ).fetchone()
             usage = self._resource_usage(active, tenant_id)
-            if usage["job_count"] >= limits["job_limit"]:
+            if usage["job_count"] >= tenant["job_limit"]:
                 raise QuotaExceeded("tenant job count limit exceeded; delete retained jobs")
             self._consume_rate(
                 active,

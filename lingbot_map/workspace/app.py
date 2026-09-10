@@ -768,23 +768,33 @@ def create_app(
         except KeyError as error:
             raise HTTPException(404, "Artifact not found.") from error
 
-    @application.get("/api/artifacts/{artifact_id}/content")
-    def artifact_content(artifact_id: ArtifactId, current: CurrentPrincipal):
-        artifact = artifact_for(artifact_id, current)
-        return FileResponse(
-            workspace.store.path_for_local_use(artifact["object_key"]),
-            media_type=artifact["media_type"],
-            headers={"Content-Disposition": f'inline; filename="{artifact["filename"]}"'},
+    def deliver_artifact(artifact: dict[str, Any], request: Request, *, attachment=False):
+        # A single range cannot amplify a response beyond its reserved file size.
+        if "," in request.headers.get("range", ""):
+            raise HTTPException(416, "Only a single byte range is supported.")
+        path = workspace.store.path_for_local_use(artifact["object_key"])
+        try:
+            file_stat = path.stat()
+        except FileNotFoundError as error:
+            raise HTTPException(404, "Artifact not found.") from error
+        workspace.database.reserve_delivery_bytes(
+            file_stat.st_size, limit=runtime.scene_delivery_budget_bytes
         )
-
-    @application.get("/api/artifacts/{artifact_id}/download")
-    def artifact_download(artifact_id: ArtifactId, current: CurrentPrincipal):
-        artifact = artifact_for(artifact_id, current)
         return FileResponse(
-            workspace.store.path_for_local_use(artifact["object_key"]),
+            path,
             media_type=artifact["media_type"],
             filename=artifact["filename"],
+            content_disposition_type="attachment" if attachment else "inline",
+            stat_result=file_stat,
         )
+
+    @application.get("/api/artifacts/{artifact_id}/content")
+    def artifact_content(artifact_id: ArtifactId, request: Request, current: CurrentPrincipal):
+        return deliver_artifact(artifact_for(artifact_id, current), request)
+
+    @application.get("/api/artifacts/{artifact_id}/download")
+    def artifact_download(artifact_id: ArtifactId, request: Request, current: CurrentPrincipal):
+        return deliver_artifact(artifact_for(artifact_id, current), request, attachment=True)
 
     @application.post(
         "/api/artifacts/{artifact_id}/shares", status_code=201, response_model=ShareResponse
@@ -923,12 +933,7 @@ def create_app(
 
     @application.get("/api/public/share/content")
     def public_share_content(request: Request):
-        value = resolve_public_share(request)
-        return FileResponse(
-            workspace.store.path_for_local_use(value["object_key"]),
-            media_type=value["media_type"],
-            headers={"Content-Disposition": f'inline; filename="{value["filename"]}"'},
-        )
+        return deliver_artifact(resolve_public_share(request), request)
 
     @application.get("/s")
     def share_page():

@@ -47,6 +47,7 @@ class Settings:
     max_upload_bytes: int = 250 * 1024 * 1024
     max_artifact_bytes: int = 100 * 1024 * 1024
     global_storage_bytes: int = 20 * 1024 * 1024 * 1024
+    scene_delivery_budget_bytes: int = 2_000_000_000
     storage_min_free_bytes: int = 1024 * 1024 * 1024
     global_max_inflight_objects: int = 8
     tenant_max_inflight_objects: int = 3
@@ -118,6 +119,9 @@ class Settings:
             max_artifact_bytes=int(os.getenv("LINGBOT_MAX_ARTIFACT_BYTES", str(100 * 1024 * 1024))),
             global_storage_bytes=int(
                 os.getenv("LINGBOT_GLOBAL_STORAGE_BYTES", str(20 * 1024 * 1024 * 1024))
+            ),
+            scene_delivery_budget_bytes=int(
+                os.getenv("WAYLINE_SCENE_DELIVERY_BUDGET_BYTES", "2000000000")
             ),
             storage_min_free_bytes=int(
                 os.getenv("LINGBOT_STORAGE_MIN_FREE_BYTES", str(1024 * 1024 * 1024))
@@ -230,6 +234,7 @@ class Settings:
             "LINGBOT_MAX_UPLOAD_BYTES": self.max_upload_bytes,
             "LINGBOT_MAX_ARTIFACT_BYTES": self.max_artifact_bytes,
             "LINGBOT_GLOBAL_STORAGE_BYTES": self.global_storage_bytes,
+            "WAYLINE_SCENE_DELIVERY_BUDGET_BYTES": self.scene_delivery_budget_bytes,
             "LINGBOT_MAX_VIDEO_SECONDS": self.max_video_seconds,
             "LINGBOT_MAX_VIDEO_FRAMES": self.max_video_frames,
             "LINGBOT_MAX_VIDEO_DIMENSION": self.max_video_dimension,

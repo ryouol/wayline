@@ -139,7 +139,7 @@
       }
       if (lastPoint !== positions.count) throw new Error("Camera trace does not cover this scene.");
     }
-    return { positions, colors, trace };
+    return { positions, colors, trace, synthetic: document.extras?.sampleVersion === "synthetic-studio-v1" };
   }
 
   function shader(gl, type, source) {
@@ -320,7 +320,7 @@
       const parsed = parseGlb(await response.arrayBuffer());
       if (this.destroyed || sequence !== this.loadSequence) return;
       const raw = parsed.positions.values;
-      if (!parsed.trace) {
+      if (parsed.synthetic && !parsed.trace) {
         // The authored sample is Z-up; reconstruction exports are glTF Y-up.
         for (let index = 0; index < raw.length; index += 3) {
           const y = raw[index + 1]; raw[index + 1] = raw[index + 2]; raw[index + 2] = -y;

@@ -39,6 +39,10 @@ async function load(buffer, options) {
   assert.equal(request.url.includes("private-capability"),false);
   assert.equal(request.init.headers.Authorization,"Bearer private-capability");
   assert.equal(viewer.count,6);
+  const untraced = await load(glb(d => { delete d.extras; }));
+  assert.deepEqual([...untraced.viewer.center], [...viewer.center], "Untraced glTF retains Y-up coordinates");
+  const sample = await load(glb(d => { d.extras = {sampleVersion:"synthetic-studio-v1"}; }));
+  assert.deepEqual([...sample.viewer.center], [viewer.center[0], viewer.center[2], -viewer.center[1]], "Only the authored sample rotates from Z-up");
   const calibration = scope.window.PointCloudViewer.cameraProjection(viewer.trace.frames[0], 390, 844);
   assert.equal(calibration.viewport[2], 390);
   assert.equal(calibration.viewport[3], 293);

@@ -36,6 +36,13 @@ compute rather than the full invoice. Do not upgrade merely to obtain them or
 silently impose workspace restrictions on unrelated apps. See
 [Modal budgets](https://modal.com/docs/guide/budgets).
 
+A separate free Starter workspace, `wayline-roy`, now contains an encrypted
+recovery copy. Its last verified billing screen required payment-method
+activation; the production runner still runs in `royluo05`. Moving that runner
+and setting an independent spend limit are pending. The existing production
+token can list the recovery volume by ID, so workspace separation alone has not
+established credential isolation. Do not assume an independent cap is active.
+
 | Illustrative GPU allocation per attempt | GPU cost per attempt | 100 attempts |
 |---|---:|---:|
 | 5 minutes | $0.2082 | $20.82 |
@@ -66,8 +73,9 @@ limits and verify retention. Backups need separate encrypted storage.
 - Google preview accounts receive one successful reconstruction. A second active
   reconstruction is rejected; up to three submitted attempts per rolling day
   allow recovery from failures. Deleting scenes does not reset usage.
-- The Render Blueprint initially caps signup at 20 Google accounts and concurrent
-  retained playgrounds at 100. Playground retirement releases capacity.
+- The Render Blueprint defaults to 20 Google accounts; the live service is
+  deliberately limited to one during acceptance. Concurrent retained playgrounds
+  are capped at 100. Playground retirement releases capacity.
 - Captures: 60 seconds on the Render configuration, 64 MiB upload ceiling,
   at most 120 sampled frames and 750,000 exported points.
 - Storage: 3.5 GB global logical limit, 256 MiB for the operator workspace,

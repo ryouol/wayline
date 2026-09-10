@@ -108,3 +108,18 @@ checks inside a fully network-disabled container.
 No additional paid service was provisioned for this manual export. Render disk
 snapshots remain a supplementary mechanism, not proof of a consistent application
 backup or an independently recoverable secret set.
+
+## Offsite encrypted copy — 2026-09-10
+
+The two encrypted archives and the nonsecret checksum manifest are also stored
+in Modal volume `wayline-recovery`, in the dedicated `wayline-roy` workspace,
+under `/manual-20260910`. All three files were downloaded and checked against
+their local SHA-256 hashes and byte counts. Only encrypted archives and the
+nonsecret manifest were uploaded; the recovery private key remains on the Mac.
+
+This is a verified offsite copy, with no schedule or retention automation yet.
+The live Render Modal credential was also tested explicitly against the volume
+ID and could list its contents. Do not treat the workspace name as proof of
+credential isolation or immutable backup protection. Encryption protects the
+archive contents, while scoped credentials and independent key escrow remain
+required. No production runner or billing settings were changed by this copy.

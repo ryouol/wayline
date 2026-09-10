@@ -161,11 +161,10 @@ Application-level logging cannot certify upstream logging configuration.
 
 ## Backups
 
-The snapshot tool coordinates the database, all private object files, runtime
-manifest and `share-token.secret`. The supported `wayline` launcher takes an
-exclusive workspace lock; snapshot creation refuses while that process is live.
-Stop the application and take a verified snapshot into a **new directory outside
-its data directory**:
+The snapshot tool coordinates the database, private object files, runtime
+manifest and `share-token.secret`. Always use a **new directory outside the data
+directory**, with enough space for the copy. Default mode takes an exclusive
+workspace lock and requires the application to be stopped:
 
 ```bash
 python -m lingbot_map.workspace.backup create --data-dir /data/wayline --output /backup/wayline-YYYYMMDD
@@ -176,6 +175,22 @@ Creation uses SQLite's backup API and hashes every included file. Restore verifi
 file hashes, database integrity and references, refuses an existing destination,
 and removes incomplete output on failure. Tests recover scene bytes and an
 idempotently generated share, proving the secret and database travel together.
+
+For a running instance, explicitly select online mode:
+
+```bash
+python -m lingbot_map.workspace.backup create --online --data-dir /data/wayline --output /tmp/wayline-snapshot-YYYYMMDD
+```
+
+Online mode copies only objects referenced by its SQLite snapshot, excluding
+uncommitted uploads and later publications. A concurrent deletion or content
+change can fail the attempt; incomplete output is removed. Treat a nonzero exit
+as failure, retain the previous good backup, and retry later with a fresh output
+path. The database copy has a 30-second deadline. Keep the application version,
+share secret and server configuration stable during a snapshot; this command
+does not coordinate with deploys, restores or secret rotation. The offline mode
+remains available for those maintenance operations. This CLI capability alone
+does not schedule, encrypt, upload or alert on backups.
 
 Snapshots contain private captures and capability material. Encrypt and copy them
 off the application disk with restricted access; verify a restore before switching

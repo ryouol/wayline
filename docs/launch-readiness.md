@@ -15,6 +15,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
+- Explicit online snapshots copy the running SQLite database and its referenced objects, reject missing/corrupt concurrent copies, and exclude later publications. Default snapshots still require the stopped runtime. Scheduling, encryption and upload are separate operations; see `deployment.md`.
 - A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. The live service runs commit `8e13910`; [Render QA](RENDER_QA.md) verifies a generated-input original-model run, visitor isolation, shares and redeploy persistence.
 
 ## Verification boundary
@@ -33,7 +34,7 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 - [ ] Complete deployed edge/load/shutdown testing and upstream proxy logging verification, including OAuth callback query redaction.
 - [ ] Validate provider limits/alerts, remote cancellation and failure/crash cleanup. Successful-run physical cleanup, explicit SDK cancellation and restarted-worker cleanup of a deliberately due record passed on Modal; running-inference cancellation and the full grace-period wait remain open. The app's admission budget is not a provider invoice cap.
 - [x] Export the live Render database/objects/share secret and server environment encrypted; restore and serve the original artifact in an isolated Linux container. See `RECOVERY_QA.md`.
-- [ ] Automate offsite backups/retention and alerts, escrow the recovery key separately, and run an isolated Render recovery drill. The manual Mac export is not an automated recovery service.
+- [ ] Automate offsite backups/retention and alerts, escrow the recovery key separately, and run an isolated Render recovery drill. The encrypted recovery set has a downloaded-and-hash-verified copy on Modal; it is still a manual point-in-time backup.
 - [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.
 - [ ] Supply operator identity, approved privacy/terms, contact information and the final domain. Analytics stays off until an approved collector and consent policy exist.

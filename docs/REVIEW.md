@@ -157,3 +157,20 @@ Owned-capture quality, second-Google-account switching, physical mobile QA, runn
 53. **Render SSH directory permissions were not reproducible — Fixed.** Parent integration finding, P2. [Dockerfile:7](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/Dockerfile:7). Render created the non-root user's SSH directory at `0755`; the image now creates it with owner `wayline` and mode `0700`. The rebuilt image passed a non-root, read-only, network-disabled ownership/mode check.
 
 The three simplify passes found no further reuse, quality or efficiency issues. All four final code-review skill passes completed for the one-line image change and the temporary offline-snapshot startup script. No new findings were reported; model-visible context was N/A. Existing aggregate PR-size finding 19 remains open. Recovery export/restore and owner Google OAuth acceptance passed; evidence is in `RECOVERY_QA.md` and `RENDER_QA.md`. Current [CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34537748484).
+
+## Online snapshot review — 2026-09-10
+
+54. **Uploaded-source restoration was absent from snapshot tests — Fixed.** Code review testing, P3. [tests/test_backup.py:16](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/tests/test_backup.py:16). Earlier cases generated artifacts without uploaded assets, so sharing a metadata-query helper between online copying and verification could hide an omitted assets query. The round-trip test now uploads the existing generated MP4 fixture through the service and independently compares restored capture bytes, in both online and offline modes.
+
+All three simplify passes found no actionable issues. Final compatibility and
+change-size reviews found no new issues; model-context review was N/A. The
+testing finding above is retained and fixed. This follow-up fits the complex
+change-size guidance; aggregate PR-size finding 19 remains open. No GitHub
+comments or merge were performed.
+
+The full Python suite passed 170 tests before the added upload assertion; all
+nine backup cases passed after it. Strict lint, formatting, and backup-module
+type checking passed. Tests cover later publication exclusion, live-runtime
+lock bypass only when explicitly requested, concurrent deletion/corruption,
+database-copy timeout cleanup, and recovered source/artifact/share identity.
+The CLI is an online snapshot capability, not an automated backup service.

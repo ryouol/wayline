@@ -1,4 +1,4 @@
-"""Verified offline snapshots of SQLite, private objects, and the share secret.
+"""Verified snapshots of SQLite, private objects, and the share secret.
 
 Run with `python -m lingbot_map.workspace.backup --help`.
 Snapshots contain private data and must be stored encrypted off the application disk.
@@ -11,7 +11,8 @@ import hashlib
 import json
 import shutil
 import sqlite3
-from contextlib import closing
+import time
+from contextlib import closing, nullcontext
 from pathlib import Path
 
 from .runtime_lock import workspace_lock
@@ -42,24 +43,34 @@ def copy_private(source: Path, target: Path) -> None:
         shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
 
 
-def check_objects(data_dir: Path, files: dict) -> None:
+def referenced_objects(data_dir: Path) -> list[tuple[str, int, str]]:
     with closing(
         sqlite3.connect(f"{(data_dir / 'workspace.sqlite3').as_uri()}?mode=ro", uri=True)
     ) as connection:
-        for key, size, sha256 in connection.execute(
+        return connection.execute(
             "SELECT object_key,size_bytes,sha256 FROM assets UNION ALL "
             "SELECT object_key,size_bytes,sha256 FROM artifacts"
-        ):
-            name = "objects/" + validate_object_key(key)
-            if files.get(name) != {"size": size, "sha256": sha256}:
-                raise ValueError("A database-referenced object is missing or corrupt")
+        ).fetchall()
 
 
-def create_snapshot(data_dir: Path, output: Path) -> dict:
+def check_objects(data_dir: Path, files: dict) -> None:
+    for key, size, sha256 in referenced_objects(data_dir):
+        name = "objects/" + validate_object_key(key)
+        if files.get(name) != {"size": size, "sha256": sha256}:
+            raise ValueError("A database-referenced object is missing or corrupt")
+
+
+def create_snapshot(data_dir: Path, output: Path, *, online: bool = False) -> dict:
+    """Copy a SQLite snapshot and verify its immutable object references.
+
+    Online copies exclude unreferenced files. Concurrent deletion may make a
+    referenced file disappear; that attempt fails and removes the partial copy.
+    Offline mode keeps exclusive workspace ownership and copies all objects.
+    """
     data_dir, output = data_dir.resolve(), output.resolve()
     if output.is_relative_to(data_dir):
         raise ValueError("Store the snapshot outside the workspace data directory")
-    with workspace_lock(data_dir):
+    with nullcontext() if online else workspace_lock(data_dir):
         if not all((data_dir / name).is_file() for name in REQUIRED_FILES):
             raise ValueError("Workspace database or share secret is missing")
         output.mkdir(mode=0o700)
@@ -72,18 +83,31 @@ def create_snapshot(data_dir: Path, output: Path) -> dict:
                 ) as source,
                 closing(sqlite3.connect(output / "workspace.sqlite3")) as target,
             ):
-                source.backup(target)
+                deadline = time.monotonic() + 30
+
+                def check_deadline(_status: int, _remaining: int, _total: int) -> None:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Snapshot database copy exceeded 30 seconds")
+
+                source.backup(target, pages=256, progress=check_deadline)
                 target.execute("PRAGMA journal_mode=DELETE")
             (output / "workspace.sqlite3").chmod(0o600)
             copy_private(data_dir / "share-token.secret", output / "share-token.secret")
             manifest_file = data_dir / "runtime-manifest.json"
             if manifest_file.exists():
                 copy_private(manifest_file, output / manifest_file.name)
-            objects = data_dir / "objects"
-            for source_file in sorted(objects.rglob("*")):
+            objects = (
+                [
+                    data_dir / "objects" / validate_object_key(key)
+                    for key, _, _ in referenced_objects(output)
+                ]
+                if online
+                else sorted((data_dir / "objects").rglob("*"))
+            )
+            for source_file in objects:
                 if source_file.is_symlink():
                     raise ValueError("Object storage contains a symlink")
-                if source_file.is_file():
+                if online or source_file.is_file():
                     copy_private(source_file, output / source_file.relative_to(data_dir))
             check_database(output / "workspace.sqlite3")
             files = {
@@ -142,15 +166,20 @@ def main() -> None:
         description="Create or restore a private, verified Wayline snapshot"
     )
     subparsers = parser.add_subparsers(dest="operation", required=True)
-    create = subparsers.add_parser("create", help="stop the application before creating a snapshot")
+    create = subparsers.add_parser("create", help="create a verified workspace snapshot")
     create.add_argument("--data-dir", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)
+    create.add_argument(
+        "--online",
+        action="store_true",
+        help="copy the running workspace; concurrent object deletion can fail the attempt",
+    )
     restore = subparsers.add_parser("restore", help="restore into a new, empty location")
     restore.add_argument("--snapshot", type=Path, required=True)
     restore.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.operation == "create":
-        result = create_snapshot(args.data_dir, args.output)
+        result = create_snapshot(args.data_dir, args.output, online=args.online)
         print(f"Created and verified snapshot with {len(result['files'])} files.")
     else:
         result = restore_snapshot(args.snapshot, args.output)

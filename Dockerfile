@@ -4,6 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home wayline \
+    && install -d -m 0700 -o wayline -g wayline /home/wayline/.ssh \
     && mkdir /data && chown wayline:wayline /data
 COPY requirements/workspace.lock /app/requirements/workspace.lock
 RUN pip install --no-cache-dir --require-hashes -r requirements/workspace.lock

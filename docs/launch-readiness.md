@@ -9,7 +9,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Request parsing has declared-length and observed-stream byte ceilings, including chunked JSON/multipart bodies. Rejected multipart uploads close partial spool files; deployed aggregate concurrency/timeouts remain required.
 - Google OAuth has browser-bound one-use state, PKCE, nonce and signed ID-token verification. Protocol/identity tests use a mocked provider; actual Google sign-in remains unverified.
 - Google accounts receive one successful video reconstruction, with bounded attempts and capacity. Scene deletion does not replenish the allowance. Synthetic jobs settle zero compute units.
-- The original LingBot Modal deployment, pinned checkpoint preparation, private per-attempt staging, transport deadlines and durable cleanup are implemented. Disabling new submissions retains cleanup responsibilities. No real GPU run has passed yet.
+- The original LingBot Modal deployment, pinned checkpoint preparation, private per-attempt staging, transport deadlines and durable cleanup are implemented. Disabling new submissions retains cleanup responsibilities. A real GPU run on a generated diagnostic clip passed; owned-capture quality remains unverified. See `MODAL_QA.md`.
 - Separate sample and research workers keep the playground responsive while reconstruction waits on the GPU. Health requires both workers; shutdown signals both.
 - Reconstruction export includes glTF Y-up colored points, camera calibration/poses, actual presentation timestamps, cumulative point counts and source thumbnails.
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
@@ -25,11 +25,11 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 
 ## Required before inviting video testers
 
-- [ ] Authenticate Modal, deploy the private worker and prepare the verified original checkpoint.
+- [x] Authenticate Modal, deploy the private worker and prepare the verified original checkpoint. Completed 2026-09-10; a generated-video diagnostic also passed.
 - [ ] Run a short owned video through the actual GPU: upload → status → ready → replay → walk → whole scene → download → expiring share in another session. Record cold/warm latency, GPU/CPU/memory cost, output bytes, failure rate and quality.
 - [ ] Configure the Google OAuth client, approved callback origin and secrets; verify real signup, returning login, logout and account switching.
 - [ ] Deploy the exact reviewed image/commit to Render and verify health, TLS, allowed host, upload limits, shutdown/recovery, logs and secrets there.
-- [ ] Validate provider limits/alerts, remote cancellation and physical object cleanup. The app's admission budget is not a provider invoice cap.
+- [ ] Validate provider limits/alerts, remote cancellation and failure/crash cleanup. Successful-run physical cleanup passed on Modal. The app's admission budget is not a provider invoice cap.
 - [ ] Configure encrypted offsite backups and run a deployed restore drill. Local offline snapshot tests do not prove the offsite schedule or Render recovery procedure.
 - [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.

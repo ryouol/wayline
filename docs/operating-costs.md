@@ -59,6 +59,15 @@ limits and verify retention. Backups need separate encrypted storage.
   retain this allowance reservation. It limits admissions, not every category
   on the provider invoice. Provider budgets/alerts remain to be configured.
 
+## First diagnostic measurement
+
+The original model completed one generated-video diagnostic on Modal: six sampled
+64x48 source frames, 114.65 seconds queued-to-ready, 78.32 seconds inside the
+runner, 5.65 seconds in model inference, and 5,994,845,696 bytes peak allocated
+VRAM. These are different timing scopes, not billable-time measurements. The
+11,728,872-byte output rendered in the browser. This tiny artificial input cannot
+set pricing or GPU sizing for real captures; see [Modal QA](MODAL_QA.md).
+
 ## Measure before pricing
 
 Use several owned captures and retain source metadata, sampled frames,

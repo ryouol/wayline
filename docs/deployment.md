@@ -61,9 +61,13 @@ cookies, upload/retention limits and private environment settings. The legacy
    whole scene → download → expiring share in another session. Measure GPU time,
    VRAM, output size and failure behavior, then set trial and provider spend limits.
 
-No Render/Modal deployment or real Google sign-in has been verified in this
-workspace yet. Authentication, an owned capture, final host, operator legal/contact
-identity, provider budget settings and live logging/edge-limit checks are pending.
+The private Modal worker is deployed and the pinned original checkpoint was
+prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
+see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
+Render deployment, real Google sign-in, an owned capture, final host, operator
+legal/contact identity, provider budgets and live logging/edge-limit checks remain
+pending. The Modal CLI connection is configured locally; Render still needs its
+own private, suitably scoped Modal credential.
 
 ## Modal execution
 
@@ -72,6 +76,11 @@ registered in Modal. Each attempt uploads into a distinct volume prefix, records
 its call identifier durably, and returns a GLB plus an allowlisted report. The
 operator must provision both named volumes and keep access restricted. Failed
 cancellation/volume deletion is retried from the durable cleanup table.
+
+Resolve `requirements/modal.lock` for Linux x86-64/Python 3.11 using its recorded
+compile command. CI verifies its complete hashed dependency closure. The image
+explicitly copies `modal_app.py` because automatic source inclusion is disabled,
+and imports the entrypoint, demo and original model during image build.
 
 The initial runner uses A100 80 GB, one container, zero provider retries and a
 600-second function timeout. It samples up to 120 frames and validates a pinned

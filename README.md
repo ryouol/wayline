@@ -6,10 +6,12 @@ point cloud, replay the captured camera path frame by frame, and download or
 share the scene.
 
 **Current verification boundary:** the synthetic playground works locally.
-The original-model Modal runner is implemented but has not completed a real
-GPU acceptance run in this environment. Google OAuth is implemented but has
-not been tested against a configured Google client. The Render Blueprint is
-not a deployed service. Do not describe these integrations as live.
+The private Modal runner is deployed and its original checkpoint is verified.
+An actual GPU diagnostic reconstructed a generated test-pattern video and passed
+API/download/share checks plus browser replay/walking. This does not establish
+quality on a real capture; see [the measured evidence](docs/MODAL_QA.md).
+Google OAuth remains unverified against a configured client, and the Render
+Blueprint is not a deployed website. Public signup and video testing are not live.
 
 Original LingBot model code, checkpoint attribution, package identifiers and
 upstream license notices remain intact. Wayline is the product name; it is not

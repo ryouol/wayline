@@ -60,6 +60,16 @@ Keep auth routes with identity schema/dependencies; keep timeline construction w
 
 Reviewed the cohesive delta after `bcc8ffe`: [request_limits.py:9](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/request_limits.py:9), its middleware registration and streaming integration tests. All three simplify reviewers and the compatibility, change-size, testing and model-context reviewers completed their passes with no additional findings. The context skill was N/A because no model-visible content changed. The follow-up fits the size guidance; the previously recorded aggregate PR-size concern remains open.
 
+## Modal deployment follow-up
+
+23. **CI omitted the Modal lock from its pip cache key — Fixed.** Simplify / efficiency / P3. `.github/workflows/ci.yml:30` now includes both dev and Modal locks, allowing downloads from the new hashed dependency check to be cached.
+
+24. **The Modal lock omitted a Linux-only dependency — Fixed.** Live deployment QA. `requirements/modal.lock:478` now pins and hashes `embreex`, requested by the visualization dependency graph on Linux. Regeneration targets the deployed Linux x86-64/Python 3.11 platform and preserves existing pins. An isolated Linux dry-run and the actual Modal installation passed; CI runs the same dependency/hash check.
+
+25. **The remote image omitted its function-defining module — Fixed.** Live deployment QA. `modal_app.py:40` explicitly includes `modal_app.py` while automatic source inclusion remains disabled. A build-time import check loads the entrypoint, demo and original model. The corrected image built, deployed and prepared the verified checkpoint; actual inference completed. The failed preparation app was stopped.
+
+All three final simplify reviewers and the four final code-review skill reviewers completed this Modal delta. The cache-key finding above was fixed; no further findings remained. The context pass was N/A. The 171-line deployment/evidence delta fits size guidance; aggregate PR size remains open.
+
 ## Verification
 
 - Python: 139 tests passed, including queue separation, disabled-submission cleanup, bounded remote I/O, unsupported options, VFR sampling and streamed request limits with multipart spool cleanup.
@@ -74,4 +84,4 @@ Reviewed the cohesive delta after `bcc8ffe`: [request_limits.py:9](/Users/royluo
 
 ## Remaining acceptance
 
-Actual Modal inference and remote cancellation/deletion, Google signup/account switching, deployed Render/TLS/edge/log/backup behavior and physical mobile testing are not verified. Modal/Render/Google credentials and an owned capture are unavailable. Browser access has resumed, and the synthetic desktop/mobile-viewport checks are recorded above. Public model-use rights and operator legal/contact details remain unresolved. See launch-readiness.md and PRODUCTION_UX_AUDIT.md for every release gate and TODO.
+Actual Modal inference on a generated diagnostic and successful-run physical deletion are verified in `MODAL_QA.md`. Owned-capture quality, remote cancellation/failure cleanup, Google signup/account switching, deployed Render/TLS/edge/log/backup behavior and physical mobile testing remain unverified. Modal is authenticated; Render/Google configuration and an owned capture remain unavailable. Browser access has resumed, and the synthetic desktop/mobile-viewport checks are recorded above. Public model-use rights and operator legal/contact details remain unresolved. See launch-readiness.md and PRODUCTION_UX_AUDIT.md for every release gate and TODO.

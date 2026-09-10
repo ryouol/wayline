@@ -37,7 +37,12 @@ image = (
     )
     .add_local_dir("lingbot_map", "/opt/wayline/lingbot_map", copy=True)
     .add_local_file("demo.py", "/opt/wayline/demo.py", copy=True)
+    .add_local_file("modal_app.py", "/opt/wayline/modal_app.py", copy=True)
     .env({"PYTHONPATH": "/opt/wayline"})
+    .run_commands(
+        "python -c 'import modal_app; import demo; "
+        "from lingbot_map.models.gct_stream import GCTStream'"
+    )
 )
 
 

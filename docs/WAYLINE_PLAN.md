@@ -17,7 +17,7 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 
 ## Current external inputs
 
-- No configured Modal CLI profile on 2026-09-10. User authorized Modal GPU; authentication is required for a real run.
+- Modal is authenticated and the private original-model runner is deployed. Its pinned weights and one generated-video GPU diagnostic passed on 2026-09-10; owned-capture acceptance remains open.
 - Google OAuth client credentials and preferred project not yet supplied.
 - An owned video path is requested for the real acceptance run.
 - Legal/contact identity is not supplied. Do not invent it or assert commercial clearance.
@@ -31,3 +31,5 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 - Simplify and all four code-review skill passes completed; every finding/disposition is retained in `REVIEW.md`. Aggregate review size remains an open merge concern.
 - New exports passed Khronos glTF validation. A synthetic VFR video verifies presentation timestamps; neither fixture proves real-model quality.
 - Browser QA resumed on 2026-09-10: repeat 5,908-point sample creation, a 750,000-point/120-frame synthetic fixture, completed replay, walking/reset, logout cleanup, anonymous sharing, byte-identical download and automatic expiry passed. Private/shared layouts fit at 390px. See `BROWSER_QA.md`; real reconstruction and physical mobile acceptance remain open.
+
+- Actual Modal diagnostic: 731,004 points from six sampled synthetic frames; queued-to-ready 114.65 seconds, model inference 5.65 seconds. API download/share/revocation, successful-run remote cleanup and browser replay/walking passed. See `MODAL_QA.md`; this does not establish real-scene quality or public launch readiness.

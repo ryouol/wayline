@@ -27,7 +27,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements/dev.lock
+          cache-dependency-path: |
+            requirements/dev.lock
+            requirements/modal.lock
 
       - name: Set up locked dependency tooling
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -41,6 +43,9 @@ jobs:
           uv lock --check
           python -m pip install --require-hashes -r requirements/dev.lock
           python -m pip install --no-deps --no-build-isolation -e .
+
+      - name: Verify Linux Modal dependency closure and hashes
+        run: python -m pip install --dry-run --ignore-installed --require-hashes -r requirements/modal.lock
 
       - name: Test
         run: python -m pytest

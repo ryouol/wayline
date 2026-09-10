@@ -30,4 +30,4 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 - Current local gate: 133 Python tests, strict lint/format, mypy for 18 modules, JavaScript syntax and four behavior suites passed. Wheel and Docker image built; production container smoke passed.
 - Simplify and all four code-review skill passes completed; every finding/disposition is retained in `REVIEW.md`. Aggregate review size remains an open merge concern.
 - New exports passed Khronos glTF validation. A synthetic VFR video verifies presentation timestamps; neither fixture proves real-model quality.
-- Latest browser check could not run because the Mac is locked. Earlier 390px synthetic scene rendering predates final walk/calibration fixes.
+- Browser QA resumed on 2026-09-10: repeat 5,908-point sample creation, a 750,000-point/120-frame synthetic fixture, completed replay, walking/reset, logout cleanup, anonymous sharing, byte-identical download and automatic expiry passed. Private/shared layouts fit at 390px. See `BROWSER_QA.md`; real reconstruction and physical mobile acceptance remain open.

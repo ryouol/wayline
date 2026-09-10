@@ -18,7 +18,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 
 ## Verification boundary
 
-The earlier browser run rendered 5,908 synthetic points after repeat scene creation at a 390×844 viewport with no horizontal overflow. Later calibration, walk controls and review fixes require another browser pass. The Mac was locked during the latest attempt; this is not a completed visual/mobile gate.
+The 2026-09-10 browser pass rendered repeat 5,908-point synthetic scenes and a separate 750,000-point/120-frame fixture. Camera replay reached the last frame; walking, reset, logout cleanup, anonymous sharing, byte-identical GLB download and automatic expiry passed. Private and shared layouts had no horizontal overflow at 390×844. See `BROWSER_QA.md` for the evidence and limits. This is desktop browser and viewport-emulation evidence, not physical mobile or real-model acceptance.
 
 Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video allowance, mocked Modal cancellation/deadlines, sampling/export, viewer teardown/trace/timeline and backup/restore. See `REVIEW.md` for final check results. A reconstruction fixture passed the Khronos glTF Validator with zero errors and warnings. Fixtures and transport mocks are not real-model acceptance.
 
@@ -30,7 +30,7 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 - [ ] Deploy the exact reviewed image/commit to Render and verify health, TLS, allowed host, upload limits, shutdown/recovery, logs and secrets there.
 - [ ] Validate provider limits/alerts, remote cancellation and physical object cleanup. The app's admission budget is not a provider invoice cap.
 - [ ] Configure encrypted offsite backups and run a deployed restore drill. Local offline snapshot tests do not prove the offsite schedule or Render recovery procedure.
-- [ ] Finish fresh desktop browser QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch controls, accessibility and contrast.
+- [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.
 - [ ] Supply operator identity, approved privacy/terms, contact information and the final domain. Analytics stays off until an approved collector and consent policy exist.
 

@@ -59,7 +59,7 @@ Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,servic
 | Requested item | Status / implementation |
 |---|---|
 | Custom 404 and 500 | ✅ HTML recovery pages and safe JSON API errors, including induced-error tests. |
-| Above-fold CTA | ✅ Playground/Google entry and upload-first studio; operator login is secondary. ⚠️ Fresh post-review viewport QA pending. |
+| Above-fold CTA | ✅ Playground entry and upload-first studio; operator login is secondary. Desktop/narrow viewport inspected; real Google entry awaits configuration. |
 | Per-page title and description | ✅ Home/share/support/error metadata. |
 | OG/Twitter tags and fallback | ✅ Generic 1200×630 Wayline image and privacy-safe tags. ⚠️ Final public origin required. |
 | Full favicon set | ✅ Original W mark, ICO, 16/32 PNG, Apple, 192/512 icons and manifest; raster assets generated/inspected earlier. |
@@ -81,7 +81,7 @@ Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webma
 | Loading states | ✅ Busy state, upload/queue/progress/viewer feedback. API calls bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation bounded. |
 | Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. |
 | Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
-| Working buttons | ✅ API/Node tests cover key actions; frame replay, walk controls, zoom and reset implemented on private/shared views. ⚠️ Fresh browser pass and real provider flows pending. |
+| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. ⚠️ Real provider flows pending. |
 | Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. ⚠️ Real Google callback/domain awaiting setup. |
 | Clickable logo | ✅ Home link across product/support/shared pages. |
 | Placeholder text/unused navigation | ✅ Fake product copy removed; explicit operator TODO disclosures retained. Research settings remain secondary. |
@@ -93,12 +93,12 @@ Changed: `static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,si
 
 | Item | Status / implementation |
 |---|---|
-| No horizontal overflow | ✅ Earlier 390px synthetic workflow measured no overflow. ⚠️ New walk controls and final styles still need rendered QA. |
+| No horizontal overflow | ✅ Fresh private/shared 390px fixture views measured no document overflow, including walking controls and 120-frame timelines. |
 | Mobile breakpoints | ✅ Responsive studio, fluid support pages, wrapped controls. ⚠️ Physical mobile verification pending. |
 | Mobile hamburger/focus trap | ➖ No drawer/navigation menu is needed; footer links stay visible. Existing share dialog uses native dialog semantics. |
 | Sticky mobile CTA | ✅ Jump to upload/create action for authenticated users. |
 | Optimize images/srcset/lazy | ✅ Small local brand assets; embedded bounded JPEG source thumbnails lazily displayed. ➖ No responsive photo hero/gallery requires srcset. |
-| Tap targets/readable fonts | ✅ CSS minimum 44px controls and readable mobile text; walking has touch buttons. ⚠️ Final computed-style/contrast/device checks pending. |
+| Tap targets/readable fonts | ✅ CSS minimum 44px controls and readable mobile text; directional walking buttons measured 44px high in the browser. ⚠️ Full contrast/device checks pending. |
 
 Changed: CSS, viewer/timeline/app scripts, markup and icon generation. Performance fixes remove an eager full confidence tensor and redundant checkpoint hash pass while retaining mandatory verified model loading. Sample work and local maintenance continue during a GPU wait. Skipped: new frontend frameworks, decorative media, unsupported physical-device claims.
 
@@ -124,7 +124,7 @@ Changed: Phase 3/4 UI files. These are design decisions, not usability-study res
 
 ✅ Authorized direction: a dark olive/neutral studio with a lime accent, original W mark, spacious scene viewport and restrained controls. Rebrand is Wayline; upstream model/package/license identifiers remain LingBot for attribution.
 
-➖ Magic UI: React-specific, this app is plain JavaScript. ➖ Threlte/R3F: neither Svelte nor React is present; extending the existing WebGL renderer avoids a framework migration. ➖ Vectary/Jitter: no exported asset supplied or needed; these are not code dependencies. ⚠️ Final screenshots/visual acceptance remain pending while the Mac is locked.
+➖ Magic UI: React-specific, this app is plain JavaScript. ➖ Threlte/R3F: neither Svelte nor React is present; extending the existing WebGL renderer avoids a framework migration. ➖ Vectary/Jitter: no exported asset supplied or needed; these are not code dependencies. ✅ Fresh synthetic desktop/narrow-view screenshots inspected; see `BROWSER_QA.md`. ⚠️ Real-capture and physical-device visual acceptance remain pending.
 
 Changed: public copy, CSS, markup, brand assets, metadata/manifest, CLI product name/alias and documentation. Skipped: dependency/framework replacements without product benefit.
 

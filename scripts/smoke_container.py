@@ -24,10 +24,32 @@ def smoke(image: str, port: int) -> None:
             f"LINGBOT_BOOTSTRAP_TOKEN={token}\n"
             "LINGBOT_PUBLIC_BASE_URL=https://wayline-test.example\n"
             "LINGBOT_ALLOWED_HOSTS=wayline-test.example\nPORT=10000\n"
+            "LINGBOT_DATA_DIR=/data/wayline\n"
             "LINGBOT_MAX_UPLOAD_BYTES=67108864\n"
             "LINGBOT_MAX_ARTIFACT_BYTES=41943040\n"
         )
     try:
+        # Render owns its writable mount root. The non-root app must create its
+        # private directory underneath it, rather than chmod the mount itself.
+        subprocess.run(["docker", "volume", "create", name], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                "0",
+                "--entrypoint",
+                "sh",
+                "--mount",
+                f"type=volume,source={name},destination=/data,volume-nocopy",
+                image,
+                "-c",
+                "chown root:root /data && chmod 1777 /data",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
         subprocess.run(
             [
                 "docker",
@@ -46,7 +68,7 @@ def smoke(image: str, port: int) -> None:
                 "--mount",
                 "type=volume,destination=/tmp",
                 "--mount",
-                "type=volume,destination=/data",
+                f"type=volume,source={name},destination=/data,volume-nocopy",
                 "--publish",
                 f"127.0.0.1:{port}:10000",
                 "--env-file",
@@ -56,10 +78,8 @@ def smoke(image: str, port: int) -> None:
             check=True,
             stdout=subprocess.DEVNULL,
         )
-    finally:
         Path(environment_file).unlink()
-    base = f"http://127.0.0.1:{port}"
-    try:
+        base = f"http://127.0.0.1:{port}"
         with requests.Session() as session:
             session.headers.update(
                 {"Host": "wayline-test.example", "Authorization": "Bearer " + token}
@@ -73,6 +93,20 @@ def smoke(image: str, port: int) -> None:
                 time.sleep(0.25)
             else:
                 raise AssertionError("Container never became ready")
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    name,
+                    "python",
+                    "-c",
+                    "import os,stat; from pathlib import Path; "
+                    "root=Path('/data').stat(); data=Path('/data/wayline').stat(); "
+                    "assert os.getuid() != 0 and root.st_uid == 0; "
+                    "assert data.st_uid == os.getuid() and stat.S_IMODE(data.st_mode) == 0o700",
+                ],
+                check=True,
+            )
             assert (
                 requests.get(
                     base + "/api/me", headers={"Host": "wayline-test.example"}, timeout=3
@@ -175,7 +209,17 @@ def smoke(image: str, port: int) -> None:
             ).strip()
             print(f"512 MiB / 0.5 CPU smoke peak memory: {int(peak) / 1024**2:.1f} MiB")
     finally:
-        subprocess.run(["docker", "stop", name], check=True, stdout=subprocess.DEVNULL)
+        Path(environment_file).unlink(missing_ok=True)
+        subprocess.run(
+            ["docker", "rm", "--force", "--volumes", name],
+            check=False,
+            stdout=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["docker", "volume", "rm", name],
+            check=False,
+            stdout=subprocess.DEVNULL,
+        )
 
 
 if __name__ == "__main__":

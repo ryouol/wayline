@@ -19,12 +19,13 @@ Fixed Render hosting is **$8.25/month before tax and usage overages**. Keep the
 workspace on Hobby; no paid workspace upgrade is needed. Modal Starter advertises
 $30/month of free compute credit; plan before credits.
 
-The requested **$20 maximum is not enforced**. Render bills outbound overages
+The user accepted **$20/month as a target**, with some flexibility, on 2026-09-10.
+The Starter service and 5 GB disk were created in Wayline / Production. Render bills outbound overages
 when a payment method is attached and does not document a per-project hard total
 spend cap. Its 5 GB allowance and pipeline allowance are shared with the account's
 other projects. A build spend limit does not cap bandwidth or GPU charges.
-Paid Render service creation is therefore pending clarification of whether $20
-may be a budget target. No paid Render service has been created.
+Keep one instance, automatic deploys and previews off, and the limits below.
+The target is not an enforced invoice cap.
 
 Modal supports workspace usage budgets before credits and spend limits after
 credits on its Usage & Billing page. These have not been configured or verified

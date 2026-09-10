@@ -15,7 +15,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
-- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project and Production environment exist in the authenticated Render account, but no paid service has been created. The strict $20 cap is unresolved because Render does not document a per-project hard invoice limit. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total.
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The first deploy revealed a root-owned disk permission issue; `/data/wayline` keeps private data in an app-owned directory under the mount.
 
 ## Verification boundary
 

@@ -18,7 +18,7 @@ services:
       - key: LINGBOT_ENV
         value: production
       - key: LINGBOT_DATA_DIR
-        value: /data
+        value: /data/wayline
       - key: LINGBOT_BOOTSTRAP_TOKEN
         generateValue: true
       - key: LINGBOT_PUBLIC_BASE_URL

@@ -46,19 +46,22 @@ The committed Dockerfile builds a pinned Python 3.11 image, installs the hashed
 workspace dependency lock and runs as an unprivileged user. `render.yaml` selects
 one Starter/0.5 CPU/512 MB service, a 5 GB persistent `/data` disk, `/healthz`, secure
 cookies, 64 MiB uploads, 40 MiB artifacts and private environment settings.
+The private workspace is `/data/wayline`: Render owns the mount root, so the
+unprivileged application creates and secures its own child directory. Existing
+installations must keep their configured data path; changing it without moving
+the stopped workspace's database, objects and share secret creates an empty workspace.
 Automatic deploys are off; use a reviewed commit for each manual deployment. See
 [Render compute plans](https://render.com/docs/compute-plans).
 
 The Render CLI is authenticated to `My Workspace`; a dedicated **Wayline** project
-and **Production** environment were created on 2026-09-10. No paid service exists
-yet. Keep all Wayline resources there; do not alter the user's other projects.
-Blueprint validation succeeds. Hosting is $8.25/month before tax and overages,
-but Render has no documented per-project hard invoice cap. The requested $20
-maximum still needs resolution before paid service creation; see
-[operating costs](operating-costs.md). Do not treat application limits as approval
-to exceed that maximum.
+and **Production** environment were created on 2026-09-10. The `wayline` Starter
+service (`srv-dahhn0u7bikc73e82h9g`) and 5 GB disk now exist there, with public URL
+`https://wayline-9ten.onrender.com`. Keep all Wayline resources there; do not alter
+the user's other projects. Hosting is $8.25/month before tax and overages. The
+user accepted $20 as a monthly target with some flexibility; it is not an
+enforced invoice cap. See [operating costs](operating-costs.md).
 
-1. Once the spending condition is resolved, connect `ryouol/lingbot-map` and
+1. Connect `ryouol/lingbot-map` and
    `codex/production-ready-lingbot-map` within Wayline / Production. Review the
    Blueprint's Starter service and 5 GB disk and deploy the exact reviewed commit.
 2. Supply `LINGBOT_PUBLIC_BASE_URL` and its exact `LINGBOT_ALLOWED_HOSTS` hostname.
@@ -79,7 +82,7 @@ to exceed that maximum.
 The private Modal worker is deployed and the pinned original checkpoint was
 prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
-Render service deployment, real Google sign-in, an owned capture, final host, operator
+Successful Render service verification, real Google sign-in, an owned capture, operator
 legal/contact identity, provider budgets and live logging/edge-limit checks remain
 pending. The Modal CLI connection is configured locally; Render still needs its
 own private, suitably scoped Modal credential.
@@ -87,7 +90,9 @@ own private, suitably scoped Modal credential.
 The production image passes `scripts/smoke_container.py` with a read-only root,
 non-root user, 512 MiB memory and 0.5 CPU. Both `/data` and `/tmp` use disposable
 disk-backed volumes for this test; a 512 MiB tmpfs would be below the upload
-storage floor. Sample creation, multipart video upload, download, sharing and revocation
+storage floor. The disk-root regression check makes `/data` root-owned and writable,
+then verifies that the non-root app owns `/data/wayline` with mode `0700`.
+Sample creation, multipart video upload, download, sharing and revocation
 passed. A generated clip padded to the deployed 64 MiB ceiling uploaded and shared scene requests passed; peak cgroup memory was 210.4 MiB.
 Actual server request overlap was not synchronized or established. Decoded dimensions
 remain small, so this does not establish worst-case decoder or real-capture load.
@@ -160,7 +165,7 @@ Stop the application and take a verified snapshot into a **new directory outside
 its data directory**:
 
 ```bash
-python -m lingbot_map.workspace.backup create --data-dir /data --output /backup/wayline-YYYYMMDD
+python -m lingbot_map.workspace.backup create --data-dir /data/wayline --output /backup/wayline-YYYYMMDD
 python -m lingbot_map.workspace.backup restore --snapshot /backup/wayline-YYYYMMDD --output /restore/wayline-YYYYMMDD
 ```
 

@@ -12,7 +12,7 @@ COPY lingbot_map /app/lingbot_map
 RUN pip install --no-cache-dir setuptools==83.0.0 wheel==0.46.3 packaging==26.3 \
     && pip install --no-cache-dir --no-deps --no-build-isolation .
 USER wayline
-ENV LINGBOT_DATA_DIR=/data LINGBOT_ENV=production
+ENV LINGBOT_DATA_DIR=/data/wayline LINGBOT_ENV=production
 EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import os,urllib.request,urllib.parse; req=urllib.request.Request('http://127.0.0.1:'+os.getenv('PORT','10000')+'/healthz',headers={'Host':urllib.parse.urlsplit(os.environ['LINGBOT_PUBLIC_BASE_URL']).netloc}); urllib.request.urlopen(req,timeout=4)"

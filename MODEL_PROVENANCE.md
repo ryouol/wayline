@@ -2,12 +2,18 @@
 
 Status: **research-only; commercial use is not cleared**.
 
-The repository source is presented under Apache-2.0, but that does not establish
-commercial rights for the released checkpoint, its training data, example
-imagery, or the LingBot name. The public checkpoint repository does not publish
-an explicit checkpoint license. The paper lists training sources with
-non-commercial or research-only terms, and portions of the implementation are
-derived from VGGT under separate terms.
+The repository source and the pinned Hugging Face model card both state
+Apache-2.0. The model card has no machine-readable `license` field, and its
+relative `LICENSE.txt` link has no matching file in that model repository.
+Missing metadata must not be described as an absence of all published licensing
+language. The remaining review concerns are the scope of the project-level
+statement for checkpoint hosting/redistribution and the independent obligations
+for derived implementation, training sources, example imagery and names.
+
+The research-only designation here is Wayline's current release policy, not a
+claim that the upstream project universally prohibits commercial use. A
+training dataset's terms also require separate analysis; this file does not
+infer the license of a trained checkpoint or its outputs solely from those terms.
 
 Consequently:
 
@@ -49,3 +55,23 @@ commercial inference, checkpoint redistribution/cache rights, training-data and
 output rights, and name/trademark use. Have counsel review the VGGT-derived code
 and every training source identified by the paper. Replace or retrain the engine
 on commercially cleared data if those grants cannot be obtained.
+
+## Source recheck — 2026-09-10
+
+- [Pinned model card](https://huggingface.co/robbyant/lingbot-map/blob/204754b72bb24f561f8d7e7e1e4e4cd9e809adf9/README.md):
+  Apache-2.0 badge and project-level license statement are present.
+- [Pinned repository metadata](https://huggingface.co/api/models/robbyant/lingbot-map/revision/204754b72bb24f561f8d7e7e1e4e4cd9e809adf9):
+  no card license field and no standalone LICENSE file were returned. This is
+  incomplete metadata, not proof that the checkpoint is unlicensed.
+- [Upstream source license](https://github.com/Robbyant/lingbot-map/blob/main/LICENSE.txt):
+  Apache-2.0.
+- [VGGT license](https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt):
+  the published version dated July 29, 2025 grants use/modification/distribution
+  subject to its terms, including redistribution and acceptable-use obligations.
+  Its use of the label “Research Materials” is not itself a non-commercial-only
+  condition. Identify the version and covered files before drawing conclusions
+  about this fork.
+
+This recheck did not provide checkpoint-specific written confirmation, review
+every training dataset grant, or clear the product for commercial launch. No
+research enablement, billing or deployment gate was changed.

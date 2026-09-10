@@ -10,8 +10,9 @@ Several geometry, pose, head, layer, and vision-transformer files are derived
 from or closely track Meta's VGGT implementation. VGGT is distributed under its
 own license terms at <https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt>.
 Those terms and attribution requirements continue to apply to covered material;
-the top-level Apache-2.0 file does not override them. Commercial distribution
-requires rightsholder/counsel confirmation.
+the top-level Apache-2.0 file does not override them. Review the applicable
+version and covered files for redistribution and acceptable-use obligations;
+the label “Research Materials” alone does not establish a commercial-use ban.
 
 ## DINOv2-derived layers
 
@@ -21,11 +22,13 @@ when redistributing a model runtime.
 
 ## Model checkpoints and data
 
-The `robbyant/lingbot-map` checkpoint repository publishes no explicit model
-license in its metadata at the pinned revision used here. The paper identifies
-training sources with independent terms, including non-commercial or
-research-only sources. Checkpoints and outputs are therefore marked
-`NOASSERTION` and research-only in this product until written clearance exists.
+The pinned `robbyant/lingbot-map` model card states that the project is
+Apache-2.0, although its machine-readable license metadata is absent and its
+relative LICENSE link has no matching repository file. Metadata absence is not
+proof of absent licensing language. Checkpoint-hosting scope, derived code,
+training-source and output questions remain separate review items. This product
+keeps its research-only policy and `NOASSERTION` output metadata pending that
+review; see `MODEL_PROVENANCE.md` for the dated source recheck.
 
 ## Sky segmentation
 

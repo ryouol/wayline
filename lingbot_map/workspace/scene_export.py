@@ -16,9 +16,10 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .runner_contract import MAX_FRAMES
+
 BASIS = np.diag([1.0, -1.0, -1.0])
 MAX_POINTS = 750_000
-MAX_FRAMES = 120
 
 
 def encode_point_glb(points: np.ndarray, colors: np.ndarray, trace: dict[str, Any]) -> bytes:

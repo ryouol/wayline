@@ -67,6 +67,7 @@ class EngineContext:
     source_path: Path | None
     source_metadata: dict[str, Any] | None
     work_root: Path
+    reserved_units: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

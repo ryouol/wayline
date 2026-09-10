@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -95,12 +96,13 @@ class VideoInspector:
             height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
         finally:
             capture.release()
-        if fps <= 0 or frames <= 0 or width <= 0 or height <= 0:
+        if not math.isfinite(fps) or fps <= 0 or frames <= 0 or width <= 0 or height <= 0:
             raise UploadRejected("The video has no readable frames or timing metadata.")
         return {
             "fps": round(fps, 3),
             "frames": frames,
             "durationSeconds": round(frames / fps, 3),
+            "samplingDurationSeconds": frames / fps,
             "width": width,
             "height": height,
         }
@@ -417,7 +419,10 @@ class WorkspaceService:
                     "The declared media type does not match the file contents.", status_code=415
                 )
             metadata = self.inspector.inspect(path)
-            if metadata["durationSeconds"] > self.settings.max_video_seconds:
+            if (
+                metadata.get("samplingDurationSeconds", metadata["durationSeconds"])
+                > self.settings.max_video_seconds
+            ):
                 raise UploadRejected(
                     f"Video is longer than the {self.settings.max_video_seconds}-second limit.",
                     status_code=413,
@@ -674,6 +679,7 @@ class WorkspaceService:
                     source_path=source_path,
                     source_metadata=source_metadata,
                     work_root=self.work_root,
+                    reserved_units=job["reserved_units"],
                 ),
                 progress,
                 cancelled,

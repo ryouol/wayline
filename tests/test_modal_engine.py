@@ -1,4 +1,5 @@
 import asyncio
+import io
 import time
 from dataclasses import replace
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from lingbot_map.workspace.engines import (
 )
 from lingbot_map.workspace.modal_engine import MODEL_SHA256, ModalLingbotEngine
 from lingbot_map.workspace.sample import build_synthetic_scene
+
+from .test_workspace_api import fake_mp4
 
 
 @pytest.fixture
@@ -120,6 +123,59 @@ def test_remote_transport_persists_call_budget_and_retrieves_artifact(remote_eng
         assert len(calls.removed) == 1
     finally:
         cleanup_result(result)
+
+
+def test_resumed_job_preserves_its_original_frame_reservation(remote_engine, monkeypatch):
+    engine, context = remote_engine
+    context = replace(
+        context,
+        params={},
+        source_metadata={"durationSeconds": 17.0, "frames": 1019},
+        reserved_units=51,
+    )
+    calls = mock_transport(monkeypatch, frames=51)
+    result = engine.run(context, lambda *args: None, lambda: False)
+    try:
+        assert engine.estimate_units(context.source_metadata, {}) == 52
+        assert calls.submissions[0]["max_frames"] == 51
+        assert result.used_units == context.reserved_units
+    finally:
+        cleanup_result(result)
+
+
+@pytest.mark.parametrize("reported_frames", [51, 52])
+def test_legacy_queued_job_forwards_reservation_and_settles(
+    remote_engine, service, tenant_id, monkeypatch, reported_frames
+):
+    engine, _ = remote_engine
+    service.engines[engine.descriptor.id] = engine
+    monkeypatch.setattr(
+        service.inspector,
+        "inspect",
+        lambda _: {"durationSeconds": 17.0, "frames": 1019, "width": 64, "height": 48},
+    )
+    asset = service.upload_video(
+        tenant_id=tenant_id,
+        filename="old.mp4",
+        media_type="video/mp4",
+        stream=io.BytesIO(fake_mp4()),
+    )
+    job = service.database.create_job(
+        tenant_id=tenant_id,
+        engine_id=engine.descriptor.id,
+        source_asset_id=asset["id"],
+        params={},
+        provenance={},
+        reserve_units=51,
+    )
+    calls = mock_transport(monkeypatch, frames=reported_frames)
+    assert service.process_next_job()
+    completed = service.database.get_job(tenant_id, job["id"])
+    assert calls.submissions[0]["max_frames"] == 51
+    assert completed["state"] == ("ready" if reported_frames == 51 else "failed")
+    quota = service.database.quota(tenant_id)
+    assert quota["reserved_units"] == 0
+    assert quota["consumed_units"] == (51 if reported_frames == 51 else 0)
 
 
 def test_remote_cancel_is_forwarded_and_cleanup_survives_restart(remote_engine, monkeypatch):

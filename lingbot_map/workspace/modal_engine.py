@@ -79,8 +79,13 @@ class ModalLingbotEngine(LingbotResearchEngine):
             raise ValueError(
                 "The beta supports streaming reconstruction without sky masking or rotation"
             )
+        # Earlier uploads persisted milliseconds only. Reserve the upper rounding
+        # boundary for those rows; new metadata uses the decoder's exact timing.
+        duration = source_metadata.get("samplingDurationSeconds")
+        if duration is None:
+            duration = float(source_metadata["durationSeconds"]) + 0.0005
         return sampled_frame_count(
-            float(source_metadata["durationSeconds"]),
+            float(duration),
             int(source_metadata["frames"]),
             int(params.get("maxFrames", MAX_FRAMES)),
             int(params.get("extractFps", 3)),
@@ -186,6 +191,13 @@ class ModalLingbotEngine(LingbotResearchEngine):
     async def _run_remote(self, context, progress):
         import modal
 
+        frame_limit = self.estimate_units(context.source_metadata, context.params)
+        if context.reserved_units is not None:
+            # Resumed jobs may predate precise timing metadata. Never ask the
+            # runner for more frames than their persisted capacity reservation.
+            frame_limit = min(frame_limit, context.reserved_units)
+        if frame_limit < 2:
+            raise ValueError("The capture reservation does not permit reconstruction")
         attempt = uuid.uuid4().hex
         deadline = time.time() + self.settings.job_timeout_seconds
         self.reserve_run(attempt, context.job_id, deadline)
@@ -201,7 +213,7 @@ class ModalLingbotEngine(LingbotResearchEngine):
             call = await function.spawn.aio(
                 attempt_id=attempt,
                 research_ack=self.settings.research_acknowledgement,
-                max_frames=int(context.params.get("maxFrames", MAX_FRAMES)),
+                max_frames=frame_limit,
                 extract_fps=int(context.params.get("extractFps", 3)),
                 expires_at=deadline,
             )
@@ -228,9 +240,7 @@ class ModalLingbotEngine(LingbotResearchEngine):
             if report.get("checkpointSha256") != MODEL_SHA256:
                 raise ValueError("The runner used an unexpected checkpoint")
             used_units = report.get("frames")
-            if type(used_units) is not int or not 2 <= used_units <= self.estimate_units(
-                context.source_metadata, context.params
-            ):
+            if type(used_units) is not int or not 2 <= used_units <= frame_limit:
                 raise ValueError("The runner returned an invalid sampled-frame count")
             result = EngineResult(
                 artifacts=(

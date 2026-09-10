@@ -7,7 +7,9 @@ import numpy as np
 import pytest
 
 from lingbot_map.workspace.capture import extract_capture
+from lingbot_map.workspace.modal_engine import ModalLingbotEngine
 from lingbot_map.workspace.scene_export import export_reconstruction
+from lingbot_map.workspace.service import VideoInspector
 
 
 def fixture_predictions():
@@ -88,3 +90,20 @@ def test_capture_uses_presentation_timestamps_for_variable_frame_rate(tmp_path):
     timestamps = extract_capture(source, tmp_path / "frames", max_frames=10, sample_fps=15)
     assert timestamps == [0, 0.1, 0.2, 0.3, 0.4, 0.5, 1, 1.5, 2, 2.5]
     assert len(list((tmp_path / "frames").glob("*.jpg"))) == 10
+
+
+def test_fractional_frame_rate_does_not_underreserve(settings, tmp_path):
+    source = tmp_path / "fractional.avi"
+    writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"MJPG"), 60000 / 1001, (64, 48))
+    assert writer.isOpened()
+    for _ in range(1019):
+        writer.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    writer.release()
+    metadata = VideoInspector().inspect(source)
+    engine = ModalLingbotEngine(settings)
+    times = extract_capture(source, tmp_path / "frames")
+    assert len(times) == 52
+    assert engine.estimate_units(metadata, {}) == len(times)
+    legacy = {**metadata, "durationSeconds": round(metadata["durationSeconds"], 3)}
+    del legacy["samplingDurationSeconds"]
+    assert engine.estimate_units(legacy, {}) >= len(times)

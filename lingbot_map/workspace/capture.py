@@ -8,13 +8,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .runner_contract import sampled_frame_count
+from .runner_contract import MAX_FRAMES, sampled_frame_count
 
 
 def extract_capture(
-    source: Path, output: Path, *, max_frames: int = 120, sample_fps: int = 3
+    source: Path, output: Path, *, max_frames: int = MAX_FRAMES, sample_fps: int = 3
 ) -> list[float]:
-    if not 2 <= max_frames <= 120 or not 1 <= sample_fps <= 15:
+    if not 2 <= max_frames <= MAX_FRAMES or not 1 <= sample_fps <= 15:
         raise ValueError("Invalid frame sampling limits")
     capture = cv2.VideoCapture(str(source))
     try:

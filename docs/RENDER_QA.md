@@ -11,10 +11,11 @@ This is a deployed research preview, not completed public-launch acceptance.
 - Project **Wayline**, environment **Production**, service `srv-dahhn0u7bikc73e82h9g`.
 - Starter, one instance, Ohio, 5 GB persistent disk; automatic deployments,
   previews and autoscaling are off. Fixed hosting is $8.25/month before tax/usage.
-- Current application commit `8e1391012766d6eacb518cd51c6ba3a40fbe10f6`;
-  deploy `dep-dahj0sek1f9s73fgcvu0` is live with normal Docker startup restored.
+- Current application commit `351f339f9847530fae5955d2e9ce2ce68753624e`;
+  deploy `dep-dahk166k1f9s73fk7bq0` is live with normal Docker startup.
   The SSH directory is owned by UID 10001 with mode `0700`.
-- [Current CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34537748484).
+- [Current CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34543233887),
+  including 170 Python tests and the production container smoke.
   The initial application deployment also
   [passed CI](https://github.com/ryouol/lingbot-map/actions/runs/34534857893).
   The preceding disk-fix commit also passed

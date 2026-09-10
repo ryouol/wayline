@@ -148,7 +148,7 @@ The disk-fix simplify pass reported finding 49 from both quality and efficiency;
 
 ## Remaining acceptance
 
-Live Render hosting, a generated-input original-model run, owner Google signup/returning login/logout, visitor isolation and sharing are verified in `RENDER_QA.md`. An encrypted export of the live workspace and server environment passed an isolated Linux restore (`RECOVERY_QA.md`). The normal runtime is `8e13910`, with green CI and verified private SSH permissions. Google-account capacity is one and the owner's free video is unused.
+Live Render hosting, a generated-input original-model run, owner Google signup/returning login/logout, visitor isolation and sharing are verified in `RENDER_QA.md`. An encrypted export of the live workspace and server environment passed an isolated Linux restore (`RECOVERY_QA.md`). The normal runtime is `351f339`, with green CI and verified private SSH permissions. Google-account capacity is one and the owner's free video is unused.
 
 Owned-capture quality, second-Google-account switching, physical mobile QA, running-inference cancellation/failure cleanup, upstream logging/edge limits, automated backup retention and a separate Render restore drill remain open. Public hosted-use rights and approved operator legal/contact details are unresolved. Shared Modal credentials/budgets still need project isolation. See `launch-readiness.md` and `PRODUCTION_UX_AUDIT.md` for every release gate and TODO.
 
@@ -168,9 +168,9 @@ testing finding above is retained and fixed. This follow-up fits the complex
 change-size guidance; aggregate PR-size finding 19 remains open. No GitHub
 comments or merge were performed.
 
-The full Python suite passed 170 tests before the added upload assertion; all
-nine backup cases passed after it. Strict lint, formatting, and backup-module
-type checking passed. Tests cover later publication exclusion, live-runtime
+The final [CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34543233887),
+including 170 Python tests, strict lint, formatting, type checking, the Node
+checks and production container smoke. Tests cover later publication exclusion, live-runtime
 lock bypass only when explicitly requested, concurrent deletion/corruption,
 database-copy timeout cleanup, and recovered source/artifact/share identity.
 The CLI is an online snapshot capability, not an automated backup service.

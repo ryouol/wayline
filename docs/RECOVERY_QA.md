@@ -123,3 +123,28 @@ ID and could list its contents. Do not treat the workspace name as proof of
 credential isolation or immutable backup protection. Encryption protects the
 archive contents, while scoped credentials and independent key escrow remain
 required. No production runner or billing settings were changed by this copy.
+
+## Live online recovery verification — 2026-09-10
+
+The reviewed online snapshot implementation was deployed as commit `351f339`
+in Render deploy `dep-dahk166k1f9s73fk7bq0`. Its first live snapshot verified
+12 files totaling 8,353,550 bytes and included the owner's Google identity.
+The application held its runtime lock during the copy; the container's PID 1
+start time remained unchanged. No snapshot maintenance restart was needed.
+
+The fresh encrypted archive is `workspace-online-20260910T234450Z.tar.age`,
+8,399,048 bytes, SHA-256
+`cf93bbdf9dfd7e6d0276cc64002c6a7e5b868afa4640027454aa2b3217124e98`.
+The matching server environment was encrypted separately. A fresh network-disabled
+Linux restore verified all 12 files, the Google identity, original reconstruction
+bytes, operator authentication, the share secret and a working share download.
+Encrypted copies and the checksum manifest are retained on the Mac and in Modal
+under `/online-20260910T234450Z`; every remote file passed a full download/hash
+comparison. An initial Modal download returned `block not found`; re-reading the
+same uploaded files succeeded without uploading duplicates or overwriting them.
+The temporary plaintext Render snapshot was removed after verification, and the
+live service returned health 200.
+
+This replaces the older pre-signup snapshot as the latest verified recovery set.
+The tested CLI removes the maintenance restart prerequisite; unattended scheduling,
+retention, failure alerts and independent recovery-key escrow remain open.

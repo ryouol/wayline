@@ -17,12 +17,14 @@ infer the license of a trained checkpoint or its outputs solely from those terms
 
 Consequently:
 
-- the hosted workspace ships with only the deterministic `synthetic-studio-v1`
-  sample enabled;
+- the default workspace ships with the deterministic `synthetic-studio-v1`
+  sample; private research enablement is an explicit operator action;
 - the LingBot adapter reports `commerciallyCleared: false` and cannot run until
   an operator supplies the exact research acknowledgement and configures an
   isolated runner with the pinned checkpoint and SHA-256 digest; the new private
-  Modal deployment is an explicit operator action and remains unverified;
+  Modal deployment is an explicit operator action; its generated-input diagnostic
+  and live Render integration are verified in `docs/MODAL_QA.md` and
+  `docs/RENDER_QA.md`, without establishing real-capture quality or commercial rights;
 - there is no payment or billing path for LingBot inference;
 - research outputs carry `NOASSERTION` rather than an invented commercial
   license; and
@@ -74,4 +76,6 @@ on commercially cleared data if those grants cannot be obtained.
 
 This recheck did not provide checkpoint-specific written confirmation, review
 every training dataset grant, or clear the product for commercial launch. No
-research enablement, billing or deployment gate was changed.
+research enablement, billing or deployment gate was changed by this source
+recheck. Subsequent operator research enablement and diagnostics are recorded
+in the deployment evidence; the commercial clearance decision is unchanged.

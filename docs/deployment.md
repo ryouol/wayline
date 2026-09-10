@@ -84,9 +84,10 @@ prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
 Render deployment, a generated-input GPU round trip, download/share expiry and
 revocation, visitor isolation and redeploy persistence passed; see [live QA](RENDER_QA.md).
-The app runs commit `d3a6989`. Real Google sign-in, an owned capture, operator
-legal/contact identity, provider budgets and upstream logging/edge-limit checks
-remain pending. Render holds a private personal-workspace Modal credential; it
+The app runs commit `8e13910`. Google signup/returning login/logout passed in
+`wayline-roy-20260910`; the initial signup ceiling is one account. An owned
+capture, second-account switching, public Google branding, operator legal/contact
+identity, provider budgets and upstream logging/edge-limit checks remain pending. Render holds a private personal-workspace Modal credential; it
 is not scoped to one app. No credentials appear in Git or browser assets.
 
 The production image passes `scripts/smoke_container.py` with a read-only root,
@@ -178,10 +179,12 @@ idempotently generated share, proving the secret and database travel together.
 
 Snapshots contain private captures and capability material. Encrypt and copy them
 off the application disk with restricted access; verify a restore before switching
-the live data path. A local snapshot is not offsite disaster recovery. The actual
-Render maintenance/export procedure, encrypted offsite destination, automation,
-retention and recovery objectives still need to be configured and tested on the
-chosen account. Render's automatic disk snapshots alone do not close this gate.
+the live data path. On 2026-09-10 a pre-start Render maintenance snapshot and
+separate server-environment export were encrypted to the operator's Mac. An
+isolated Linux restore served the original artifact with its exact hash; see
+[recovery procedure and evidence](RECOVERY_QA.md). Automation, retention, alerting,
+separate key escrow and an isolated Render recovery drill remain open. Render's
+automatic disk snapshots alone do not close this gate.
 
 ## Observability required before public launch
 

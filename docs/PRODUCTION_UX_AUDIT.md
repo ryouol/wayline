@@ -81,7 +81,7 @@ Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webma
 | Loading states | ✅ Busy state, upload/queue/progress/viewer feedback. API calls bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation bounded. |
 | Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. |
 | Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
-| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ⚠️ Real Google/Render and owned-capture flows remain pending. |
+| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ✅ Live Render diagnostic and owner Google signup/returning-login/logout passed (`RENDER_QA.md`). ⚠️ Second-Google-account and owned-capture flows remain pending. |
 | Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. ⚠️ Real Google callback/domain awaiting setup. |
 | Clickable logo | ✅ Home link across product/support/shared pages. |
 | Placeholder text/unused navigation | ✅ Fake product copy removed; explicit operator TODO disclosures retained. Research settings remain secondary. |
@@ -134,7 +134,7 @@ Changed: public copy, CSS, markup, brand assets, metadata/manifest, CLI product 
 2. Same file: approved terms, entity, jurisdiction, billing/refund/acceptable-use/liability rules.
 3. Same file: support email/mailto, phone/tel or explicit no-phone-support policy, legal entity/address.
 4. Same file and `static/site.js`: approved analytics measurement ID and an implemented/audited same-origin collector; update policy/consent before enabling.
-5. `static/index.html`: approved `LINGBOT_PUBLIC_BASE_URL` for absolute public metadata.
-6. Provider setup: Render host/secrets, Google client/callback, scoped Modal credential for Render, owned acceptance capture, spend alerts and encrypted offsite backup destination. Local Modal authentication is complete.
+5. Final custom domain, if desired. `LINGBOT_PUBLIC_BASE_URL` currently supplies the working Render HTTPS hostname for absolute metadata.
+6. Remaining provider setup: scoped Modal credentials/budgets, owned acceptance capture, spend alerts, automatic offsite backups/retention and separate key escrow. Render hosting, the Google client/callback, and a manual encrypted export plus isolated Linux restore are verified (`RENDER_QA.md`, `RECOVERY_QA.md`).
 
 See `launch-readiness.md` for remaining deployment, mobile, model-quality and rights gates. These unresolved items prevent claiming the full requested product is finished.

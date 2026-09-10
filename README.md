@@ -5,13 +5,16 @@ Upload a short walkthrough, follow its processing stages, explore the resulting
 point cloud, replay the captured camera path frame by frame, and download or
 share the scene.
 
-**Current verification boundary:** the synthetic playground works locally.
-The private Modal runner is deployed and its original checkpoint is verified.
-An actual GPU diagnostic reconstructed a generated test-pattern video and passed
-API/download/share checks plus browser replay/walking. This does not establish
-quality on a real capture; see [the measured evidence](docs/MODAL_QA.md).
-Google OAuth remains unverified against a configured client, and the Render
-Blueprint is not a deployed website. Public signup and video testing are not live.
+**Current verification boundary:** [the Render preview](https://wayline-9ten.onrender.com)
+is live. Visitors can use isolated synthetic playgrounds. The private Modal runner
+uses the verified original checkpoint; a generated-video GPU diagnostic passed
+upload/download/share and browser replay/walking checks. Google signup, returning
+login and logout passed for the owner; the account ceiling is currently one while
+acceptance continues. The owner's free-video allowance is unused.
+An encrypted export of the deployed database, objects and secrets passed an
+isolated Linux restore. Real-capture quality, physical mobile testing, automated
+backup retention and public-launch rights/policies remain open. See
+[live verification](docs/RENDER_QA.md) and [recovery evidence](docs/RECOVERY_QA.md).
 
 Original LingBot model code, checkpoint attribution, package identifiers and
 upstream license notices remain intact. Wayline is the product name; it is not

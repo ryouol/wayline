@@ -2,7 +2,8 @@
 
 Wayline is deployed at <https://wayline-9ten.onrender.com>. Public visitors can
 create isolated synthetic playgrounds. Operator-authenticated reconstruction
-uses the private original-model Modal worker. Google signup remains disabled.
+uses the private original-model Modal worker. Google signup, returning login and
+logout are verified for the owner; the initial account ceiling is one.
 This is a deployed research preview, not completed public-launch acceptance.
 
 ## Deployment
@@ -10,9 +11,12 @@ This is a deployed research preview, not completed public-launch acceptance.
 - Project **Wayline**, environment **Production**, service `srv-dahhn0u7bikc73e82h9g`.
 - Starter, one instance, Ohio, 5 GB persistent disk; automatic deployments,
   previews and autoscaling are off. Fixed hosting is $8.25/month before tax/usage.
-- Application commit `d3a6989899bd5e369df62db4e1fb83e73d1bbf74`;
-  deploy `dep-dahifeqfngtc739s0pog` reached live at 21:58 UTC.
-- [CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34534857893).
+- Current application commit `8e1391012766d6eacb518cd51c6ba3a40fbe10f6`;
+  deploy `dep-dahj0sek1f9s73fgcvu0` is live with normal Docker startup restored.
+  The SSH directory is owned by UID 10001 with mode `0700`.
+- [Current CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34537748484).
+  The initial application deployment also
+  [passed CI](https://github.com/ryouol/lingbot-map/actions/runs/34534857893).
   The preceding disk-fix commit also passed
   [CI](https://github.com/ryouol/lingbot-map/actions/runs/34533934729).
 - Private data is `/data/wayline`, below Render's root-owned `/data` mount.
@@ -25,7 +29,7 @@ This is a deployed research preview, not completed public-launch acceptance.
 
 - HTTPS and canonical `/healthz` return 200; anonymous `/api/me` returns 401;
   production OpenAPI is unavailable. Public configuration advertises the 64 MiB
-  upload and 60-second video limits and disabled Google signup.
+  upload and 60-second video limits. Google sign-in is now enabled.
 - Two sequential operator samples and two sequential browser visitor samples
   reached READY. The browser rendered 5,908 points after canvas teardown/recreation.
 - A generated MP4 uploaded through the live API and reconstructed through Modal.
@@ -76,12 +80,36 @@ After completion, Modal reported zero backlog, running inputs and containers;
 the Wayline capture volume listing contained zero entries. Timings are not billed
 duration and do not establish quality or performance on an owned room capture.
 
-## Remaining gates
+## Google identity verification
 
-Google OAuth provisioning was attempted in the personal console, but no accessible
-Wayline project was verified; the console reported missing project/OAuth access.
-No client credentials were created, and signup remains disabled. The corporate
-Google CLI account and unrelated projects were not modified.
+The dedicated personal Google project `wayline-roy-20260910` (Wayline Auth) and
+Web OAuth client are configured with exactly
+`https://wayline-9ten.onrender.com/auth/google/callback`. The earlier generic
+project attempt was not verified; the unique project was created successfully.
+The corporate Google CLI account and unrelated projects were not modified.
+Only `openid email profile` scopes are requested. Client credentials are private
+Render environment settings and are included in the encrypted recovery export.
+Google's brand remains in Testing; public brand/policy verification is unfinished.
+
+The owner completed real Google consent, entered a new private workspace,
+generated a 5,908-point sample, logged out with viewer cleanup, and returned via
+Google to the same saved scene. The database contains one Google identity with
+120 available units and zero reserved/consumed units; the free video remains
+unused. `WAYLINE_SIGNUP_MAX_ACCOUNTS=1` limits this first acceptance stage.
+This is a total-account ceiling, not an email allowlist. Google's basic-identity
+[scope exception](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)
+means Testing alone is not a reliable application access gate.
+Second-Google-account switching and the owner's actual video are still untested.
+
+## Recovery verification
+
+An offline snapshot of the live Render workspace was exported encrypted and
+restored into an isolated Linux container. All 18 files verified; the original
+READY job, exact 7,819,504-byte GLB, share secret, authentication and new share
+access passed. Normal service startup was restored and the temporary server
+script removed. See [the procedure and limits](RECOVERY_QA.md).
+
+## Remaining gates
 
 Modal's shared Starter workspace showed a $200 usage limit, no custom spend
 limit, and $29.77 credits at inspection. Those are account-wide observations,
@@ -90,8 +118,9 @@ workspace. The Render integration uses a private personal-workspace API token;
 it is not scoped to one app. Service-user/RBAC options require a paid plan.
 Separate project credentials/budgets remain a hardening item before public signup.
 
-An owned real capture, Google signup/account switching, physical mobile QA,
-running-inference cancellation/failure cleanup, deployed offsite backup/restore,
+An owned real capture, second-Google-account switching, physical mobile QA,
+running-inference cancellation/failure cleanup, automated backup/retention and
+an isolated Render recovery drill,
 upstream logging/edge limits, hosted-use rights and approved operator legal/contact
 details remain open. See [launch readiness](launch-readiness.md),
 [operating costs](operating-costs.md) and the [UX checklist](PRODUCTION_UX_AUDIT.md).

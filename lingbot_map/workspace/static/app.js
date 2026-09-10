@@ -6,8 +6,9 @@ const state = {
   viewerArtifact: null, pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(),
   principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
-  jobsRenderKey: "",
+  jobsRenderKey: "", accountType: "operator", config: null,
 };
+const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
 const stageOrder = ["queued", "validating", "generating", "reconstructing", "exporting", "storing", "ready"];
 const sessionChannel = "BroadcastChannel" in window
@@ -45,7 +46,7 @@ async function api(path, options = {}) {
   byId("requestStatus").hidden = false;
   document.body.setAttribute("aria-busy", "true");
   let timedOut = false;
-  const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 60000);
+  const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 60000);
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -164,6 +165,8 @@ function clearDetail() {
   byId("viewerStatus").textContent = "Waiting for a scene.";
   byId("cancelButton").hidden = true;
   byId("deleteButton").hidden = true;
+  stopPlayback();
+  timeline.attach(null);
   if (state.viewer) state.viewer.destroy();
   state.viewer = null;
   state.viewerArtifact = null;
@@ -203,6 +206,8 @@ function secureReset() {
   byId("loginMessage").textContent = "";
   byId("token").value = "";
   byId("video").value = "";
+  byId("selectedFilename").textContent = "Choose a video";
+  byId("researchMessage").textContent = "";
   byId("shareUrl").value = "";
   if (byId("shareDialog").open) byId("shareDialog").close();
   byId("emptyJobs").hidden = false;
@@ -221,7 +226,7 @@ function showLogin() {
   byId("appView").hidden = true;
   byId("mobileWorkspaceCta").hidden = true;
   byId("skipLink").href = "#loginTitle";
-  byId("token").focus();
+  byId("trialButton").focus();
 }
 
 function showApp(user, csrfToken) {
@@ -229,11 +234,18 @@ function showApp(user, csrfToken) {
   if (state.principal && state.principal !== principal) secureReset();
   state.principal = principal;
   state.csrf = csrfToken || "";
+  state.accountType = user.accountType || "operator";
+  byId("shareButton").hidden = state.accountType === "trial";
+  renderAccountActions();
   byId("loginView").hidden = true;
   byId("appView").hidden = false;
   byId("mobileWorkspaceCta").hidden = false;
   byId("skipLink").href = "#workspaceMain";
   byId("workspaceName").textContent = `${user.tenantName} · ${user.displayName}`;
+}
+
+function renderAccountActions() {
+  byId("saveWorkspace").hidden = state.accountType !== "trial" || !state.config?.googleSignIn;
 }
 
 function toast(message) {
@@ -288,7 +300,7 @@ function renderJobs() {
     button.setAttribute("aria-current", String(job.id === state.selectedId));
     const name = document.createElement("span");
     name.className = "job-name";
-    name.textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Research reconstruction";
+    name.textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Captured space";
     const jobState = document.createElement("span");
     jobState.className = "job-state";
     jobState.textContent = job.state;
@@ -513,10 +525,11 @@ async function renderJobDetail() {
   if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;
-  byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample engine" : "LingBot research adapter";
-  byId("detailTitle").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Research reconstruction";
+  byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample engine" : "RECONSTRUCTED WITH LINGBOT-MAP";
+  byId("detailTitle").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Captured space";
   byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)} · attempt ${job.attempt}`;
   const percent = Math.round(job.progress * 100);
+  document.querySelector(".progress-section").classList.toggle("is-ready", job.state === "ready");
   byId("progressPercent").textContent = `${percent}%`;
   byId("progressBar").value = percent;
   byId("progressBar").textContent = `${percent}%`;
@@ -553,13 +566,19 @@ async function renderJobDetail() {
     try {
       if (!state.viewer) state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
       if (state.viewerArtifact !== scene.id) {
-        await state.viewer.load(scene.viewUrl);
+        timeline.attach(null);
+        const viewer = state.viewer, epoch = state.epoch;
+        await viewer.load(scene.viewUrl);
+        if (state.viewer !== viewer || state.epoch !== epoch || state.selectedId !== job.id) return;
         state.viewerArtifact = scene.id;
+        renderTimeline();
       }
     } catch (error) {
-      byId("viewerStatus").textContent = error.message;
+      if (state.selectedId === job.id && error.name !== "AbortError") byId("viewerStatus").textContent = error.message;
     }
   } else if (state.viewer) {
+    stopPlayback();
+    timeline.attach(null);
     state.viewer.destroy();
     state.viewer = null;
     state.viewerArtifact = null;
@@ -571,11 +590,12 @@ async function loadEngines() {
   state.engine = result.engines.find((engine) => engine.id === "lingbot-research-v1");
   const enabled = Boolean(state.engine?.available);
   byId("researchButton").disabled = !enabled;
-  byId("researchStatus").textContent = enabled ? "Enabled for research" : "Disabled";
+  byId("researchStatus").textContent = enabled ? "GPU runner configured" : "Reconstruction unavailable";
   byId("researchStatus").classList.toggle("available", enabled);
   byId("researchReason").textContent = enabled
-    ? "Research mode is explicitly enabled. Outputs remain non-commercial until rights are cleared."
-    : (state.engine?.unavailableReasons.join(" · ") || "Research adapter is unavailable.");
+    ? "Your capture is processed privately. Research preview; no payment required."
+    : (state.accountType === "trial" && state.config?.googleSignIn ? "Sign in with Google to reconstruct your own capture."
+      : "The GPU runner is not connected yet. You can explore the sample while setup is completed.");
 }
 
 async function initialize() {
@@ -636,7 +656,7 @@ byId("sampleButton").addEventListener("click", async () => {
     toast(error.message);
   } finally {
     button.disabled = false;
-    button.textContent = "Create synthetic scene";
+    button.textContent = "Create synthetic scene ↗";
   }
 });
 
@@ -644,6 +664,10 @@ byId("researchForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const file = byId("video").files[0];
   if (!file) return;
+  if (state.config && file.size > state.config.maxUploadBytes) {
+    byId("researchMessage").textContent = `Choose a video smaller than ${formatBytes(state.config.maxUploadBytes)}.`;
+    return;
+  }
   const button = byId("researchButton");
   let asset = null;
   button.disabled = true;
@@ -651,7 +675,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
   try {
     const body = new FormData();
     body.append("file", file);
-    asset = await api("/api/assets", { method: "POST", body, idempotent: true });
+    asset = await api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 });
     byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     const job = await api("/api/jobs/research", {
       method: "POST",
@@ -755,4 +779,51 @@ byId("bulkDeleteButton").addEventListener("click", async () => {
   finally { updateSelectionSummary(); }
 });
 
+function stopPlayback() { timeline.stop(); }
+function renderTimeline() { timeline.attach(state.viewer); }
+function wholeSpace() { timeline.wholeSpace(); }
+byId("resetView").addEventListener("click", wholeSpace);
+byId("zoomIn").addEventListener("click", () => { stopPlayback(); state.viewer?.zoom(0.8); });
+byId("zoomOut").addEventListener("click", () => { stopPlayback(); state.viewer?.zoom(1.25); });
+byId("fullScreen").addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else if (document.querySelector(".viewport-wrap").requestFullscreen) await document.querySelector(".viewport-wrap").requestFullscreen();
+    else toast("Full screen is unavailable in this browser. Rotate your phone for a wider view.");
+  } catch (_) { toast("Full screen is unavailable in this browser."); }
+});
+byId("video").addEventListener("change", () => {
+  const file = byId("video").files[0];
+  byId("selectedFilename").textContent = file ? file.name : "Choose a video";
+  byId("researchMessage").textContent = file ? `${formatBytes(file.size)} · ready to upload` : "";
+});
+byId("trialButton").addEventListener("click", async () => {
+  const button = byId("trialButton"); button.disabled = true;
+  byId("trialMessage").textContent = "Opening your private playground…";
+  try {
+    const result = await api("/api/trial", { method: "POST" });
+    showApp(result.user, result.csrfToken); broadcastSession("session-changed");
+    await Promise.all([loadEngines(), loadJobs(), loadInventory()]);
+    byId("sampleButton").click();
+    byId("workspaceMain").focus();
+  } catch (error) { byId("trialMessage").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+async function loadPublicConfig() {
+  try {
+    const response = await fetch("/api/config");
+    if (!response.ok) throw new Error("Sign-in options could not be loaded. Refresh to retry.");
+    state.config = await response.json();
+    renderAccountActions();
+    byId("googleLogin").hidden = !state.config.googleSignIn;
+    byId("trialButton").hidden = !state.config.trialEnabled;
+    byId("trialButton").classList.toggle("secondary", state.config.googleSignIn);
+    byId("trialButton").classList.toggle("primary", !state.config.googleSignIn);
+    byId("onboardingStatus").textContent = state.config.googleSignIn
+      ? "A private workspace. One video to start. No card needed."
+      : "Try the synthetic sample. Google sign-in is being connected.";
+    if (new URLSearchParams(location.search).get("signin") === "cancelled") byId("trialMessage").textContent = "Google sign-in was cancelled. You can try again.";
+  } catch (error) { byId("onboardingStatus").textContent = error.message; }
+}
+loadPublicConfig();
 initialize();

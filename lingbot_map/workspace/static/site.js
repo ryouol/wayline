@@ -19,7 +19,7 @@
   const footer = document.createElement("footer");
   footer.className = "site-footer";
   const label = document.createElement("span");
-  label.textContent = `© ${new Date().getFullYear()} 3D Scene Workspace`;
+  label.textContent = `© ${new Date().getFullYear()} Wayline`;
   footer.append(label);
   for (const [name, href] of [["Privacy", "/privacy"], ["Terms", "/terms"], ["Contact", "/contact"]]) {
     const link = document.createElement("a"); link.textContent = name; link.href = href; footer.append(link);

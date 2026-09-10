@@ -81,6 +81,15 @@ class Settings:
     skyseg_path: Path | None = None
     skyseg_sha256: str = ""
     skyseg_max_bytes: int = 512 * 1024 * 1024
+    modal_enabled: bool = False
+    modal_gpu_seconds_budget: int = 14_400
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    signup_enabled: bool = False
+    trial_enabled: bool = True
+    signup_max_accounts: int = 100
+    trial_max_accounts: int = 100
+    signup_quota_units: int = 120
     generated_bootstrap_token: bool = field(default=False, compare=False)
 
     @classmethod
@@ -160,12 +169,31 @@ class Settings:
             skyseg_path=Path(skyseg).expanduser().resolve() if skyseg else None,
             skyseg_sha256=os.getenv("LINGBOT_SKYSEG_SHA256", "").lower(),
             skyseg_max_bytes=int(os.getenv("LINGBOT_SKYSEG_MAX_BYTES", str(512 * 1024 * 1024))),
+            modal_enabled=_bool_env("WAYLINE_MODAL_ENABLED"),
+            modal_gpu_seconds_budget=int(os.getenv("WAYLINE_GPU_SECONDS_BUDGET", "14400")),
+            google_client_id=os.getenv("WAYLINE_GOOGLE_CLIENT_ID", ""),
+            google_client_secret=os.getenv("WAYLINE_GOOGLE_CLIENT_SECRET", ""),
+            signup_enabled=_bool_env("WAYLINE_SIGNUP_ENABLED"),
+            trial_enabled=_bool_env("WAYLINE_TRIAL_ENABLED", True),
+            signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "100")),
+            trial_max_accounts=int(os.getenv("WAYLINE_TRIAL_MAX_ACCOUNTS", "100")),
+            signup_quota_units=int(os.getenv("WAYLINE_SIGNUP_QUOTA_UNITS", "120")),
             generated_bootstrap_token=generated,
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if self.modal_enabled and self.job_timeout_seconds > 3600:
+            raise ValueError("Modal jobs require LINGBOT_JOB_TIMEOUT_SECONDS <= 3600")
+        if self.modal_gpu_seconds_budget < 600:
+            raise ValueError("GPU budget must permit at least one bounded job")
+        if min(self.signup_max_accounts, self.trial_max_accounts, self.signup_quota_units) < 1:
+            raise ValueError("Wayline account and usage limits must be positive")
+        if self.signup_enabled and not (
+            self.google_client_id and self.google_client_secret and self.public_base_url
+        ):
+            raise ValueError("Google sign-up requires client credentials and a public base URL")
         if self.environment not in {"development", "test", "production"}:
             raise ValueError("LINGBOT_ENV must be development, test, or production")
         if self.environment == "production":

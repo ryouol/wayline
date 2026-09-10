@@ -281,18 +281,35 @@ def test_complete_sample_view_download_share_and_delete(authenticated_client, se
     )
     assert share.status_code == 201
     share_path = share.json()["url"]
-    token = share_path.rsplit("/", 1)[-1]
-    public = authenticated_client.get(f"/api/public/shares/{token}")
+    token = share_path.split("#", 1)[1]
+    assert share_path.startswith("/s#")
+    assert authenticated_client.get("/s").status_code == 200
+    assert authenticated_client.get("/api/public/share").status_code == 404
+    assert authenticated_client.get("/api/public/share/content").status_code == 404
+    assert authenticated_client.get("/api/public/share?token=" + token).status_code == 404
+    public = authenticated_client.get(
+        "/api/public/share", headers={"Authorization": f"Bearer {token}"}
+    )
     assert public.status_code == 200
+    assert token not in str(public.url)
+    assert public.headers["cache-control"] == "no-store"
+    assert token not in public.text
     assert public.json()["artifact"]["licenseId"] == "CC0-1.0"
-    public_content = authenticated_client.get(f"/api/public/shares/{token}/content")
+    public_content = authenticated_client.get(
+        "/api/public/share/content", headers={"Authorization": f"Bearer {token}"}
+    )
     assert public_content.content[:4] == b"glTF"
 
     deleted = authenticated_client.delete(f"/api/jobs/{job_id}")
     assert deleted.status_code == 202
     assert deleted.json()["state"] == "deleting"
     assert authenticated_client.get(scene["viewUrl"]).status_code == 404
-    assert authenticated_client.get(f"/api/public/shares/{token}").status_code == 404
+    assert (
+        authenticated_client.get(
+            "/api/public/share", headers={"Authorization": f"Bearer {token}"}
+        ).status_code
+        == 404
+    )
     assert list((service.settings.data_dir / "objects").rglob("*.glb")) == []
 
 

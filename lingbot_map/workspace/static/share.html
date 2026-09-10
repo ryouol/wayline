@@ -11,7 +11,7 @@
   <main class="share-shell">
     <header class="share-header">
       <div>
-        <a class="product-kicker brand-link" href="/">3D Scene Workspace</a>
+        <a class="product-kicker brand-link" href="/">Wayline</a>
         <h1 id="shareTitle">Shared scene</h1>
       </div>
       <span class="status-label" id="shareLicense">Loading</span>
@@ -25,13 +25,25 @@
         <p class="viewer-help">Drag to orbit · scroll to zoom · arrow keys supported</p>
       </div>
       <canvas id="sharedCanvas" class="scene-canvas share-canvas" tabindex="0" aria-label="Interactive shared 3D point-cloud viewer."></canvas>
+      <div class="playback-actions shared-view-controls" aria-label="Scene controls">
+        <button class="secondary" id="sharedZoomIn" type="button" aria-label="Zoom in">+</button>
+        <button class="secondary" id="sharedZoomOut" type="button" aria-label="Zoom out">−</button>
+        <button class="secondary" id="sharedReset" type="button">Reset view</button>
+      </div>
+      <div class="timeline" id="sharedTimeline" hidden>
+        <div class="timeline-top"><div><p class="section-label">RETRACE THE CAPTURE</p><span class="frame-counter">Source frames</span></div>
+          <div class="playback-actions"><button class="secondary play-path" type="button">Play path</button><button class="secondary show-all" type="button">Whole space</button></div></div>
+        <label class="sr-only" for="sharedScrubber">Source frame</label><input id="sharedScrubber" type="range" min="0" max="0" value="0" step="1">
+        <div class="filmstrip" aria-label="Source frames"></div>
+      </div>
       <p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p>
       <p class="legal-note research-warning" id="shareCommercialWarning" role="note" hidden></p>
-      <a class="secondary" id="sharedDownload" hidden>Download artifact</a>
+      <button class="secondary" id="sharedDownload" type="button" hidden>Download GLB</button>
       <p class="legal-note" id="shareExpiry"></p>
     </section>
   </main>
   <script src="/static/viewer.js"></script>
+  <script src="/static/timeline.js"></script>
   <script src="/static/share.js"></script>
   <script src="/static/site.js"></script>
 </body>

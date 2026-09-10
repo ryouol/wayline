@@ -14,8 +14,9 @@ Consequently:
 - the hosted workspace ships with only the deterministic `synthetic-studio-v1`
   sample enabled;
 - the LingBot adapter reports `commerciallyCleared: false` and cannot run until
-  an operator supplies the exact research acknowledgement, an isolated runner,
-  a checkpoint path, and a pinned SHA-256 digest;
+  an operator supplies the exact research acknowledgement and configures an
+  isolated runner with the pinned checkpoint and SHA-256 digest; the new private
+  Modal deployment is an explicit operator action and remains unverified;
 - there is no payment or billing path for LingBot inference;
 - research outputs carry `NOASSERTION` rather than an invented commercial
   license; and

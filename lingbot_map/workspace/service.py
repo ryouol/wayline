@@ -35,6 +35,8 @@ from .engines import (
     cleanup_result,
     engine_registry,
 )
+from .identity import IdentityStore
+from .modal_engine import ModalLingbotEngine
 from .storage import LocalObjectStore, ObjectStore, ObjectTooLarge, StoredObject
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,10 @@ class UploadRejected(ValueError):
     def __init__(self, message: str, *, status_code: int = 400):
         super().__init__(message)
         self.status_code = status_code
+
+
+class InvalidEngineParameters(ValueError):
+    pass
 
 
 def safe_filename(value: str | None) -> str:
@@ -117,12 +123,20 @@ class WorkspaceService:
         self.store: ObjectStore = store or LocalObjectStore(settings.data_dir / "objects")
         self.inspector = inspector or VideoInspector()
         self.engines = engines or engine_registry(settings)
+        self._remote_cleaner = ModalLingbotEngine(settings)
         self.work_root = settings.data_dir / "work"
         self.work_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.work_root.chmod(0o700)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
+        self._research_worker: threading.Thread | None = None
+        self._research_engines = tuple(
+            name for name, engine in self.engines.items() if engine.descriptor.research_only
+        )
+        self._sample_engines = tuple(
+            name for name in self.engines if name not in self._research_engines
+        )
         self._worker_id = f"worker_{uuid.uuid4().hex}"
         self._maintenance_at = 0.0
         self._full_maintenance_at = 0.0
@@ -200,16 +214,25 @@ class WorkspaceService:
         self._worker = threading.Thread(
             target=self._worker_loop, name="workspace-worker", daemon=True
         )
+        self._research_worker = threading.Thread(
+            target=self._worker_loop,
+            kwargs={"research": True},
+            name="reconstruction-worker",
+            daemon=True,
+        )
+        self._research_worker.start()
         self._worker.start()
 
     def stop_worker(self) -> None:
         self._stop.set()
         self._wake.set()
-        if self._worker:
-            self._worker.join(timeout=self.settings.shutdown_timeout_seconds)
-            if self._worker.is_alive():
+        deadline = time.monotonic() + self.settings.shutdown_timeout_seconds
+        for worker in (self._worker, self._research_worker):
+            if worker:
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+            if worker and worker.is_alive():
                 raise RuntimeError("worker did not stop within the configured shutdown deadline")
-            self._worker = None
+        self._worker = self._research_worker = None
 
     def engine_descriptors(self) -> list[dict[str, Any]]:
         values = []
@@ -507,7 +530,10 @@ class WorkspaceService:
         metadata = None
         if asset_id:
             metadata = self.database.get_asset(tenant_id, asset_id)["metadata"]
-        reservation = engine.estimate_units(metadata, params)
+        try:
+            reservation = engine.estimate_units(metadata, params)
+        except ValueError as error:
+            raise InvalidEngineParameters(str(error)) from error
         with self.database.transaction() as connection:
             request_hash, replay = self._idempotency_begin(
                 tenant_id,
@@ -540,11 +566,20 @@ class WorkspaceService:
         self._wake.set()
         return job
 
-    def _worker_loop(self) -> None:
+    def _worker_loop(self, *, research: bool = False) -> None:
         consecutive_failures = 0
+        cleanup_at = 0.0
         while not self._stop.is_set():
             try:
-                processed = self._worker_iteration()
+                if research:
+                    if time.monotonic() - cleanup_at >= 60:
+                        self._remote_cleaner.cleanup_remote_runs()
+                        cleanup_at = time.monotonic()
+                    processed = not self._stop.is_set() and self.process_next_job(
+                        engine_ids=self._research_engines
+                    )
+                else:
+                    processed = self._worker_iteration()
             except Exception:
                 consecutive_failures += 1
                 delay = min(
@@ -583,13 +618,14 @@ class WorkspaceService:
             self._full_maintenance_at = now
         if self._stop.is_set():
             return False
-        return self.process_next_job()
+        return self.process_next_job(engine_ids=self._sample_engines)
 
-    def process_next_job(self) -> bool:
+    def process_next_job(self, *, engine_ids: tuple[str, ...] | None = None) -> bool:
         job = self.database.claim_next_job(
             worker_id=self._worker_id,
             lease_seconds=self.settings.job_timeout_seconds,
             max_attempts=self.settings.max_job_attempts,
+            engine_ids=engine_ids,
         )
         if job is None:
             return False
@@ -654,7 +690,11 @@ class WorkspaceService:
                 self._claim_object(
                     tenant_id,
                     key,
-                    reserve_bytes=self.settings.max_artifact_bytes,
+                    reserve_bytes=(
+                        min(len(artifact.payload), self.settings.max_artifact_bytes)
+                        if artifact.payload is not None
+                        else self.settings.max_artifact_bytes
+                    ),
                     purpose="artifact",
                 )
                 stored: StoredObject | None = None
@@ -1059,10 +1099,12 @@ class WorkspaceService:
 
     def run_retention(self) -> dict[str, int]:
         now = time.time()
-        return self.database.run_retention(
+        expired_trials = IdentityStore(self.database).expire_trials()
+        result = self.database.run_retention(
             terminal_before=now - self.settings.terminal_job_retention_seconds,
             unattached_before=now - self.settings.unattached_asset_retention_seconds,
         )
+        return {**result, "expiredTrials": expired_trials}
 
     def reconcile_storage(self) -> dict[str, int]:
         stored = set(self.store.iter_keys("tenants"))
@@ -1089,14 +1131,20 @@ class WorkspaceService:
             "status": "ok",
             "database": str(self.database.path),
             "storage": type(self.store).__name__,
-            "worker": bool(self._worker and self._worker.is_alive()),
+            "worker": self._workers_alive(),
         }
+
+    def _workers_alive(self) -> bool:
+        return all(
+            worker is not None and worker.is_alive()
+            for worker in (self._worker, self._research_worker)
+        )
 
     def ready(self, *, require_worker: bool) -> bool:
         """Check the durable dependencies without exposing their paths."""
 
         now = time.monotonic()
-        worker_ready = not require_worker or bool(self._worker and self._worker.is_alive())
+        worker_ready = not require_worker or self._workers_alive()
         if not worker_ready or self._reconciliation_missing:
             return False
         with self._readiness_lock:

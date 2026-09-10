@@ -76,7 +76,7 @@ def test_cross_site_logout_is_rejected(authenticated_client):
 @pytest.mark.parametrize(
     "path,title",
     [
-        ("/", "3D Scene Workspace"),
+        ("/", "Wayline"),
         ("/privacy", "Privacy"),
         ("/terms", "Terms"),
         ("/contact", "Contact"),

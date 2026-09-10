@@ -448,7 +448,12 @@ class LingbotResearchEngine(ReconstructionEngine):
 
 
 def engine_registry(settings: Settings) -> dict[str, ReconstructionEngine]:
-    engines: list[ReconstructionEngine] = [SyntheticSampleEngine(), LingbotResearchEngine(settings)]
+    from .modal_engine import ModalLingbotEngine
+
+    engine = (
+        ModalLingbotEngine(settings) if settings.modal_enabled else LingbotResearchEngine(settings)
+    )
+    engines: list[ReconstructionEngine] = [SyntheticSampleEngine(), engine]
     return {engine.descriptor.id: engine for engine in engines}
 
 

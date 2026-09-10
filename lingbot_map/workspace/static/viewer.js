@@ -36,9 +36,14 @@
       offset = start + length;
     }
     if (!document || !binary) throw new Error("Artifact must include JSON and binary chunks.");
-    const primitive = document.meshes?.[0]?.primitives?.find((item) => item.mode === 0);
-    if (!primitive || primitive.attributes?.POSITION == null) {
-      throw new Error("This viewer currently supports GLB point-cloud primitives.");
+    const node = document.nodes?.[0];
+    const primitive = document.meshes?.[0]?.primitives?.[0];
+    if (document.meshes?.length !== 1 || document.nodes?.length !== 1
+        || document.meshes[0].primitives?.length !== 1 || node.mesh !== 0
+        || ["matrix", "translation", "rotation", "scale", "children"].some((key) => key in node)
+        || !primitive || primitive.mode !== 0 || primitive.indices != null
+        || primitive.material != null || primitive.attributes?.POSITION == null) {
+      throw new Error("This viewer requires one point cloud with baked coordinates and vertex colors.");
     }
 
     function readAccessor(index) {
@@ -102,7 +107,39 @@
     if (colors && ![3, 4].includes(colors.width)) {
       throw new Error("Point colors must use RGB or RGBA values.");
     }
-    return { positions, colors };
+    if (colors && (colors.count !== positions.count || colors.values.some((value) => !Number.isFinite(value) || value < 0 || value > 1))) {
+      throw new Error("Point colors must match the scene and use finite normalized values.");
+    }
+    const trace = document.extras?.wayline;
+    if (trace != null) {
+      if (trace.version !== 1 || trace.kind !== "reconstruction" || trace.coordinateSystem !== "gltf-y-up"
+          || trace.pointCount !== positions.count || !Array.isArray(trace.frames)
+          || trace.frames.length < 2 || trace.frames.length > 120) throw new Error("Invalid camera trace.");
+      let lastTime = -1, lastPoint = 0;
+      for (const frame of trace.frames) {
+        if (!Number.isFinite(frame.time) || frame.time <= lastTime || !Number.isInteger(frame.pointEnd)
+            || frame.pointEnd < lastPoint || frame.pointEnd > positions.count
+            || !Number.isFinite(frame.fov) || frame.fov <= 0 || frame.fov >= Math.PI
+            || !Array.isArray(frame.imageSize) || frame.imageSize.length !== 2
+            || !frame.imageSize.every((value) => Number.isInteger(value) && value > 0 && value <= 4096)
+            || !Array.isArray(frame.intrinsics) || frame.intrinsics.length !== 4
+            || !frame.intrinsics.every(Number.isFinite) || frame.intrinsics[0] <= 0 || frame.intrinsics[1] <= 0
+            || ![frame.position, frame.right, frame.up, frame.forward].every(
+              (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))
+            || typeof frame.thumbnail !== "string" || frame.thumbnail.length > 100000
+            || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(frame.thumbnail)) {
+          throw new Error("Invalid source-frame data.");
+        }
+        const axes = [frame.right, frame.up, frame.forward];
+        const dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
+        if (axes.some((axis) => Math.abs(dot(axis, axis) - 1) > 0.01)
+            || Math.abs(dot(axes[0], axes[1])) > 0.01 || Math.abs(dot(axes[0], axes[2])) > 0.01
+            || Math.abs(dot(axes[1], axes[2])) > 0.01) throw new Error("Camera orientation must be orthonormal.");
+        lastTime = frame.time; lastPoint = frame.pointEnd;
+      }
+      if (lastPoint !== positions.count) throw new Error("Camera trace does not cover this scene.");
+    }
+    return { positions, colors, trace };
   }
 
   function shader(gl, type, source) {
@@ -146,14 +183,26 @@
         uniform float uDistance;
         uniform float uAspect;
         uniform float uPointSize;
+        uniform bool uCamera;
+        uniform vec3 uEye;
+        uniform vec3 uRight;
+        uniform vec3 uUp;
+        uniform vec3 uForward;
+        uniform vec4 uProjection;
         varying vec3 vColor;
         void main() {
           float cy = cos(uYaw); float sy = sin(uYaw);
           float cp = cos(uPitch); float sp = sin(uPitch);
           vec3 first = vec3(cy * aPosition.x - sy * aPosition.z, aPosition.y, sy * aPosition.x + cy * aPosition.z);
           vec3 point = vec3(first.x, cp * first.y - sp * first.z, sp * first.y + cp * first.z - uDistance);
-          float near = 0.1; float far = 100.0; float focal = 2.41421356;
-          gl_Position = vec4(point.x * focal / uAspect, point.y * focal,
+          float near = 0.001; float far = 100.0; float focal = 2.41421356;
+          if (uCamera) {
+            vec3 delta = aPosition - uEye;
+            point = vec3(dot(delta, uRight), dot(delta, uUp), -dot(delta, uForward));
+          }
+          vec2 projected = uCamera ? point.xy * uProjection.xy - point.z * uProjection.zw
+            : vec2(point.x * focal / uAspect, point.y * focal);
+          gl_Position = vec4(projected,
             ((far + near) / (near - far)) * point.z + (2.0 * far * near / (near - far)), -point.z);
           gl_PointSize = uPointSize;
           vColor = aColor;
@@ -162,9 +211,10 @@
       const fragment = shader(gl, gl.FRAGMENT_SHADER, `
         precision mediump float;
         varying vec3 vColor;
+        uniform bool uLines;
         void main() {
           vec2 offset = gl_PointCoord - vec2(0.5);
-          if (dot(offset, offset) > 0.25) discard;
+          if (!uLines && dot(offset, offset) > 0.25) discard;
           gl_FragColor = vec4(vColor, 1.0);
         }
       `);
@@ -186,21 +236,34 @@
         distance: gl.getUniformLocation(program, "uDistance"),
         aspect: gl.getUniformLocation(program, "uAspect"),
         pointSize: gl.getUniformLocation(program, "uPointSize"),
+        camera: gl.getUniformLocation(program, "uCamera"),
+        eye: gl.getUniformLocation(program, "uEye"),
+        right: gl.getUniformLocation(program, "uRight"),
+        up: gl.getUniformLocation(program, "uUp"),
+        forward: gl.getUniformLocation(program, "uForward"),
+        projection: gl.getUniformLocation(program, "uProjection"),
+        lines: gl.getUniformLocation(program, "uLines"),
       };
       this.positionBuffer = gl.createBuffer();
       this.colorBuffer = gl.createBuffer();
+      this.pathBuffer = gl.createBuffer();
     }
 
     bindControls() {
       const signal = this.events.signal;
       this.canvas.addEventListener("pointerdown", (event) => {
+        if (!this.walking) this.orbit();
         this.canvas.setPointerCapture(event.pointerId);
         this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
       }, { signal });
       this.canvas.addEventListener("pointermove", (event) => {
         if (!this.drag || event.pointerId !== this.drag.id) return;
-        this.yaw += (event.clientX - this.drag.x) * 0.008;
-        this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + (event.clientY - this.drag.y) * 0.008));
+        if (this.walking) {
+          this.lookWalk((event.clientX - this.drag.x) * 0.008, -(event.clientY - this.drag.y) * 0.008);
+        } else {
+          this.yaw += (event.clientX - this.drag.x) * 0.008;
+          this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + (event.clientY - this.drag.y) * 0.008));
+        }
         this.drag.x = event.clientX;
         this.drag.y = event.clientY;
         this.draw();
@@ -212,19 +275,29 @@
       this.canvas.addEventListener("pointercancel", stopDrag, { signal });
       this.canvas.addEventListener("wheel", (event) => {
         event.preventDefault();
-        this.distance = Math.max(1.4, Math.min(8, this.distance * Math.exp(event.deltaY * 0.001)));
-        this.draw();
+        this.zoom(Math.exp(event.deltaY * 0.001));
       }, { passive: false, signal });
       this.canvas.addEventListener("keydown", (event) => {
         const key = event.key;
+        if (this.walking) {
+          const movement = {w:[1,0], s:[-1,0], a:[0,-1], d:[0,1]};
+          const looking = {ArrowLeft:[-0.12,0], ArrowRight:[0.12,0], ArrowUp:[0,0.1], ArrowDown:[0,-0.1]};
+          if (movement[key.toLowerCase()]) {
+            event.preventDefault(); this.moveWalk(...movement[key.toLowerCase()]); return;
+          }
+          if (looking[key]) {
+            event.preventDefault(); this.lookWalk(...looking[key]); this.draw(); return;
+          }
+        }
         if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-", "0"].includes(key)) {
           event.preventDefault();
-        }
+        } else return;
+        this.orbit();
         if (key === "ArrowLeft") this.yaw -= 0.12;
         else if (key === "ArrowRight") this.yaw += 0.12;
         else if (key === "ArrowUp") this.pitch = Math.max(-1.45, this.pitch - 0.1);
         else if (key === "ArrowDown") this.pitch = Math.min(1.45, this.pitch + 0.1);
-        else if (key === "+" || key === "=") this.distance = Math.max(1.4, this.distance * 0.9);
+        else if (key === "+" || key === "=") this.distance = Math.max(0.05, this.distance * 0.9);
         else if (key === "-") this.distance = Math.min(8, this.distance * 1.1);
         else if (key === "0") { this.yaw = -0.65; this.pitch = -0.38; this.distance = 3.2; }
         else return;
@@ -232,7 +305,7 @@
       }, { signal });
     }
 
-    async load(url) {
+    async load(url, { headers = {} } = {}) {
       if (this.destroyed) throw new Error("The viewer has been closed.");
       const sequence = ++this.loadSequence;
       if (this.loadController) this.loadController.abort();
@@ -240,12 +313,19 @@
       this.status.textContent = "Loading stored point cloud.";
       const response = await fetch(url, {
         credentials: "same-origin",
+        headers,
         signal: this.loadController.signal,
       });
       if (!response.ok) throw new Error("The stored scene could not be loaded.");
       const parsed = parseGlb(await response.arrayBuffer());
       if (this.destroyed || sequence !== this.loadSequence) return;
       const raw = parsed.positions.values;
+      if (!parsed.trace) {
+        // The authored sample is Z-up; reconstruction exports are glTF Y-up.
+        for (let index = 0; index < raw.length; index += 3) {
+          const y = raw[index + 1]; raw[index + 1] = raw[index + 2]; raw[index + 2] = -y;
+        }
+      }
       const minimum = [Infinity, Infinity, Infinity];
       const maximum = [-Infinity, -Infinity, -Infinity];
       for (let index = 0; index < raw.length; index += 3) {
@@ -259,6 +339,11 @@
       }
       const center = minimum.map((value, axis) => (value + maximum[axis]) / 2);
       const extent = Math.max(...maximum.map((value, axis) => value - minimum[axis])) || 1;
+      this.trace = parsed.trace || null;
+      this.center = center;
+      this.extent = extent;
+      this.cameraFrame = null;
+      this.walking = false;
       const positions = new Float32Array(raw.length);
       for (let index = 0; index < raw.length; index += 3) {
         positions[index] = (raw[index] - center[0]) / extent * 2;
@@ -282,8 +367,89 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
       this.count = parsed.positions.count;
+      this.visibleCount = this.count;
+      if (this.trace) {
+        const path = this.trace.frames.flatMap((frame) => this.normalizePoint(frame.position));
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(path), gl.STATIC_DRAW);
+      }
       this.status.textContent = `${this.count.toLocaleString()} points loaded. Drag or use arrow keys to orbit.`;
       this.draw();
+    }
+
+    normalizePoint(point) { return point.map((value, axis) => (value-this.center[axis])/this.extent*2); }
+
+    setFrame(index) {
+      if (!this.trace || !Number.isInteger(index) || index < 0 || index >= this.trace.frames.length) return;
+      this.cameraFrame = this.trace.frames[index];
+      this.walking = false;
+      this.visibleCount = this.cameraFrame.pointEnd;
+      this.draw();
+    }
+
+    reset() {
+      this.walking = false;
+      this.cameraFrame = null; this.visibleCount = this.count;
+      this.yaw = -0.65; this.pitch = -0.38; this.distance = 3.2;
+      this.draw();
+    }
+
+    zoom(factor) {
+      if (this.walking) { this.moveWalk(factor < 1 ? 1 : -1, 0); return; }
+      this.orbit();
+      this.distance = Math.max(0.05, Math.min(8, this.distance*factor));
+      this.draw();
+    }
+
+    orbit() {
+      this.walking = false;
+      this.cameraFrame = null;
+      this.visibleCount = this.count;
+      this.canvas.dispatchEvent(new CustomEvent("viewmode", { detail: "FREE ORBIT" }));
+    }
+
+    startWalk() {
+      const frame = this.cameraFrame || this.trace?.frames[0];
+      if (!frame) return;
+      this.cameraFrame = {...frame, position: [...frame.position]};
+      this.walkYaw = Math.atan2(frame.forward[0], -frame.forward[2]);
+      this.walkPitch = Math.asin(Math.max(-1, Math.min(1, frame.forward[1])));
+      this.walking = true;
+      this.visibleCount = this.count;
+      this.lookWalk(0, 0);
+      this.canvas.dispatchEvent(new CustomEvent("viewmode", { detail: "WALK VIEW" }));
+      this.draw();
+    }
+
+    lookWalk(yaw, pitch) {
+      if (!this.walking) return;
+      this.walkYaw += yaw;
+      this.walkPitch = Math.max(-1.45, Math.min(1.45, this.walkPitch + pitch));
+      const sy = Math.sin(this.walkYaw), cy = Math.cos(this.walkYaw);
+      const sp = Math.sin(this.walkPitch), cp = Math.cos(this.walkPitch);
+      Object.assign(this.cameraFrame, {
+        forward: [sy*cp, sp, -cy*cp], right: [cy, 0, sy], up: [-sy*sp, cp, cy*sp],
+      });
+    }
+
+    moveWalk(forward, sideways) {
+      if (!this.walking) return;
+      const step = this.extent * 0.025;
+      this.cameraFrame.position[0] += (Math.sin(this.walkYaw)*forward + Math.cos(this.walkYaw)*sideways)*step;
+      this.cameraFrame.position[2] += (-Math.cos(this.walkYaw)*forward + Math.sin(this.walkYaw)*sideways)*step;
+      this.draw();
+    }
+
+    static cameraProjection(frame, width, height) {
+      const [sourceWidth, sourceHeight] = frame.imageSize;
+      const [fx, fy, cx, cy] = frame.intrinsics;
+      const scale = Math.min(width / sourceWidth, height / sourceHeight);
+      const viewWidth = Math.max(1, Math.round(sourceWidth * scale));
+      const viewHeight = Math.max(1, Math.round(sourceHeight * scale));
+      return {
+        viewport: [Math.round((width-viewWidth)/2), Math.round((height-viewHeight)/2), viewWidth, viewHeight],
+        projection: [2*fx/sourceWidth, 2*fy/sourceHeight, 2*cx/sourceWidth-1, 1-2*cy/sourceHeight],
+      };
     }
 
     draw() {
@@ -297,7 +463,7 @@
         this.canvas.height = height;
       }
       gl.viewport(0, 0, width, height);
-      gl.clearColor(0.031, 0.047, 0.067, 1);
+      gl.clearColor(0.055, 0.067, 0.047, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       if (!this.count) return;
       gl.enable(gl.DEPTH_TEST);
@@ -313,7 +479,27 @@
       gl.uniform1f(this.locations.distance, this.distance);
       gl.uniform1f(this.locations.aspect, width / height);
       gl.uniform1f(this.locations.pointSize, Math.max(2, 2.4 * ratio));
-      gl.drawArrays(gl.POINTS, 0, this.count);
+      const frame = this.cameraFrame;
+      gl.uniform1i(this.locations.camera, Boolean(frame));
+      gl.uniform1i(this.locations.lines, false);
+      if (frame) {
+        const calibration = PointCloudViewer.cameraProjection(frame, width, height);
+        gl.viewport(...calibration.viewport);
+        gl.uniform3fv(this.locations.eye, this.normalizePoint(frame.position));
+        gl.uniform3fv(this.locations.right, frame.right);
+        gl.uniform3fv(this.locations.up, frame.up);
+        gl.uniform3fv(this.locations.forward, frame.forward);
+        gl.uniform4fv(this.locations.projection, calibration.projection);
+      }
+      gl.drawArrays(gl.POINTS, 0, this.visibleCount ?? this.count);
+      if (this.trace && !frame) {
+        gl.uniform1i(this.locations.lines, true);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer);
+        gl.vertexAttribPointer(this.locations.position, 3, gl.FLOAT, false, 0, 0);
+        gl.disableVertexAttribArray(this.locations.color);
+        gl.vertexAttrib3f(this.locations.color, 0.85, 0.96, 0.52);
+        gl.drawArrays(gl.LINE_STRIP, 0, this.trace.frames.length);
+      }
     }
 
     destroy() {
@@ -326,6 +512,7 @@
       const gl = this.gl;
       if (this.positionBuffer) gl.deleteBuffer(this.positionBuffer);
       if (this.colorBuffer) gl.deleteBuffer(this.colorBuffer);
+      if (this.pathBuffer) gl.deleteBuffer(this.pathBuffer);
       if (this.program) gl.deleteProgram(this.program);
       if (this.vertexShader) gl.deleteShader(this.vertexShader);
       if (this.fragmentShader) gl.deleteShader(this.fragmentShader);

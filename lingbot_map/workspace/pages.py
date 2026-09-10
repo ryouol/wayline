@@ -1,9 +1,9 @@
 """Public, non-indexable support pages; never interpolate request or tenant data."""
 
-from html import escape
-from hashlib import sha256
-from pathlib import Path
 import re
+from hashlib import sha256
+from html import escape
+from pathlib import Path
 
 from fastapi.responses import HTMLResponse
 
@@ -30,9 +30,10 @@ def metadata(title: str, description: str, origin: str = "") -> str:
 <meta property="og:type" content="website"><meta property="og:title" content="{title}">
 <meta property="og:description" content="{description}">
 <meta property="og:image" content="{image}">
-<meta property="og:image:alt" content="3D Scene Workspace application icon">
+<meta property="og:image:alt" content="Wayline application icon">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{title}"><meta name="twitter:description" content="{description}">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="{description}">
 <meta name="twitter:image" content="{image}">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
@@ -57,9 +58,9 @@ def support_page(
     return HTMLResponse(
         version_assets(f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(title)} · 3D Scene Workspace</title>{metadata(title, description, origin)}
+<title>{escape(title)} · Wayline</title>{metadata(title, description, origin)}
 <link rel="stylesheet" href="/static/styles.css"></head><body>
-<main class="support-shell"><a class="product-kicker brand-link" href="/">3D Scene Workspace</a>
+<main class="support-shell"><a class="product-kicker brand-link" href="/">Wayline</a>
 <h1>{escape(title)}</h1>{body}
 <p><a class="primary" href="/">Return to workspace</a></p></main>
 <script src="/static/site.js"></script></body></html>"""),
@@ -84,19 +85,22 @@ retention periods, rights-request process and privacy contact before public laun
 service providers and data-rights contact before inviting public users.</p>
 <p>Optional analytics is disabled until the operator configures a collector and you opt in.
 No scene contents, tokens, filenames or share URLs belong in analytics.</p>
-<!-- TODO: provide approved analytics measurement ID and same-origin collector endpoint in static/site.js. -->""",
+<!-- TODO: provide approved analytics measurement ID and same-origin collector
+endpoint in static/site.js. -->""",
     ),
     "terms": (
         "Terms",
         "Service terms and research restrictions disclosure status.",
         """
 <p class="status-label research">Operator terms pending</p>
-<p>This scaffold is not a legal agreement. Public sale is blocked until approved terms are supplied.</p>
+<p>This scaffold is not a legal agreement. Public sale is blocked
+until approved terms are supplied.</p>
 <!-- TODO: provide approved terms, legal entity, jurisdiction, billing/refund rules,
 acceptable-use requirements and liability terms before public launch. -->
 <h2>Research restrictions</h2><p>LingBot inference remains research-only. A working adapter
 does not establish commercial rights to models, checkpoints, training data or outputs.</p>
-<p>The bundled synthetic sample is CC0-1.0. It is a workflow test, not a reconstruction-quality claim.</p>""",
+<p>The bundled synthetic sample is CC0-1.0. It is a workflow test,
+not a reconstruction-quality claim.</p>""",
     ),
     "contact": (
         "Contact",
@@ -104,7 +108,8 @@ does not establish commercial rights to models, checkpoints, training data or ou
         """
 <p>Contact the operator who supplied your workspace invitation for access or support.</p>
 <!-- TODO: provide support email and replace this note with a mailto link. -->
-<!-- TODO: provide support phone and replace this note with a tel link, or confirm no phone support. -->
+<!-- TODO: provide support phone and replace this note with a tel link,
+or confirm no phone support. -->
 <!-- TODO: provide legal entity and physical business address. -->
 <address>Operator email, phone and business address have not been supplied.</address>""",
     ),

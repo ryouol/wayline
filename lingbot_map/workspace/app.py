@@ -3,6 +3,7 @@
 import argparse
 import hmac
 import logging
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -25,13 +26,14 @@ from fastapi import (
 from fastapi import (
     Path as ApiPath,
 )
-from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .auth_routes import register_auth_routes
 from .config import Settings
 from .database import (
     IdempotencyConflict,
@@ -42,8 +44,10 @@ from .database import (
     token_digest,
 )
 from .engines import EngineUnavailable
+from .identity import IdentityStore
 from .pages import SUPPORT_PAGES, app_page, support_page
-from .service import UploadRejected, WorkspaceService
+from .runtime_lock import workspace_lock
+from .service import InvalidEngineParameters, UploadRejected, WorkspaceService
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -79,6 +83,7 @@ class HealthResponse(BaseModel):
 class UserResponse(BaseModel):
     displayName: str
     tenantName: str
+    accountType: Literal["operator", "google", "trial"] = "operator"
 
 
 class LoginResponse(BaseModel):
@@ -254,7 +259,6 @@ JobId = Annotated[str, ApiPath(pattern=r"^job_[0-9a-f]{32}$")]
 AssetId = Annotated[str, ApiPath(pattern=r"^ast_[0-9a-f]{32}$")]
 ArtifactId = Annotated[str, ApiPath(pattern=r"^art_[0-9a-f]{32}$")]
 ShareId = Annotated[str, ApiPath(pattern=r"^shr_[0-9a-f]{32}$")]
-ShareToken = Annotated[str, ApiPath(min_length=32, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 IdempotencyKey = Annotated[
     str | None,
     Header(alias="Idempotency-Key", min_length=8, max_length=200),
@@ -374,6 +378,7 @@ def create_app(
     runtime.validate()
     workspace = service or WorkspaceService(runtime)
     limiter = LoginLimiter()
+    identities = IdentityStore(workspace.database)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -389,7 +394,7 @@ def create_app(
             workspace.stop_worker()
 
     application = FastAPI(
-        title="3D Scene Workspace",
+        title="Wayline",
         version="0.2.0",
         docs_url=None if runtime.environment == "production" else "/docs",
         redoc_url=None,
@@ -401,6 +406,8 @@ def create_app(
     if runtime.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
+
+    register_auth_routes(application, workspace, runtime, limiter, SESSION_COOKIE)
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -429,7 +436,8 @@ def create_app(
                 support_page(
                     "Something went wrong",
                     "The workspace could not complete this request.",
-                    "<p>Please return to your workspace and try again. Existing jobs are not automatically resubmitted.</p>",
+                    "<p>Please return to your workspace and try again. "
+                    "Existing jobs are not automatically resubmitted.</p>",
                     status=500,
                     origin=runtime.public_base_url,
                 )
@@ -449,7 +457,7 @@ def create_app(
             "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
             "form-action 'self'; require-trusted-types-for 'script'; trusted-types default"
         )
-        if request.url.path.startswith(("/api/", "/s/")):
+        if request.url.path == "/s" or request.url.path.startswith(("/api/", "/s/", "/auth/")):
             response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         principal_marker = getattr(request.state, "workspace_principal_marker", None)
@@ -525,7 +533,8 @@ def create_app(
             return support_page(
                 "Page unavailable",
                 "This page or share is unavailable.",
-                "<p>The page may have moved, or this share may have expired or been revoked. Ask the owner for a new link.</p>",
+                "<p>The page may have moved, or this share may have expired or been revoked. "
+                "Ask the owner for a new link.</p>",
                 status=404,
                 origin=runtime.public_base_url,
             )
@@ -611,7 +620,11 @@ def create_app(
         if current.method == "cookie" and current.session_id:
             csrf = workspace.database.session_csrf(current.session_id)
         return {
-            "user": {"displayName": current.display_name, "tenantName": current.tenant_name},
+            "user": {
+                "displayName": current.display_name,
+                "tenantName": current.tenant_name,
+                "accountType": identities.account_type(current.user_id),
+            },
             "csrfToken": csrf,
             "quota": workspace.database.quota(current.tenant_id),
         }
@@ -625,8 +638,18 @@ def create_app(
         )
 
     @application.get("/api/engines", response_model=EnginesResponse)
-    def engines(_: CurrentPrincipal):
-        return {"engines": workspace.engine_descriptors()}
+    def engines(current: CurrentPrincipal):
+        descriptors = workspace.engine_descriptors()
+        if identities.is_guest(current.user_id):
+            for engine in descriptors:
+                if engine["id"] != "synthetic-sample-v1":
+                    engine["available"] = False
+                    engine["unavailableReasons"] = [
+                        "Sign in with Google to upload a video."
+                        if runtime.signup_enabled
+                        else "Video reconstruction is not available in this playground yet."
+                    ]
+        return {"engines": descriptors}
 
     @application.post("/api/assets", status_code=201, response_model=AssetResponse)
     def upload_asset(
@@ -634,6 +657,9 @@ def create_app(
         file: Annotated[UploadFile, File()],
         idempotency_key: IdempotencyKey = None,
     ):
+        if identities.is_guest(current.user_id):
+            file.file.close()
+            raise HTTPException(403, "Sign in with Google to upload your own video.")
         try:
             result = workspace.upload_video(
                 tenant_id=current.tenant_id,
@@ -687,14 +713,18 @@ def create_app(
         current: CurrentPrincipal,
         idempotency_key: IdempotencyKey = None,
     ):
-        return _job(
-            workspace.submit_research(
+        if identities.is_guest(current.user_id):
+            raise HTTPException(403, "Sign in with Google to reconstruct a video.")
+        try:
+            result = workspace.submit_research(
                 current.tenant_id,
                 asset_id=payload.assetId,
                 params=payload.model_dump(exclude={"assetId"}),
                 idempotency_key=idempotency_key,
             )
-        )
+        except InvalidEngineParameters as error:
+            raise HTTPException(422, str(error)) from error
+        return _job(result)
 
     @application.get("/api/jobs", response_model=JobsResponse)
     def list_jobs(
@@ -786,7 +816,7 @@ def create_app(
             )
         except KeyError as error:
             raise HTTPException(404, "Artifact not found.") from error
-        path = f"/s/{share['token']}"
+        path = f"/s#{share['token']}"
         return {
             "id": share["id"],
             "expiresAt": share["expires_at"],
@@ -867,11 +897,21 @@ def create_app(
             idempotency_key=idempotency_key,
         )
 
-    @application.get("/api/public/shares/{token}", response_model=PublicShareResponse)
-    def public_share(token: ShareToken):
+    def resolve_public_share(request: Request):
+        authorization = request.headers.get("authorization", "")
+        token = authorization.removeprefix("Bearer ")
+        if not authorization.startswith("Bearer ") or not re.fullmatch(
+            r"[A-Za-z0-9_-]{32,64}", token
+        ):
+            raise HTTPException(404, "Share not found or expired.")
         value = workspace.database.resolve_share(token)
         if not value:
             raise HTTPException(404, "Share not found or expired.")
+        return value
+
+    @application.get("/api/public/share", response_model=PublicShareResponse)
+    def public_share(request: Request):
+        value = resolve_public_share(request)
         research_only = bool(value["metadata"].get("researchOnly"))
         return {
             "artifact": {
@@ -881,7 +921,7 @@ def create_app(
                 "sha256": value["sha256"],
                 "licenseId": value["license_id"],
                 "metadata": value["metadata"],
-                "contentUrl": f"/api/public/shares/{token}/content",
+                "contentUrl": "/api/public/share/content",
             },
             "expiresAt": value["expires_at"],
             "researchOnly": research_only,
@@ -893,24 +933,20 @@ def create_app(
             ),
         }
 
-    @application.get("/api/public/shares/{token}/content")
-    def public_share_content(token: ShareToken):
-        value = workspace.database.resolve_share(token)
-        if not value:
-            raise HTTPException(404, "Share not found or expired.")
+    @application.get("/api/public/share/content")
+    def public_share_content(request: Request):
+        value = resolve_public_share(request)
         return FileResponse(
             workspace.store.path_for_local_use(value["object_key"]),
             media_type=value["media_type"],
             headers={"Content-Disposition": f'inline; filename="{value["filename"]}"'},
         )
 
-    @application.get("/s/{token}")
-    def share_page(token: ShareToken):
-        if not workspace.database.resolve_share(token):
-            raise HTTPException(404, "Share not found or expired.")
+    @application.get("/s")
+    def share_page():
         return app_page(
             "share.html",
-            "Shared 3D scene",
+            "Shared space — Wayline",
             "A permissioned, expiring 3D scene review.",
             runtime.public_base_url,
         )
@@ -919,7 +955,7 @@ def create_app(
     def index():
         return app_page(
             "index.html",
-            "3D Scene Workspace",
+            "Wayline — a new perspective",
             "A private workspace for reviewable 3D scene artifacts.",
             runtime.public_base_url,
         )
@@ -953,7 +989,7 @@ def create_app(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the authenticated 3D Scene Workspace")
+    parser = argparse.ArgumentParser(description="Run Wayline")
     parser.add_argument(
         "--dev", action="store_true", help="generate a local token if none is configured"
     )
@@ -966,16 +1002,15 @@ def main() -> None:
         print(settings.bootstrap_token)
     import uvicorn
 
-    # Capability share tokens live in URL paths. Disable Uvicorn access logs so
-    # they are never copied into default request logs; edge proxies must apply
-    # the same path redaction policy documented in docs/deployment.md.
-    uvicorn.run(
-        create_app(settings),
-        host=args.host,
-        port=args.port,
-        log_level="info",
-        access_log=False,
-    )
+    # OAuth callbacks can contain authorization codes. Avoid default request logs.
+    with workspace_lock(settings.data_dir):
+        uvicorn.run(
+            create_app(settings),
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            access_log=False,
+        )
 
 
 if __name__ == "__main__":

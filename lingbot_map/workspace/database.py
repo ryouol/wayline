@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _id(prefix: str) -> str:
@@ -139,7 +139,7 @@ class Database:
                     else None
                 )
                 existing_version = int(version_row[0]) if version_row is not None else None
-        if existing_version is not None and existing_version not in {1, 2, SCHEMA_VERSION}:
+        if existing_version is not None and existing_version not in {1, 2, 3, SCHEMA_VERSION}:
             raise RuntimeError(
                 f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
             )
@@ -170,6 +170,30 @@ class Database:
                     display_name TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS remote_runs (
+                    attempt_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    call_id TEXT,
+                    created_at REAL NOT NULL,
+                    cleanup_after REAL NOT NULL,
+                    cleaned INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_remote_cleanup ON remote_runs(cleaned,cleanup_after);
+                CREATE TABLE IF NOT EXISTS identities (
+                    provider TEXT NOT NULL CHECK(provider IN ('google','trial')),
+                    subject TEXT NOT NULL,
+                    user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY(provider,subject)
+                );
+                CREATE TABLE IF NOT EXISTS oauth_attempts (
+                    state_hash TEXT PRIMARY KEY,
+                    browser_hash TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    verifier TEXT NOT NULL,
+                    expires_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_oauth_expiry ON oauth_attempts(expires_at);
                 CREATE TABLE IF NOT EXISTS api_tokens (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -881,6 +905,37 @@ class Database:
             ).fetchone()
             if tenant is None:
                 raise KeyError(tenant_id)
+            if (
+                engine_id == "lingbot-research-v1"
+                and active.execute(
+                    "SELECT 1 FROM identities i JOIN users u ON u.id=i.user_id "
+                    "WHERE i.provider='google' AND u.tenant_id=? LIMIT 1",
+                    (tenant_id,),
+                ).fetchone()
+            ):
+                if tenant["consumed_units"] > 0:
+                    raise QuotaExceeded(
+                        "Your included reconstruction has been used. "
+                        "You can still view, download and share your space."
+                    )
+                if active.execute(
+                    "SELECT 1 FROM jobs WHERE tenant_id=? AND engine_id=? "
+                    "AND state IN ('queued','running') LIMIT 1",
+                    (tenant_id, engine_id),
+                ).fetchone():
+                    raise QuotaExceeded(
+                        "A reconstruction is already in progress in your workspace."
+                    )
+                attempts = active.execute(
+                    "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
+                    "AND units>1 AND created_at>?",
+                    (tenant_id, now - 86400),
+                ).fetchone()[0]
+                if attempts >= 3:
+                    raise QuotaExceeded(
+                        "The preview allows three reconstruction attempts per day. "
+                        "Please try again tomorrow."
+                    )
             limits = active.execute(
                 "SELECT job_limit FROM tenants WHERE id=?", (tenant_id,)
             ).fetchone()
@@ -990,18 +1045,31 @@ class Database:
         return values, next_cursor
 
     def claim_next_job(
-        self, *, worker_id: str, lease_seconds: int, max_attempts: int
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        engine_ids: tuple[str, ...] | None = None,
     ) -> dict[str, Any] | None:
         now = time.time()
         attempt_token = secrets.token_urlsafe(24)
+        if engine_ids == ():
+            return None
+        engine_filter = (
+            ""
+            if engine_ids is None
+            else (" AND engine_id IN (" + ",".join("?" for _ in engine_ids) + ")")
+        )
         with self.transaction() as connection:
             candidate = connection.execute(
                 """
                 SELECT id, tenant_id FROM jobs
                 WHERE state = 'queued' AND cancellation_requested = 0 AND attempt < ?
-                ORDER BY created_at LIMIT 1
-                """,
-                (max_attempts,),
+                """
+                + engine_filter
+                + " ORDER BY created_at LIMIT 1",
+                (max_attempts, *(engine_ids or ())),
             ).fetchone()
             if candidate is None:
                 return None

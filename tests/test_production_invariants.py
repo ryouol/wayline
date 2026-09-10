@@ -66,7 +66,7 @@ def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
     database = Database(path)
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 3
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
         assert connection.execute("SELECT name FROM tenants").fetchone()[0] == "Legacy"
         tenant_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(tenants)").fetchall()
@@ -118,7 +118,7 @@ def test_schema_two_invalidates_unrecoverable_sessions_and_preserves_claims(tmp_
 
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 3
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
         assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         claim = connection.execute(
             "SELECT size_bytes,materialized,purpose FROM object_claims"
@@ -246,6 +246,49 @@ def test_shutdown_cancels_active_attempt_waits_and_requeues(settings):
     assert recovered["attempt"] == 0
     assert service.database.quota(tenant_id)["reserved_units"] == 1
     assert service._worker is None
+
+
+def test_playground_completes_while_reconstruction_lane_is_busy(settings):
+    from lingbot_map.workspace.engines import SyntheticSampleEngine
+
+    started = threading.Event()
+
+    class SlowResearch(CooperativeEngine):
+        @property
+        def descriptor(self):
+            return replace(super().descriptor, id="lingbot-research-v1", research_only=True)
+
+    service = WorkspaceService(
+        settings,
+        engines={
+            "synthetic-sample-v1": SyntheticSampleEngine(),
+            "lingbot-research-v1": SlowResearch(started),
+        },
+    )
+    service.initialize()
+    tenant = service.database.authenticate_api_token(BOOTSTRAP_TOKEN)["tenant_id"]
+    service.database.create_job(
+        tenant_id=tenant,
+        engine_id="lingbot-research-v1",
+        source_asset_id=None,
+        params={},
+        reserve_units=1,
+        provenance={},
+    )
+    service.start_worker()
+    try:
+        assert started.wait(1)
+        sample = service.submit_sample(tenant)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            job = service.database.get_job(tenant, sample["id"])
+            if job["state"] == "ready":
+                break
+            time.sleep(0.01)
+        assert job["state"] == "ready"
+        assert service.ready(require_worker=True)
+    finally:
+        service.stop_worker()
 
 
 def test_cancelled_lost_worker_settles_and_refunds_instead_of_sticking(service, tenant_id):
@@ -517,7 +560,7 @@ def test_share_idempotency_replays_without_storing_raw_capability(
         headers=headers,
     )
     assert first.json() == replay.json()
-    token = first.json()["url"].rsplit("/", 1)[-1]
+    token = first.json()["url"].split("#", 1)[1]
     with service.database.connect() as connection:
         record = connection.execute(
             "SELECT response_json FROM idempotency_keys WHERE scope LIKE 'POST:/api/artifacts%'"
@@ -571,8 +614,10 @@ def test_public_research_share_has_explicit_noncommercial_warning(
     share = authenticated_client.post(
         f"/api/artifacts/{artifact['id']}/shares", json={"ttlSeconds": 300}
     ).json()
-    token = share["url"].rsplit("/", 1)[-1]
-    public = authenticated_client.get(f"/api/public/shares/{token}").json()
+    token = share["url"].split("#", 1)[1]
+    public = authenticated_client.get(
+        "/api/public/share", headers={"Authorization": f"Bearer {token}"}
+    ).json()
     assert public["researchOnly"] is True
     assert "Do not use this artifact commercially" in public["commercialWarning"]
 
@@ -690,6 +735,7 @@ def test_upload_and_artifact_claims_exist_before_object_io(service, tenant_id, m
 
     def put_bytes(key, payload, *, max_bytes):
         assert_reserved(key)
+        assert observed[-1][1] >= min(len(payload), max_bytes)
         return original_bytes(key, payload, max_bytes=max_bytes)
 
     monkeypatch.setattr(service.store, "put_stream", put_stream)
@@ -703,7 +749,10 @@ def test_upload_and_artifact_claims_exist_before_object_io(service, tenant_id, m
     service.submit_sample(tenant_id)
     assert service.process_next_job() is True
     assert ("upload", service.settings.max_upload_bytes, 0) in observed
-    assert ("artifact", service.settings.max_artifact_bytes, 0) in observed
+    assert any(
+        purpose == "artifact" and size > 0 and materialized == 0
+        for purpose, size, materialized in observed
+    )
 
 
 def test_reconciliation_does_not_delete_an_inflight_claim(service, tenant_id):

@@ -1,0 +1,57 @@
+# Single persistent service: frontend, API, durable queue, SQLite and private objects.
+# The Modal worker runs GPU inference only. No user video passes through Vercel.
+services:
+  - type: web
+    name: wayline
+    runtime: docker
+    plan: standard
+    numInstances: 1
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    disk:
+      name: wayline-data
+      mountPath: /data
+      sizeGB: 20
+    envVars:
+      - key: LINGBOT_ENV
+        value: production
+      - key: LINGBOT_DATA_DIR
+        value: /data
+      - key: LINGBOT_BOOTSTRAP_TOKEN
+        generateValue: true
+      - key: LINGBOT_PUBLIC_BASE_URL
+        sync: false
+      - key: LINGBOT_ALLOWED_HOSTS
+        sync: false
+      - key: LINGBOT_COOKIE_SECURE
+        value: "true"
+      - key: LINGBOT_MAX_VIDEO_SECONDS
+        value: "60"
+      - key: LINGBOT_JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: LINGBOT_MAX_JOB_ATTEMPTS
+        value: "1"
+      - key: LINGBOT_GLOBAL_STORAGE_BYTES
+        value: "15000000000"
+      - key: WAYLINE_SIGNUP_ENABLED
+        value: "false"
+      - key: WAYLINE_GOOGLE_CLIENT_ID
+        sync: false
+      - key: WAYLINE_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: WAYLINE_SIGNUP_MAX_ACCOUNTS
+        value: "20"
+      - key: WAYLINE_SIGNUP_QUOTA_UNITS
+        value: "120"
+      - key: WAYLINE_TRIAL_MAX_ACCOUNTS
+        value: "100"
+      - key: WAYLINE_MODAL_ENABLED
+        value: "false"
+      - key: LINGBOT_RESEARCH_ACK
+        value: "I understand LingBot is research-only"
+      - key: WAYLINE_GPU_SECONDS_BUDGET
+        value: "14400"
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false

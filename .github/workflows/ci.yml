@@ -48,43 +48,27 @@ jobs:
       - name: Lint and type-check
         run: |
           ruff check .
-          ruff check lingbot_map/workspace lingbot_map/checkpoints.py tests modal_app.py modal_enabled.py webui/server.py --select E,F,I,B,UP,SIM
-          ruff format --check lingbot_map/workspace lingbot_map/checkpoints.py tests modal_app.py modal_enabled.py
+          ruff check lingbot_map/workspace lingbot_map/checkpoints.py tests modal_app.py webui/server.py --select E,F,I,B,UP,SIM
+          ruff format --check lingbot_map/workspace lingbot_map/checkpoints.py tests modal_app.py
           mypy lingbot_map/workspace lingbot_map/checkpoints.py
 
       - name: Check scripts and packaging
         run: |
           python - <<'PY'
-          import importlib
-          import importlib.metadata
           import sys
-
-          assert importlib.metadata.version("modal") == "1.5.5"
+          from lingbot_map.workspace.app import create_app
+          assert "modal_app" not in sys.modules
           assert "modal" not in sys.modules
-          import modal_app
-          assert modal_app.LINGBOT_RESEARCH_RUNNER_COMPILED is False
-          assert "modal" not in sys.modules
-          assert not any(
-              callable(getattr(value, "remote", None))
-              for value in vars(modal_app).values()
-          )
-          forbidden = {"app", "weights", "jobs", "image", "fetch_weights", "reconstruct", "main"}
-          assert forbidden.isdisjoint(vars(modal_app))
-          try:
-              importlib.import_module("modal_enabled")
-          except RuntimeError as error:
-              assert "not compiled into this release" in str(error)
-          else:
-              raise AssertionError("disabled opt-in runner imported")
-          assert "modal" not in sys.modules
-          assert "modal_enabled" not in sys.modules
           PY
           node --check lingbot_map/workspace/static/app.js
           node --check lingbot_map/workspace/static/session-events.js
           node --check lingbot_map/workspace/static/viewer.js
           node --check lingbot_map/workspace/static/share.js
+          node --check lingbot_map/workspace/static/timeline.js
           node tests/session-events.test.js
           node tests/viewer-lifecycle.test.js
+          node tests/viewer-trace.test.js
+          node tests/timeline.test.js
           bash -n download_weights.sh demo_render/process_videos.sh
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
           python - <<'PY'
@@ -97,6 +81,7 @@ jobs:
               "lingbot_map/workspace/static/app.js",
               "lingbot_map/workspace/static/session-events.js",
               "lingbot_map/workspace/static/viewer.js",
+              "lingbot_map/workspace/static/timeline.js",
               "lingbot_map/workspace/static/styles.css",
           }
           missing = required - names
@@ -114,3 +99,8 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify production container
+        run: |
+          docker build -t wayline:ci .
+          python scripts/smoke_container.py --image wayline:ci

@@ -1,0 +1,13 @@
+.git
+.venv
+.lingbot-workspace
+.env*
+weights
+outputs
+docs/ux-evidence
+*.pt
+*.log
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache

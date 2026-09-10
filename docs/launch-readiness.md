@@ -1,96 +1,41 @@
-# Launch readiness
+# Wayline launch readiness
 
-## Verified in this repository
+Updated 2026-09-10. This is an implementation and verification record, not a public-launch approval.
 
-- Authenticated sample-to-view/download/share/delete API path
-- Tenant isolation on jobs and artifacts
-- Stable per-session CSRF enforcement for cookie-authenticated mutations,
-  stale-header logout revocation, authenticated error principal markers, and
-  peer-tab logout/account-change revalidation
-- Exact production Host allowlisting, disabled OpenAPI/docs, security headers,
-  strict CSP/Trusted Types, and application declared-body ceilings
-- Byte, media, container, duration, frame, and dimension upload gates
-- Durable compute reservations plus pre-I/O byte/slot reservations, tenant and
-  global logical storage budgets, a physical free-space floor, tenant/global
-  in-flight limits, durable rates, retention, and exact-size claim recovery
-- Expiry-only lease recovery with attempt/worker fencing on progress, artifact,
-  completion, and failure mutations; attempt-scoped paths/cleanup and
-  cooperative shutdown/child wait
-- Transactional logical deletion plus durable physical-delete outbox, retry,
-  and truthful `deleting` API responses
-- Provisional durable object claims prevent reconciliation from deleting an
-  in-flight upload/artifact; attempt artifacts stay private until `ready`
-- Route-scoped request-hash idempotency whose completion commits atomically with
-  each database mutation; browser ambiguous retries reuse the same key, and raw
-  share capabilities are not persisted in replay records
-- Readiness fails closed on schema, object-store write/delete, or required-worker
-  failure without exposing internal paths
-- Atomic local object writes and path traversal rejection
-- Runtime data/object/work directories are forced to `0700`; SQLite, WAL/SHM,
-  stored objects, runner manifests, and the runtime manifest are forced to `0600`
-- Descriptor-bound checkpoint digest verification, private content-addressed
-  copies, group/world-write rejection, and restricted PyTorch/ONNX loading
-  across every direct model loader
-- Separate auxiliary-model digest gate and no automatic moving-weight downloads
-- Synthetic GLB provenance and CC0 license
-- Static UI with system fonts, visible focus, semantic progress, responsive
-  reflow, reduced-motion handling, and keyboard viewer controls
-- Browser tenant-state reset on logout/`401`/account change, request abortion,
-  stale-response epoch fencing, complete private-DOM erasure, cross-tab/focus
-  revalidation, immediate peer clearing on `signed-out`/`account-changed`
-  broadcasts, and explicit WebGL resource/context teardown
-- Cursor load-more controls for all job/asset/share pages, linked-upload count
-  and deletability metadata with an explanatory disabled state, direct deletion
-  and revocation, and bounded multi-inventory cleanup whose overlapping job plus
-  source-upload selection is normalized as one accepted cascade
-- Worker iteration exception supervision with bounded backoff and a regression
-  proving the sole worker survives a transient dependency failure
-- Modal release surface structurally inert: `modal_app.py` imports no SDK and
-  registers no App, Volume, Image, remote/GPU function, or local entrypoint;
-  CI also proves the explicitly selected `modal_enabled.py` path fails at the
-  source compile gate before loading the SDK
-- The hardened UI passed an isolated in-app-browser run through authentication,
-  peer-tab session reuse, synthetic generation, point-cloud review, and rendering
-  of download and management controls at the desktop default and a 390 x 844 mobile
-  viewport. The mobile page had no horizontal overflow and both tabs reported
-  zero console warnings or errors. An API regression proves one tab's `/api/me`
-  refresh does not invalidate a peer tab's stable CSRF token and that logout
-  revokes the shared server session even when the initiating tab presents a stale
-  CSRF header. A JavaScript behavior regression separately proves peer state is
-  cleared synchronously on `signed-out` and `account-changed` broadcasts, while
-  `session-changed` performs revalidation. That browser pass predates the linked-
-  upload disabled-row change recorded above; its API contract, visible DOM copy,
-  disabled controls, and overlapping cleanup behavior have executable Python and
-  static-JavaScript regressions, while a fresh in-app browser was unavailable for
-  this follow-up. External cross-browser, screen-reader, contrast, and real
-  account-switch testing remain owner gates below.
-- 70 passing Python unit/integration tests plus the executable JavaScript
-  session-event regression in the remediation gate, with lint, type check,
-  JavaScript/shell checks, wheel build, and CI definition validation
+## What works locally
 
-## Owner gates before a public production launch
+- Isolated, expiring visitor playgrounds generate a CC0 synthetic scene without sharing an operator token.
+- Private jobs, uploads, artifacts, quota reservations, idempotency, cancellation, retention and deletion use the existing SQLite/object-store transaction boundaries.
+- Google OAuth has browser-bound one-use state, PKCE, nonce and signed ID-token verification. Protocol/identity tests use a mocked provider; actual Google sign-in remains unverified.
+- Google accounts receive one successful video reconstruction, with bounded attempts and capacity. Scene deletion does not replenish the allowance. Synthetic jobs settle zero compute units.
+- The original LingBot Modal deployment, pinned checkpoint preparation, private per-attempt staging, transport deadlines and durable cleanup are implemented. Disabling new submissions retains cleanup responsibilities. No real GPU run has passed yet.
+- Separate sample and research workers keep the playground responsive while reconstruction waits on the GPU. Health requires both workers; shutdown signals both.
+- Reconstruction export includes glTF Y-up colored points, camera calibration/poses, actual presentation timestamps, cumulative point counts and source thumbnails.
+- Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
+- Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
+- Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
+- A Dockerfile and single-instance Render Blueprint exist. They are not a deployed service.
 
-- [ ] Legal clearance or a replacement commercial engine
-- [ ] Complete screen-reader, contrast, cross-browser, and real account-switch
-      QA; the desktop/mobile in-app browser workflow and keyboard viewer pass
-      recorded above do not close this broader accessibility gate
-- [ ] Postgres and S3-compatible implementations plus migration/contract tests
-- [ ] TLS host, DNS, private networking, secret manager, and restrictive IAM
-- [ ] Distributed login/edge concurrency and byte limits, malware scanning,
-      direct multipart uploads, and deployed lifecycle-policy validation
-- [ ] Structured logs, metrics, alerting, error reporting, and incident runbook
-- [ ] Backup restoration drill and disaster recovery objective
-- [ ] Privacy notice, acceptable-use terms, data-processing terms, support path,
-      security contact, and company identity
-- [ ] Licensed customer-like fixture and reproducible quality/performance report
-- [ ] Independent security review and tenant-isolation abuse test
-- [ ] Verify CDN/proxy/WAF/APM access logs redact capability-token URL paths
-- [ ] If using Modal: configured budget ceiling, object-store integration,
-      cancellation test, and paid GPU validation explicitly authorized by owner
+## Verification boundary
 
-## Billing gate
+The earlier browser run rendered 5,908 synthetic points after repeat scene creation at a 390×844 viewport with no horizontal overflow. Later calibration, walk controls and review fixes require another browser pass. The Mac was locked during the latest attempt; this is not a completed visual/mobile gate.
 
-There is intentionally no Stripe, checkout, or monetary credit path. Add billing
-only after an engine is commercially cleared and the non-billing launch gates
-pass. Usage reservations in the current schema are operational capacity, not a
-promise of price or payment.
+Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video allowance, mocked Modal cancellation/deadlines, sampling/export, viewer teardown/trace/timeline and backup/restore. See `REVIEW.md` for final check results. A reconstruction fixture passed the Khronos glTF Validator with zero errors and warnings. Fixtures and transport mocks are not real-model acceptance.
+
+## Required before inviting video testers
+
+- [ ] Authenticate Modal, deploy the private worker and prepare the verified original checkpoint.
+- [ ] Run a short owned video through the actual GPU: upload → status → ready → replay → walk → whole scene → download → expiring share in another session. Record cold/warm latency, GPU/CPU/memory cost, output bytes, failure rate and quality.
+- [ ] Configure the Google OAuth client, approved callback origin and secrets; verify real signup, returning login, logout and account switching.
+- [ ] Deploy the exact reviewed image/commit to Render and verify health, TLS, allowed host, upload limits, shutdown/recovery, logs and secrets there.
+- [ ] Validate provider limits/alerts, remote cancellation and physical object cleanup. The app's admission budget is not a provider invoice cap.
+- [ ] Configure encrypted offsite backups and run a deployed restore drill. Local offline snapshot tests do not prove the offsite schedule or Render recovery procedure.
+- [ ] Finish fresh desktop browser QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch controls, accessibility and contrast.
+- [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.
+- [ ] Supply operator identity, approved privacy/terms, contact information and the final domain. Analytics stays off until an approved collector and consent policy exist.
+
+## Scope and scale
+
+The first promise is a private short-video reconstruction with trace replay, exploration, download and sharing. Anchored comments, collaborative editing and scene versions are future work. Billing is planned in `operating-costs.md`; no checkout or paid credit entitlement exists.
+
+The invited beta uses one Render instance with SQLite and private persistent files. Postgres and object storage are later scaling work, not prerequisites for this bounded deployment. A Render disk prevents horizontal scaling and zero-downtime deploys. Do not advertise general availability, unlimited captures or highly available storage from this configuration.

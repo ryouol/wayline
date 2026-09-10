@@ -1,6 +1,6 @@
-# Deployment runbook
+# Wayline deployment runbook — Render + Modal
 
-## Supported demo deployment
+## Single-instance beta deployment
 
 - Linux, Python 3.11, one application instance
 - TLS reverse proxy on the public edge
@@ -31,11 +31,56 @@ Terminate TLS at the edge and add HSTS there only after confirming the final
 domain, preload, and subdomain policy. Configure forwarded-header trust to the
 known proxy IPs; never trust forwarded headers from the public network.
 
+## Render setup
+
+The committed Dockerfile builds a pinned Python 3.11 image, installs the hashed
+workspace dependency lock and runs as an unprivileged user. `render.yaml` selects
+one Standard/1c-2g service, a 20 GB persistent `/data` disk, `/healthz`, secure
+cookies, upload/retention limits and private environment settings. The legacy
+`standard` plan identifier remains valid; see
+[Render compute plans](https://render.com/docs/compute-plans).
+
+1. Connect the intended GitHub repository/branch to Render and review the
+   Blueprint. Select the approved region and paid compute/disk plan.
+2. Supply `LINGBOT_PUBLIC_BASE_URL` and its exact `LINGBOT_ALLOWED_HOSTS` hostname.
+   Keep the generated bootstrap token private as an operator credential.
+3. Supply a Google Web OAuth client and secret through Render's secret environment
+   settings. Register exactly `https://YOUR_HOST/auth/google/callback`. Google
+   Cloud is used for OAuth configuration, not application hosting.
+4. Authenticate Modal separately, deploy `modal_app.py`, and run its explicit
+   checkpoint preparation entrypoint. Put a suitably scoped Modal token in the
+   Render secret environment. Never put credentials in Git or frontend scripts.
+5. Enable `WAYLINE_SIGNUP_ENABLED` and `WAYLINE_MODAL_ENABLED` for a controlled
+   acceptance environment after setup. They are deliberately false in the
+   initial Blueprint. This flag change is not acceptance evidence.
+6. Run an owned short video through signup → upload → ready → camera replay →
+   whole scene → download → expiring share in another session. Measure GPU time,
+   VRAM, output size and failure behavior, then set trial and provider spend limits.
+
+No Render/Modal deployment or real Google sign-in has been verified in this
+workspace yet. Authentication, an owned capture, final host, operator legal/contact
+identity, provider budget settings and live logging/edge-limit checks are pending.
+
+## Modal execution
+
+The web app uses private authenticated SDK calls. No public inference route is
+registered in Modal. Each attempt uploads into a distinct volume prefix, records
+its call identifier durably, and returns a GLB plus an allowlisted report. The
+operator must provision both named volumes and keep access restricted. Failed
+cancellation/volume deletion is retried from the durable cleanup table.
+
+The initial runner uses A100 80 GB, one container, zero provider retries and a
+600-second function timeout. It samples up to 120 frames and validates a pinned
+checkpoint hash. Invocation expiry prevents stale queued work from beginning
+inference indefinitely. Timeouts/admission limits are not exact invoice caps;
+see [operating costs](operating-costs.md). Test crash recovery and remote deletion
+against the deployed provider before treating cleanup as proven.
+
 ## Health and shutdown
 
 `GET /healthz` exposes only `{"status":"ok"}` after the schema is current, the
-object store passes an atomic write/delete probe, and the required worker thread
-is alive; otherwise it returns `503` without revealing internal paths. The
+object store passes an atomic write/delete probe, and both required worker threads
+are alive; otherwise it returns `503` without revealing internal paths. The
 successful dependency probe is cached briefly (two seconds by default) to avoid
 turning health traffic into unbounded disk writes. The process stops accepting
 work through the reverse proxy first, signals the active attempt through its
@@ -44,8 +89,8 @@ its worker for up to `LINGBOT_SHUTDOWN_TIMEOUT_SECONDS`. Only expired leases are
 recovered on boot or maintenance; stale workers are fenced by attempt/worker
 identity.
 
-Uploads and artifact writes reserve their maximum bytes and an in-flight slot
-before touching storage. Claims enforce tenant/global logical budgets and the
+Uploads and file-backed artifact writes reserve their maximum bytes and an in-flight slot
+before touching storage. In-memory artifacts reserve their known bounded payload size. Claims enforce tenant/global logical budgets and the
 configured physical free-space floor, then shrink to the measured object size.
 Startup measures every leftover claim from a stopped process before exact-size
 orphan cleanup; periodic maintenance does the same for expired claims. Alert on
@@ -54,22 +99,46 @@ availability gap.
 
 The in-process worker has an iteration-level exception boundary with bounded
 backoff, so a transient queue or maintenance error cannot silently kill it.
-Readiness still fails if the worker thread itself is not alive.
+Readiness still fails if either required worker thread is not alive. Samples and
+local maintenance use a separate worker from reconstruction and remote cleanup,
+so a GPU wait does not block the playground. Disabling new Modal submissions does
+not disable cleanup of remote attempts already recorded in the database.
 
-The built-in CLI disables Uvicorn access logs because public share capability
-tokens appear in URL paths. Configure every reverse proxy, CDN, APM agent, WAF,
-and trace collector to disable or redact `/s/{token}` and
-`/api/public/shares/{token}[/content]` paths before public traffic. Do not rely
-on the application setting to sanitize upstream logs.
+The built-in CLI disables Uvicorn access logs. New share links use `/s#token`;
+fragments do not enter HTTP request URLs. The share page sends the token in an
+Authorization header to fixed `/api/public/share` and `/api/public/share/content`
+paths. Expiry/revocation is checked for each request. Old token-in-path routes
+were removed; issue new links for any local pre-rebuild shares.
+
+Never collect Authorization/Cookie headers or request bodies in proxy/APM logs.
+Google's `/auth/google/callback` contains a short-lived authorization code and
+state in its query; verify Render/proxy log behavior and redact that query.
+Application-level logging cannot certify upstream logging configuration.
 
 ## Backups
 
-Back up `workspace.sqlite3` through SQLite's online backup mechanism or a stopped
-process, plus the entire `objects/` prefix, `runtime-manifest.json`, and the
-private `share-token.secret`. The secret is required to replay an idempotent
-share response; losing it does not reveal existing shares but makes such replay
-unavailable. Test a restore into an isolated data directory. Database rows,
-object bytes, and the secret must be restored to the same point in time.
+The snapshot tool coordinates the database, all private object files, runtime
+manifest and `share-token.secret`. The supported `wayline` launcher takes an
+exclusive workspace lock; snapshot creation refuses while that process is live.
+Stop the application and take a verified snapshot into a **new directory outside
+its data directory**:
+
+```bash
+python -m lingbot_map.workspace.backup create --data-dir /data --output /backup/wayline-YYYYMMDD
+python -m lingbot_map.workspace.backup restore --snapshot /backup/wayline-YYYYMMDD --output /restore/wayline-YYYYMMDD
+```
+
+Creation uses SQLite's backup API and hashes every included file. Restore verifies
+file hashes, database integrity and references, refuses an existing destination,
+and removes incomplete output on failure. Tests recover scene bytes and an
+idempotently generated share, proving the secret and database travel together.
+
+Snapshots contain private captures and capability material. Encrypt and copy them
+off the application disk with restricted access; verify a restore before switching
+the live data path. A local snapshot is not offsite disaster recovery. The actual
+Render maintenance/export procedure, encrypted offsite destination, automation,
+retention and recovery objectives still need to be configured and tested on the
+chosen account. Render's automatic disk snapshots alone do not close this gate.
 
 ## Observability required before public launch
 

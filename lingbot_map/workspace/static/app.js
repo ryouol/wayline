@@ -246,6 +246,9 @@ function showApp(user, csrfToken) {
 
 function renderAccountActions() {
   byId("saveWorkspace").hidden = state.accountType !== "trial" || !state.config?.googleSignIn;
+  byId("researchForm").hidden = state.accountType === "trial";
+  // A session refresh must not re-enable an in-flight operator upload.
+  if (state.accountType === "trial") renderReconstructionStatus();
 }
 
 function toast(message) {
@@ -594,13 +597,19 @@ async function renderJobDetail() {
 async function loadEngines() {
   const result = await api("/api/engines");
   state.engine = result.engines.find((engine) => engine.id === "lingbot-research-v1");
-  const enabled = Boolean(state.engine?.available);
+  renderReconstructionStatus();
+}
+
+function renderReconstructionStatus() {
+  const trial = state.accountType === "trial";
+  const enabled = !trial && Boolean(state.engine?.available);
   byId("researchButton").disabled = !enabled;
-  byId("researchStatus").textContent = enabled ? "GPU runner configured" : "Reconstruction unavailable";
+  byId("researchStatus").textContent = trial ? "Synthetic playground" : (enabled ? "GPU runner configured" : "Reconstruction unavailable");
   byId("researchStatus").classList.toggle("available", enabled);
-  byId("researchReason").textContent = enabled
-    ? "Your capture is processed privately. Research preview; no payment required."
-    : (state.accountType === "trial" && state.config?.googleSignIn ? "Sign in with Google to reconstruct your own capture."
+  byId("researchReason").textContent = trial
+    ? (state.config?.googleSignIn ? "Sign in with Google to reconstruct your own capture."
+      : "This private, one-hour playground creates synthetic scenes. Video signup is still being connected.")
+    : (enabled ? "Your capture is processed privately. Research preview; no payment required."
       : "The GPU runner is not connected yet. You can explore the sample while setup is completed.");
 }
 
@@ -708,7 +717,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     toast(error.message);
     byId("researchMessage").textContent = error.message;
   } finally {
-    button.disabled = !state.engine?.available;
+    renderReconstructionStatus();
   }
 });
 

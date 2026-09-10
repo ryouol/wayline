@@ -28,8 +28,10 @@ Keep one instance, automatic deploys and previews off, and the limits below.
 The target is not an enforced invoice cap.
 
 Modal supports workspace usage budgets before credits and spend limits after
-credits on its Usage & Billing page. These have not been configured or verified
-for this deployment. Environment budgets require Team/Enterprise and cover
+credits on its Usage & Billing page. The shared `royluo05` workspace showed a
+$200 usage limit and no custom spend limit on 2026-09-10; these were not changed
+because UNRENDER also uses the workspace. Wayline therefore relies on the
+application allowances below, not a verified project-specific provider cap. Environment budgets require Team/Enterprise and cover
 compute rather than the full invoice. Do not upgrade merely to obtain them or
 silently impose workspace restrictions on unrelated apps. See
 [Modal budgets](https://modal.com/docs/guide/budgets).
@@ -95,6 +97,10 @@ runner, 5.65 seconds in model inference, and 5,994,845,696 bytes peak allocated
 VRAM. These are different timing scopes, not billable-time measurements. The
 11,728,872-byte output rendered in the browser. This tiny artificial input cannot
 set pricing or GPU sizing for real captures; see [Modal QA](MODAL_QA.md).
+
+A later live Render-to-Modal diagnostic reached READY in 41.28 seconds with four
+frames and a 7.82 MB scene, then scaled to zero workers. This used the same tiny
+generated source, not a room capture. See [live QA](RENDER_QA.md).
 
 ## Measure before pricing
 

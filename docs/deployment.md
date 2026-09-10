@@ -82,10 +82,12 @@ enforced invoice cap. See [operating costs](operating-costs.md).
 The private Modal worker is deployed and the pinned original checkpoint was
 prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
-Successful Render service verification, real Google sign-in, an owned capture, operator
-legal/contact identity, provider budgets and live logging/edge-limit checks remain
-pending. The Modal CLI connection is configured locally; Render still needs its
-own private, suitably scoped Modal credential.
+Render deployment, a generated-input GPU round trip, download/share expiry and
+revocation, visitor isolation and redeploy persistence passed; see [live QA](RENDER_QA.md).
+The app runs commit `d3a6989`. Real Google sign-in, an owned capture, operator
+legal/contact identity, provider budgets and upstream logging/edge-limit checks
+remain pending. Render holds a private personal-workspace Modal credential; it
+is not scoped to one app. No credentials appear in Git or browser assets.
 
 The production image passes `scripts/smoke_container.py` with a read-only root,
 non-root user, 512 MiB memory and 0.5 CPU. Both `/data` and `/tmp` use disposable

@@ -15,7 +15,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
-- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The first deploy revealed a root-owned disk permission issue; `/data/wayline` keeps private data in an app-owned directory under the mount.
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. The live service runs commit `d3a6989`; [Render QA](RENDER_QA.md) verifies a generated-input original-model run, visitor isolation, shares and redeploy persistence.
 
 ## Verification boundary
 
@@ -28,7 +28,8 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 - [x] Authenticate Modal, deploy the private worker and prepare the verified original checkpoint. Completed 2026-09-10; a generated-video diagnostic also passed.
 - [ ] Run a short owned video through the actual GPU: upload → status → ready → replay → walk → whole scene → download → expiring share in another session. Record cold/warm latency, GPU/CPU/memory cost, output bytes, failure rate and quality.
 - [ ] Configure the Google OAuth client, approved callback origin and secrets; verify real signup, returning login, logout and account switching.
-- [ ] Deploy the exact reviewed image/commit to Render and verify health, TLS, allowed host, upload limits, shutdown/recovery, logs and secrets there.
+- [x] Deploy the reviewed commit to Render; verify HTTPS/health, private authentication, configured limits, a generated-input GPU run, shares, sampled secret/log checks and persistence across redeployment. See `RENDER_QA.md`.
+- [ ] Complete deployed edge/load/shutdown testing and upstream proxy logging verification, including OAuth callback query redaction.
 - [ ] Validate provider limits/alerts, remote cancellation and failure/crash cleanup. Successful-run physical cleanup, explicit SDK cancellation and restarted-worker cleanup of a deliberately due record passed on Modal; running-inference cancellation and the full grace-period wait remain open. The app's admission budget is not a provider invoice cap.
 - [ ] Configure encrypted offsite backups and run a deployed restore drill. Local offline snapshot tests do not prove the offsite schedule or Render recovery procedure.
 - [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.

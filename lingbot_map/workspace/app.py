@@ -1,9 +1,12 @@
 """FastAPI surface for the authenticated 3D scene workspace."""
 
 import argparse
+import asyncio
 import hmac
 import logging
 import re
+import shutil
+import tempfile
 import threading
 import time
 from collections import defaultdict, deque
@@ -15,13 +18,11 @@ from typing import Annotated, Any, Literal
 from fastapi import (
     Depends,
     FastAPI,
-    File,
     Header,
     HTTPException,
     Query,
     Request,
     Response,
-    UploadFile,
 )
 from fastapi import (
     Path as ApiPath,
@@ -30,8 +31,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import ClientDisconnect
 
 from .auth_routes import register_auth_routes
 from .config import Settings
@@ -380,6 +384,7 @@ def create_app(
     workspace = service or WorkspaceService(runtime)
     limiter = LoginLimiter()
     identities = IdentityStore(workspace.database)
+    upload_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -639,27 +644,76 @@ def create_app(
                     ]
         return {"engines": descriptors}
 
-    @application.post("/api/assets", status_code=201, response_model=AssetResponse)
-    def upload_asset(
+    @application.post(
+        "/api/assets",
+        status_code=201,
+        response_model=AssetResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["file"],
+                            "properties": {"file": {"type": "string", "format": "binary"}},
+                            "additionalProperties": False,
+                        }
+                    }
+                },
+            }
+        },
+    )
+    async def upload_asset(
+        request: Request,
         current: CurrentPrincipal,
-        file: Annotated[UploadFile, File()],
         idempotency_key: IdempotencyKey = None,
     ):
-        if identities.is_guest(current.user_id):
-            file.file.close()
+        if await run_in_threadpool(identities.is_guest, current.user_id):
             raise HTTPException(403, "Sign in with Google to upload your own video.")
-        try:
-            result = workspace.upload_video(
-                tenant_id=current.tenant_id,
-                filename=file.filename,
-                media_type=file.content_type,
-                stream=file.file,
-                idempotency_key=idempotency_key,
+        if not upload_lock.acquire(blocking=False):
+            raise HTTPException(
+                429,
+                "Another upload is in progress. Please try again shortly.",
+                headers={"Retry-After": "5"},
             )
+        try:
+            await run_in_threadpool(
+                workspace.database.consume_rate,
+                current.tenant_id,
+                "upload_request",
+                limit=runtime.upload_rate_per_minute,
+            )
+            free = (await run_in_threadpool(shutil.disk_usage, tempfile.gettempdir())).free
+            if free < runtime.max_upload_bytes + runtime.storage_min_free_bytes:
+                raise HTTPException(507, "There is not enough temporary storage for an upload.")
+            # Parse only after authentication and admission. File() dependencies
+            # would spool the entire multipart body before checking the principal.
+            try:
+                async with asyncio.timeout(runtime.upload_timeout_seconds):
+                    form = await request.form(max_files=1, max_fields=0)
+            except TimeoutError as error:
+                raise HTTPException(408, "Upload timed out. Please try again.") from error
+            except ClientDisconnect as error:
+                raise HTTPException(400, "Upload connection was interrupted.") from error
+            try:
+                file = form.get("file")
+                if not isinstance(file, UploadFile):
+                    raise HTTPException(422, "Provide one video in the file field.")
+                result = await run_in_threadpool(
+                    workspace.upload_video,
+                    tenant_id=current.tenant_id,
+                    filename=file.filename,
+                    media_type=file.content_type,
+                    stream=file.file,
+                    idempotency_key=idempotency_key,
+                )
+            finally:
+                await form.close()
         except UploadRejected as error:
             raise HTTPException(error.status_code, str(error)) from error
         finally:
-            file.file.close()
+            upload_lock.release()
         return _asset(result)
 
     @application.get("/api/assets", response_model=AssetsResponse)

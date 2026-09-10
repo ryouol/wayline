@@ -45,6 +45,7 @@ class Settings:
     cookie_secure: bool = True
     session_ttl_seconds: int = 12 * 60 * 60
     max_upload_bytes: int = 250 * 1024 * 1024
+    upload_timeout_seconds: int = 900
     max_artifact_bytes: int = 100 * 1024 * 1024
     global_storage_bytes: int = 20 * 1024 * 1024 * 1024
     scene_delivery_budget_bytes: int = 2_000_000_000
@@ -116,6 +117,7 @@ class Settings:
             cookie_secure=_bool_env("LINGBOT_COOKIE_SECURE", environment == "production"),
             session_ttl_seconds=int(os.getenv("LINGBOT_SESSION_TTL_SECONDS", str(12 * 60 * 60))),
             max_upload_bytes=int(os.getenv("LINGBOT_MAX_UPLOAD_BYTES", str(250 * 1024 * 1024))),
+            upload_timeout_seconds=int(os.getenv("LINGBOT_UPLOAD_TIMEOUT_SECONDS", "900")),
             max_artifact_bytes=int(os.getenv("LINGBOT_MAX_ARTIFACT_BYTES", str(100 * 1024 * 1024))),
             global_storage_bytes=int(
                 os.getenv("LINGBOT_GLOBAL_STORAGE_BYTES", str(20 * 1024 * 1024 * 1024))
@@ -232,6 +234,7 @@ class Settings:
         bounded_runtime_values = {
             "LINGBOT_SESSION_TTL_SECONDS": self.session_ttl_seconds,
             "LINGBOT_MAX_UPLOAD_BYTES": self.max_upload_bytes,
+            "LINGBOT_UPLOAD_TIMEOUT_SECONDS": self.upload_timeout_seconds,
             "LINGBOT_MAX_ARTIFACT_BYTES": self.max_artifact_bytes,
             "LINGBOT_GLOBAL_STORAGE_BYTES": self.global_storage_bytes,
             "WAYLINE_SCENE_DELIVERY_BUDGET_BYTES": self.scene_delivery_budget_bytes,
@@ -250,6 +253,8 @@ class Settings:
             raise ValueError(f"{invalid} must be positive")
         if self.storage_min_free_bytes < 0:
             raise ValueError("LINGBOT_STORAGE_MIN_FREE_BYTES must not be negative")
+        if self.upload_timeout_seconds > 900:
+            raise ValueError("LINGBOT_UPLOAD_TIMEOUT_SECONDS must not exceed 900")
         if self.max_artifact_bytes > self.global_storage_bytes:
             raise ValueError("artifact limit cannot exceed the global storage limit")
         if self.max_upload_bytes > self.global_storage_bytes:

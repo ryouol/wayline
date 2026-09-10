@@ -71,6 +71,7 @@ jobs:
           node --check lingbot_map/workspace/static/share.js
           node --check lingbot_map/workspace/static/timeline.js
           node tests/session-events.test.js
+          node tests/inventory-selection.test.js
           node tests/viewer-lifecycle.test.js
           node tests/viewer-trace.test.js
           node tests/timeline.test.js

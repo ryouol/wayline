@@ -432,16 +432,20 @@ function renderShares() {
   });
 }
 
+function mergeInventoryRows(existing, incoming) {
+  const rows = new Map(existing.map((row) => [row.id, row]));
+  incoming.forEach((row) => rows.set(row.id, row));
+  return [...rows.values()];
+}
+
 async function loadAssets({ append = false } = {}) {
   const query = new URLSearchParams({ limit: "25" });
   if (append && state.assetCursor) query.set("cursor", state.assetCursor);
   const result = await api(`/api/assets?${query}`);
-  if (append) {
-    const seen = new Set(state.assets.map((asset) => asset.id));
-    state.assets.push(...result.assets.filter((asset) => !seen.has(asset.id)));
-  } else state.assets = result.assets;
-  result.assets.filter((asset) => !asset.deletable).forEach((asset) => {
-    state.selectedAssets.delete(asset.id);
+  state.assets = append ? mergeInventoryRows(state.assets, result.assets) : result.assets;
+  const deletableIds = new Set(state.assets.filter((asset) => asset.deletable).map((asset) => asset.id));
+  state.selectedAssets.forEach((id) => {
+    if (!deletableIds.has(id)) state.selectedAssets.delete(id);
   });
   state.assetCursor = result.nextCursor;
   byId("loadMoreAssets").hidden = !state.assetCursor;
@@ -453,10 +457,12 @@ async function loadShares({ append = false } = {}) {
   const query = new URLSearchParams({ limit: "25" });
   if (append && state.shareCursor) query.set("cursor", state.shareCursor);
   const result = await api(`/api/shares?${query}`);
-  if (append) {
-    const seen = new Set(state.shares.map((share) => share.id));
-    state.shares.push(...result.shares.filter((share) => !seen.has(share.id)));
-  } else state.shares = result.shares;
+  state.shares = append ? mergeInventoryRows(state.shares, result.shares) : result.shares;
+  const now = Date.now() / 1000;
+  const activeIds = new Set(state.shares.filter((share) => !share.revokedAt && share.expiresAt > now).map((share) => share.id));
+  state.selectedShares.forEach((id) => {
+    if (!activeIds.has(id)) state.selectedShares.delete(id);
+  });
   state.shareCursor = result.nextCursor;
   byId("loadMoreShares").hidden = !state.shareCursor;
   renderShares();

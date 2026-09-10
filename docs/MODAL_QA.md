@@ -57,6 +57,30 @@ frame at 2.5 seconds. Nominal FPS is not the replay timebase.
   storage budget, 20 MiB artifact ceiling and 256 MiB free-space floor; application
   defaults and the user's main local workspace were unchanged.
 
+## Cancellation and restart-cleanup drill
+
+A second generated-video attempt, `fc-01M267GM96AS8DVHQP4K13JRJ0`, encountered
+an A100 80 GB capacity wait. The driver could not observe an allocated input
+within its 30-second allocation check and exited, so its planned API-driven
+running-cancellation assertion did not pass. This is not a model-quality result.
+
+A separate explicit Modal SDK cancellation was acknowledged. Provider statistics
+then reached zero backlog, zero running inputs and zero containers; the call
+reported TERMINATED, and logs recorded InputCancellation and runner termination.
+The call graph was delayed and did not provide a reliable real-time allocation
+signal. Modal documents that limitation in its
+[FunctionCall reference](https://modal.com/docs/sdk/py/latest/FunctionCall).
+
+The pending cleanup record survived application shutdown. After confirming
+provider termination, the operator advanced only this isolated test record's
+`cleanup_after` timestamp. A new application instance with Modal submissions
+disabled drained that record in 2.09 seconds. A direct source read returned not
+found and a separate volume listing returned `[]`. No production grace period
+or application default was changed. This verifies due-record cleanup after
+restart; it does not verify waiting through the complete conservative deadline,
+API-triggered cancellation during model inference, or crash recovery at every
+transport boundary. No user capture was used.
+
 ## Remaining acceptance
 
 Run a short owned capture, then realistic upper-bound captures, including cold

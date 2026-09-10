@@ -12,7 +12,7 @@ Updated 2026-09-10 against the attached six-phase brief. Stack: Python/FastAPI, 
 | Every endpoint authenticated/validated | ✅ Inventory below; intentionally public shells/config/auth entrypoints expose no private tenant data. Private operations use server-derived ownership and cookie CSRF. Tests cover anonymous access, cross-tenant isolation and malformed input. |
 | RLS | ➖ SQLite is accessible only to the server; no network/browser DB access or RLS switch exists. Tenant checks and transactions are tested. A future Postgres migration needs its own roles/RLS tests. |
 | Broken/bypassed auth | ✅ No unconditional auth bypass introduced. Trial and Google sessions are isolated identities. Research acknowledgement and provider enablement remain deliberate gates. |
-| Public storage | ✅ Local objects are private, with normalized keys and 0600 files under 0700 directories. Shares are scoped/expiring/revocable. ⚠️ Modal volume permissions and deployed edge/storage settings await provider access. |
+| Public storage | ✅ Local objects are private, with normalized keys and 0600 files under 0700 directories. Shares are scoped/expiring/revocable. ⚠️ Modal private resources are provisioned and remote deletion is verified; account-role/token-scope review and Render edge/storage settings remain pending. |
 
 Credentials: `LINGBOT_BOOTSTRAP_TOKEN`, `WAYLINE_GOOGLE_CLIENT_ID`, `WAYLINE_GOOGLE_CLIENT_SECRET`, `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` are loaded server-side, supplied through Render secrets/environment. OAuth state, nonce, PKCE verifier and server sessions are temporary server records. Client ID is not a secret. Share capabilities travel in URL fragments and request authorization headers, not request paths/query strings. No credential value is committed or printed in this report.
 
@@ -81,13 +81,13 @@ Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webma
 | Loading states | ✅ Busy state, upload/queue/progress/viewer feedback. API calls bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation bounded. |
 | Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. |
 | Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
-| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. ⚠️ Real provider flows pending. |
+| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ⚠️ Real Google/Render and owned-capture flows remain pending. |
 | Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. ⚠️ Real Google callback/domain awaiting setup. |
 | Clickable logo | ✅ Home link across product/support/shared pages. |
 | Placeholder text/unused navigation | ✅ Fake product copy removed; explicit operator TODO disclosures retained. Research settings remain secondary. |
 | Dynamic copyright | ✅ Current year rendered by shared site script. |
 
-Changed: `static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,site.js}`, API validation and tests. Skipped: invented checkout/contact submission and claims of remote success. Private filenames/thumbnails are cleared on logout; stale requests and old timelines cannot repopulate a new account/scene.
+Changed: `static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,site.js}`, API validation and tests. Skipped: invented checkout/contact submission and claims of owned-capture or public-deployment acceptance. Private filenames/thumbnails are cleared on logout; stale requests and old timelines cannot repopulate a new account/scene.
 
 ## Phase 4 — Mobile and performance
 
@@ -135,6 +135,6 @@ Changed: public copy, CSS, markup, brand assets, metadata/manifest, CLI product 
 3. Same file: support email/mailto, phone/tel or explicit no-phone-support policy, legal entity/address.
 4. Same file and `static/site.js`: approved analytics measurement ID and an implemented/audited same-origin collector; update policy/consent before enabling.
 5. `static/index.html`: approved `LINGBOT_PUBLIC_BASE_URL` for absolute public metadata.
-6. Provider setup: Render host/secrets, Google client/callback, Modal authentication, owned acceptance capture, spend alerts and encrypted offsite backup destination.
+6. Provider setup: Render host/secrets, Google client/callback, scoped Modal credential for Render, owned acceptance capture, spend alerts and encrypted offsite backup destination. Local Modal authentication is complete.
 
 See `launch-readiness.md` for remaining deployment, mobile, model-quality and rights gates. These unresolved items prevent claiming the full requested product is finished.

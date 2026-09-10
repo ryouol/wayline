@@ -29,7 +29,7 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 - [ ] Run a short owned video through the actual GPU: upload → status → ready → replay → walk → whole scene → download → expiring share in another session. Record cold/warm latency, GPU/CPU/memory cost, output bytes, failure rate and quality.
 - [ ] Configure the Google OAuth client, approved callback origin and secrets; verify real signup, returning login, logout and account switching.
 - [ ] Deploy the exact reviewed image/commit to Render and verify health, TLS, allowed host, upload limits, shutdown/recovery, logs and secrets there.
-- [ ] Validate provider limits/alerts, remote cancellation and failure/crash cleanup. Successful-run physical cleanup passed on Modal. The app's admission budget is not a provider invoice cap.
+- [ ] Validate provider limits/alerts, remote cancellation and failure/crash cleanup. Successful-run physical cleanup, explicit SDK cancellation and restarted-worker cleanup of a deliberately due record passed on Modal; running-inference cancellation and the full grace-period wait remain open. The app's admission budget is not a provider invoice cap.
 - [ ] Configure encrypted offsite backups and run a deployed restore drill. Local offline snapshot tests do not prove the offsite schedule or Render recovery procedure.
 - [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.

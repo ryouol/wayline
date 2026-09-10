@@ -1,11 +1,101 @@
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
+import requests
 from fastapi.testclient import TestClient
 
 from lingbot_map.workspace import identity
 from lingbot_map.workspace.app import create_app
 from lingbot_map.workspace.identity import IdentityStore
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "nonce",
+        "unverified",
+        "subject",
+        "missing_token",
+        "provider",
+        "timeout",
+        "signature",
+        "certificate_timeout",
+    ],
+)
+def test_google_exchange_validates_provider_response_and_identity(monkeypatch, scenario):
+    claims = {"sub": "google-123", "nonce": "browser-nonce", "email_verified": True}
+    if scenario == "nonce":
+        claims["nonce"] = "another-browser"
+    elif scenario == "unverified":
+        claims["email_verified"] = "true"
+    elif scenario == "subject":
+        claims["sub"] = ""
+    calls = []
+
+    class ProviderSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            calls.append("closed")
+
+        def post(self, url, *, data, timeout):
+            assert url == "https://oauth2.googleapis.com/token"
+            assert data["code_verifier"] == "pkce-verifier"
+            assert data["redirect_uri"] == "https://wayline.example/auth/google/callback"
+            assert timeout == 15
+            if scenario == "timeout":
+                raise requests.Timeout("provider timed out")
+            return self
+
+        status_code = 503 if scenario == "provider" else 200
+
+        def json(self):
+            return {} if scenario == "missing_token" else {"id_token": "signed-identity"}
+
+    def verify(token, request, audience):
+        assert token == "signed-identity"
+        assert audience == "client-id"
+        if scenario == "signature":
+            raise ValueError("invalid signature")
+        request(url="https://www.googleapis.com/oauth2/v1/certs", timeout=999)
+        return claims
+
+    def certificate_request(*, session):
+        assert isinstance(session, ProviderSession)
+
+        def request(*, url, timeout):
+            assert url == "https://www.googleapis.com/oauth2/v1/certs"
+            assert timeout == 15
+            if scenario == "certificate_timeout":
+                raise requests.Timeout("certificate fetch timed out")
+
+        return request
+
+    monkeypatch.setattr(identity.requests, "Session", ProviderSession)
+    monkeypatch.setattr(identity, "verify_oauth2_token", verify)
+    monkeypatch.setattr(identity, "GoogleRequest", certificate_request)
+
+    def exchange():
+        return identity.exchange_google_code(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="https://wayline.example/auth/google/callback",
+            code="one-use-code",
+            verifier="pkce-verifier",
+            nonce="browser-nonce",
+        )
+
+    if scenario == "valid":
+        assert exchange() == claims
+    else:
+        with pytest.raises(
+            requests.Timeout if scenario in {"timeout", "certificate_timeout"} else ValueError
+        ):
+            exchange()
+    assert calls == ["closed"]
 
 
 def test_trial_is_isolated_and_cannot_upload_or_spend(client, service):

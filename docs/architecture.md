@@ -107,5 +107,7 @@ does.
   tenant IDs and local paths. The child environment is allowlisted, but this is
   not an OS sandbox; public deployments must place runners in dedicated
   containers/jobs with restricted filesystem, identity, and egress.
-- Application body checks reject oversized declared lengths; the production
-  edge remains responsible for total/multipart limits on chunked transfers.
+- Application body checks reject oversized declared lengths and count actual
+  ASGI stream bytes before the next chunk reaches the parser, including chunked
+  transfers. Partial multipart files close on rejection. Edge concurrency,
+  upload timeouts and aggregate resource limits remain deployment requirements.

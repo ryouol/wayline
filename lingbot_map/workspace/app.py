@@ -46,6 +46,7 @@ from .database import (
 from .engines import EngineUnavailable
 from .identity import IdentityStore
 from .pages import SUPPORT_PAGES, app_page, support_page
+from .request_limits import RequestBodyLimitMiddleware
 from .runtime_lock import workspace_lock
 from .service import InvalidEngineParameters, UploadRejected, WorkspaceService
 
@@ -406,29 +407,16 @@ def create_app(
     if runtime.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
+    application.add_middleware(
+        RequestBodyLimitMiddleware, max_upload_bytes=runtime.max_upload_bytes
+    )
 
     register_auth_routes(application, workspace, runtime, limiter, SESSION_COOKIE)
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
-        rejected: Response | None = None
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                declared_bytes = int(content_length)
-            except ValueError:
-                rejected = JSONResponse(
-                    status_code=400, content={"detail": "Invalid Content-Length."}
-                )
-            else:
-                upload_ceiling = runtime.max_upload_bytes + 1024 * 1024
-                request_ceiling = upload_ceiling if request.url.path == "/api/assets" else 64 * 1024
-                if declared_bytes < 0 or declared_bytes > request_ceiling:
-                    rejected = JSONResponse(
-                        status_code=413, content={"detail": "Request body is too large."}
-                    )
         try:
-            response = rejected or await call_next(request)
+            response = await call_next(request)
         except Exception:
             # Capability tokens appear in share URLs; never copy paths to logs.
             logger.exception("unhandled workspace request failure")

@@ -23,9 +23,13 @@ Postgres migration must preserve their transaction boundaries.
 Set `LINGBOT_ALLOWED_HOSTS` to exact public DNS names. If omitted,
 `LINGBOT_PUBLIC_BASE_URL` supplies its hostname; production refuses to start if
 neither produces an allowlist. The app disables docs/OpenAPI in production and
-rejects oversized declared bodies before parsing. The reverse proxy must also
-cap total and multipart request sizes, including chunked bodies, because the
-edge receives bytes before application validation.
+rejects oversized declared bodies before parsing. Its ASGI receive wrapper also
+counts streamed bytes, including chunked bodies and understated lengths, before
+passing each chunk to the parser. Ordinary requests are capped at 64 KiB; the
+upload route allows the configured file ceiling plus 1 MiB multipart overhead.
+Multipart failures close partial parser files. The reverse proxy must still
+bound concurrent requests, slow uploads, multipart complexity and buffering:
+per-request byte limits do not bound aggregate edge/parser resource use.
 
 Terminate TLS at the edge and add HSTS there only after confirming the final
 domain, preload, and subdomain policy. Configure forwarded-header trust to the

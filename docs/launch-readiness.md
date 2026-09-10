@@ -6,6 +6,7 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 
 - Isolated, expiring visitor playgrounds generate a CC0 synthetic scene without sharing an operator token.
 - Private jobs, uploads, artifacts, quota reservations, idempotency, cancellation, retention and deletion use the existing SQLite/object-store transaction boundaries.
+- Request parsing has declared-length and observed-stream byte ceilings, including chunked JSON/multipart bodies. Rejected multipart uploads close partial spool files; deployed aggregate concurrency/timeouts remain required.
 - Google OAuth has browser-bound one-use state, PKCE, nonce and signed ID-token verification. Protocol/identity tests use a mocked provider; actual Google sign-in remains unverified.
 - Google accounts receive one successful video reconstruction, with bounded attempts and capacity. Scene deletion does not replenish the allowance. Synthetic jobs settle zero compute units.
 - The original LingBot Modal deployment, pinned checkpoint preparation, private per-attempt staging, transport deadlines and durable cleanup are implemented. Disabling new submissions retains cleanup responsibilities. No real GPU run has passed yet.

@@ -56,16 +56,21 @@ Preserved original hardening and canvas replacement remain in 027d338; history h
 
 Keep auth routes with identity schema/dependencies; keep timeline construction with matching markup/script order; keep share-fragment URLs with header-authenticated routes/viewer downloads; keep the CLI lock with runtime_lock.py. The aggregate PR should remain draft until remaining acceptance gates and review-size concerns are resolved.
 
+## Request-limit follow-up review
+
+Reviewed the cohesive delta after `bcc8ffe`: [request_limits.py:9](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/request_limits.py:9), its middleware registration and streaming integration tests. All three simplify reviewers and the compatibility, change-size, testing and model-context reviewers completed their passes with no additional findings. The context skill was N/A because no model-visible content changed. The follow-up fits the size guidance; the previously recorded aggregate PR-size concern remains open.
+
 ## Verification
 
-- Python: 133 tests passed, including queue separation, disabled-submission cleanup, bounded remote I/O, unsupported options and the VFR fixture.
-- Ruff strict lint and formatting passed. Mypy passed across 18 source files.
+- Python: 139 tests passed, including queue separation, disabled-submission cleanup, bounded remote I/O, unsupported options, VFR sampling and streamed request limits with multipart spool cleanup.
+- Ruff strict lint and formatting passed. Mypy passed across 19 source files after the request-limit addition.
 - All packaged JavaScript syntax checks passed; session-event, viewer-lifecycle, viewer-trace/walking and timeline Node behavior checks passed.
 - `uv lock --check` passed. Wheel built with `uv build`; required UI and license files verified. The local uv-created venv does not contain pip, so the equivalent local pip-wheel command was unavailable; Docker independently built and installed the wheel using pip.
 - Docker image built successfully. `scripts/smoke_container.py` passed with a non-root/read-only app, private persistent data, readiness and host/auth rejection, two sequential synthetic jobs, GLB download, capability-header sharing and revocation. The disposable container was removed afterward. An initial ad-hoc smoke assertion expected 204 for revocation; the documented API correctly returns 202, and the reproducible script now checks that contract.
 - Corrected reconstruction fixture: Khronos glTF Validator zero errors/warnings. This validates serialization, not model output quality.
 - High-confidence working-tree private-key/provider-token signature scan: no matches. Not a full Git-history or provider audit.
 - Post-review browser QA: repeat sample creation, 750,000-point/120-frame synthetic fixture, replay completion, walking/reset, logout cleanup, anonymous share, verified GLB download and automatic expiry passed. Private/shared pages fit at 390px; see `BROWSER_QA.md`. No application code changed during this pass.
+- Request-limit follow-up: real HTTP chunked requests against a separate local Uvicorn process returned 413 for oversized JSON, 200 for a normal login and 201 with exact stored bytes for a small synthetic video upload. No provider upload or model inference occurred; the temporary workspace/server were removed.
 
 ## Remaining acceptance
 

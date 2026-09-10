@@ -52,7 +52,7 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 | GET/HEAD `/static/{path}` | Packaged static directory only. |
 | GET `/docs`, `/docs/oauth2-redirect`, `/openapi.json` | Development/test only; disabled in production. |
 
-Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine}.py`, tests, Docker/Render configuration. Retained: source licensing notices and established auth/storage transaction boundaries. Skipped: cloud permission changes without credentials, invented commercial rights, shared-owner public signup. Deployed OAuth callback/query and authorization-header redaction still require verification.
+Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine,request_limits}.py`, tests, Docker/Render configuration. Declared and observed request bytes are bounded before parser consumption; tests cover chunked rejection and partial multipart spool cleanup. Retained: source licensing notices and established auth/storage transaction boundaries. Skipped: cloud permission changes without credentials, invented commercial rights, shared-owner public signup. Deployed concurrency/timeout controls, OAuth callback/query and authorization-header redaction still require verification.
 
 ## Phase 2 — Make it real
 

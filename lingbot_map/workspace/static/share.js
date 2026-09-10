@@ -13,6 +13,7 @@
     document.getElementById("shareLicense").textContent = data.artifact.licenseId;
     document.getElementById("sharedDownload").href = data.artifact.contentUrl;
     document.getElementById("sharedDownload").setAttribute("download", data.artifact.filename);
+    document.getElementById("sharedDownload").hidden = false;
     document.getElementById("shareExpiry").textContent = `Link expires ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(data.expiresAt * 1000))}.`;
     const warning = document.getElementById("shareCommercialWarning");
     warning.hidden = !data.researchOnly;

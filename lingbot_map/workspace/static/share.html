@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shared 3D scene</title>
+  <!-- PAGE_METADATA -->
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="share-body">
   <main class="share-shell">
     <header class="share-header">
       <div>
-        <p class="product-kicker">3D Scene Workspace</p>
+        <a class="product-kicker brand-link" href="/">3D Scene Workspace</a>
         <h1 id="shareTitle">Shared scene</h1>
       </div>
       <span class="status-label" id="shareLicense">Loading</span>
@@ -26,11 +27,12 @@
       <canvas id="sharedCanvas" class="scene-canvas share-canvas" tabindex="0" aria-label="Interactive shared 3D point-cloud viewer."></canvas>
       <p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p>
       <p class="legal-note research-warning" id="shareCommercialWarning" role="note" hidden></p>
-      <a class="secondary" id="sharedDownload" href="#">Download artifact</a>
+      <a class="secondary" id="sharedDownload" hidden>Download artifact</a>
       <p class="legal-note" id="shareExpiry"></p>
     </section>
   </main>
   <script src="/static/viewer.js"></script>
   <script src="/static/share.js"></script>
+  <script src="/static/site.js"></script>
 </body>
 </html>

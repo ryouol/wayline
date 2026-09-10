@@ -331,6 +331,9 @@
       if (this.fragmentShader) gl.deleteShader(this.fragmentShader);
       const loseContext = gl.getExtension("WEBGL_lose_context");
       if (loseContext) loseContext.loseContext();
+      // A lost WebGL context belongs to its canvas. Give the next scene a
+      // fresh element while retaining its dimensions, labels, and keyboard target.
+      this.canvas.replaceWith(this.canvas.cloneNode(false));
       this.count = 0;
       this.drag = null;
       this.status.textContent = "Viewer closed.";

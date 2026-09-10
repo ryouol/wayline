@@ -6,6 +6,7 @@ const state = {
   viewerArtifact: null, pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(),
   principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
+  jobsRenderKey: "",
 };
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
 const stageOrder = ["queued", "validating", "generating", "reconstructing", "exporting", "storing", "ready"];
@@ -41,6 +42,10 @@ async function api(path, options = {}) {
   }
   const controller = new AbortController();
   state.controllers.add(controller);
+  byId("requestStatus").hidden = false;
+  document.body.setAttribute("aria-busy", "true");
+  let timedOut = false;
+  const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 60000);
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -80,13 +85,23 @@ async function api(path, options = {}) {
     }
     if (!response.ok) {
       let detail = `Request failed (${response.status}).`;
-      try { detail = (await response.json()).detail || detail; } catch (_) { /* response was not JSON */ }
+      try {
+        const value = (await response.json()).detail;
+        if (typeof value === "string") detail = value;
+        else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
+      } catch (_) { /* response was not JSON */ }
       throw new Error(detail);
     }
     if (response.status === 204) return null;
-    return response.json();
+    return await response.json();
+  } catch (error) {
+    if (timedOut) throw new Error("The request timed out. Refresh to check its status before trying again.");
+    throw error;
   } finally {
+    window.clearTimeout(timeout);
     state.controllers.delete(controller);
+    byId("requestStatus").hidden = state.controllers.size === 0;
+    document.body.setAttribute("aria-busy", String(state.controllers.size > 0));
   }
 }
 
@@ -162,6 +177,7 @@ function secureReset() {
   state.pollTimer = null;
   state.csrf = "";
   state.jobs = [];
+  state.jobsRenderKey = "";
   state.assets = [];
   state.shares = [];
   state.jobCursor = null;
@@ -203,6 +219,8 @@ function showLogin() {
   secureReset();
   byId("loginView").hidden = false;
   byId("appView").hidden = true;
+  byId("mobileWorkspaceCta").hidden = true;
+  byId("skipLink").href = "#loginTitle";
   byId("token").focus();
 }
 
@@ -213,6 +231,8 @@ function showApp(user, csrfToken) {
   state.csrf = csrfToken || "";
   byId("loginView").hidden = true;
   byId("appView").hidden = false;
+  byId("mobileWorkspaceCta").hidden = false;
+  byId("skipLink").href = "#workspaceMain";
   byId("workspaceName").textContent = `${user.tenantName} · ${user.displayName}`;
 }
 
@@ -244,6 +264,9 @@ function addFact(list, label, value) {
 
 function renderJobs() {
   const list = byId("jobList");
+  const key = JSON.stringify([state.jobs, state.selectedId, [...state.selectedJobs]]);
+  if (state.jobsRenderKey === key) return;
+  state.jobsRenderKey = key;
   list.replaceChildren();
   byId("emptyJobs").hidden = state.jobs.length > 0;
   state.jobs.forEach((job) => {
@@ -273,8 +296,11 @@ function renderJobs() {
     timestamp.className = "job-time";
     timestamp.textContent = formatDate(job.createdAt);
     button.append(name, jobState, timestamp);
-    button.addEventListener("click", () => selectJob(job.id));
-    item.append(selector, button);
+    button.addEventListener("click", () => selectJob(job.id).catch(report));
+    const target = document.createElement("label");
+    target.className = "selector-target";
+    target.append(selector);
+    item.append(target, button);
     list.append(item);
   });
 }
@@ -341,7 +367,10 @@ function inventoryRow({ id, name, meta, selected, disabled = false, actionLabel,
   action.disabled = disabled;
   action.dataset.recordId = id;
   action.addEventListener("click", onAction);
-  item.append(selector, copy, action);
+  const target = document.createElement("label");
+  target.className = "selector-target";
+  target.append(selector);
+  item.append(target, copy, action);
   return item;
 }
 
@@ -463,6 +492,8 @@ async function selectJob(jobId) {
   state.selectedId = jobId;
   renderJobs();
   await renderJobDetail();
+  byId("detailTitle").focus({ preventScroll: true });
+  if (window.matchMedia("(max-width: 860px)").matches) byId("jobDetail").scrollIntoView({ block: "start" });
 }
 
 function updateStages(job) {
@@ -493,7 +524,8 @@ async function renderJobDetail() {
   updateStages(job);
   byId("cancelButton").hidden = terminalStates.has(job.state);
   byId("deleteButton").hidden = !terminalStates.has(job.state);
-  byId("jobMessage").textContent = job.error?.message || (job.state === "cancelled" ? "This job was cancelled and its reservation was released." : "");
+  byId("jobMessage").textContent = job.error?.message || (job.state === "cancelled" ? "This job was cancelled and its reservation was released." : job.state === "ready" ? "Scene ready. Review the point cloud, then download or create an expiring share." : "");
+  byId("jobMessage").classList.toggle("success-message", job.state === "ready");
 
   const provenance = byId("provenanceList");
   provenance.replaceChildren();
@@ -521,8 +553,8 @@ async function renderJobDetail() {
     try {
       if (!state.viewer) state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
       if (state.viewerArtifact !== scene.id) {
-        state.viewerArtifact = scene.id;
         await state.viewer.load(scene.viewUrl);
+        state.viewerArtifact = scene.id;
       }
     } catch (error) {
       byId("viewerStatus").textContent = error.message;
@@ -558,15 +590,26 @@ async function initialize() {
 
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  byId("loginMessage").textContent = "";
+  const button = event.currentTarget.querySelector("button");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Signing in…";
+  byId("token").removeAttribute("aria-invalid");
+  byId("loginMessage").textContent = "Signing in…";
   try {
-    const result = await api("/api/session", { method: "POST", json: { token: byId("token").value } });
+    const result = await api("/api/session", { method: "POST", json: { token: byId("token").value.trim() } });
     byId("token").value = "";
     showApp(result.user, result.csrfToken);
     broadcastSession("session-changed");
     await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
+    byId("workspaceMain").focus();
+    toast("Signed in. Create a synthetic scene or open a recent scene.");
   } catch (error) {
     byId("loginMessage").textContent = error.message;
+    byId("token").setAttribute("aria-invalid", "true");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Continue";
   }
 });
 
@@ -583,6 +626,7 @@ byId("logoutButton").addEventListener("click", async () => {
 byId("sampleButton").addEventListener("click", async () => {
   const button = byId("sampleButton");
   button.disabled = true;
+  button.textContent = "Creating scene…";
   try {
     const job = await api("/api/jobs/sample", { method: "POST", idempotent: true });
     state.selectedId = job.id;
@@ -592,6 +636,7 @@ byId("sampleButton").addEventListener("click", async () => {
     toast(error.message);
   } finally {
     button.disabled = false;
+    button.textContent = "Create synthetic scene";
   }
 });
 
@@ -602,10 +647,12 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const button = byId("researchButton");
   let asset = null;
   button.disabled = true;
+  byId("researchMessage").textContent = "Uploading video…";
   try {
     const body = new FormData();
     body.append("file", file);
     asset = await api("/api/assets", { method: "POST", body, idempotent: true });
+    byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     const job = await api("/api/jobs/research", {
       method: "POST",
       idempotent: true,
@@ -622,12 +669,14 @@ byId("researchForm").addEventListener("submit", async (event) => {
     state.selectedId = job.id;
     asset = null;
     await Promise.all([loadJobs(), loadAssets()]);
+    byId("researchMessage").textContent = "Reconstruction queued. Follow its progress in Scene review.";
   } catch (error) {
     if (asset) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }
     toast(error.message);
+    byId("researchMessage").textContent = error.message;
   } finally {
     button.disabled = !state.engine?.available;
   }
@@ -670,8 +719,14 @@ byId("shareButton").addEventListener("click", async () => {
   } catch (error) { toast(error.message); }
 });
 byId("copyShare").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(byId("shareUrl").value);
-  toast("Share URL copied.");
+  try {
+    await navigator.clipboard.writeText(byId("shareUrl").value);
+    toast("Share URL copied.");
+  } catch (_) {
+    byId("shareUrl").focus();
+    byId("shareUrl").select();
+    toast("Clipboard unavailable. Copy the selected link manually.");
+  }
 });
 byId("bulkDeleteButton").addEventListener("click", async () => {
   const total = state.selectedJobs.size + state.selectedAssets.size + state.selectedShares.size;

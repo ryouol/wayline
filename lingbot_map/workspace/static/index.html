@@ -4,20 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>3D Scene Workspace</title>
-  <meta name="description" content="A private workspace for reviewable 3D scene artifacts.">
+  <!-- PAGE_METADATA -->
+  <!-- TODO: provide LINGBOT_PUBLIC_BASE_URL for absolute social-preview URLs on the final deployment. -->
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <a class="skip-link" href="#workspaceMain">Skip to workspace</a>
+  <a class="skip-link" href="#loginTitle" id="skipLink">Skip to main content</a>
 
   <main class="login-shell" id="loginView">
     <section class="login-panel" aria-labelledby="loginTitle">
-      <p class="product-kicker">3D Scene Workspace</p>
-      <h1 id="loginTitle">Open your private workspace</h1>
-      <p class="login-copy">Use the workspace token printed when the server starts. Production tokens must be supplied through the environment.</p>
+      <a class="product-kicker brand-link" href="/">3D Scene Workspace</a>
+      <h1 id="loginTitle" tabindex="-1">Open your private workspace</h1>
+      <p class="login-copy">Sign in with the token supplied by your workspace operator. For a local demo, use the token printed when your server starts.</p>
       <form id="loginForm">
         <label for="token">Workspace token</label>
-        <input id="token" name="token" type="password" autocomplete="current-password" minlength="16" required>
+        <input id="token" name="token" type="password" autocomplete="current-password" minlength="16" maxlength="512" aria-describedby="loginMessage" required>
         <button class="primary" type="submit">Continue</button>
       </form>
       <p class="form-message" id="loginMessage" role="alert"></p>
@@ -28,7 +29,7 @@
   <div id="appView" hidden>
     <header class="app-header">
       <div>
-        <p class="product-kicker">3D Scene Workspace</p>
+        <a class="product-kicker brand-link" href="/">3D Scene Workspace</a>
         <p class="workspace-name" id="workspaceName">Workspace</p>
       </div>
       <div class="header-actions">
@@ -37,7 +38,7 @@
       </div>
     </header>
 
-    <main class="workspace" id="workspaceMain">
+    <main class="workspace" id="workspaceMain" tabindex="-1">
       <aside class="source-column" aria-label="Create and browse jobs">
         <section class="section-block" aria-labelledby="createTitle">
           <p class="section-label">New scene</p>
@@ -47,7 +48,9 @@
           <p class="inline-meta">CC0-1.0 · no GPU · no compute units consumed</p>
         </section>
 
-        <section class="section-block" aria-labelledby="uploadTitle">
+        <details class="section-block secondary-options">
+          <summary>Research adapter · advanced setup</summary>
+          <section aria-labelledby="uploadTitle">
           <div class="section-heading-row">
             <div>
               <p class="section-label">Research adapter</p>
@@ -71,7 +74,9 @@
             </div>
             <button class="secondary wide" id="researchButton" type="submit" disabled>Upload and reconstruct</button>
           </form>
-        </section>
+          <p class="form-message" id="researchMessage" role="status"></p>
+          </section>
+        </details>
 
         <section class="jobs-section" aria-labelledby="jobsTitle">
           <div class="section-heading-row">
@@ -131,7 +136,7 @@
           <div class="detail-header">
             <div>
               <p class="section-label" id="detailEngine">Engine</p>
-              <h2 id="detailTitle">Scene</h2>
+              <h2 id="detailTitle" tabindex="-1">Scene</h2>
               <p class="detail-meta" id="detailMeta"></p>
             </div>
             <div class="detail-actions">
@@ -167,7 +172,7 @@
             <canvas id="sceneCanvas" class="scene-canvas" tabindex="0" aria-label="Interactive 3D point-cloud viewer. Use arrow keys to orbit and plus or minus to zoom."></canvas>
             <p class="viewer-status" id="viewerStatus" role="status">Waiting for a scene.</p>
             <div class="artifact-actions">
-              <a class="secondary" id="downloadLink" href="#">Download GLB</a>
+              <a class="secondary" id="downloadLink">Download GLB</a>
               <button class="secondary" id="shareButton" type="button">Create expiring share</button>
             </div>
             <dl class="artifact-facts" id="artifactFacts"></dl>
@@ -184,6 +189,8 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <p class="request-status" id="requestStatus" role="status" hidden>Working…</p>
+  <a class="mobile-workspace-cta primary" id="mobileWorkspaceCta" href="#createTitle" hidden>New synthetic scene</a>
 
   <dialog id="shareDialog" aria-labelledby="shareDialogTitle">
     <form method="dialog" class="dialog-panel">
@@ -202,5 +209,6 @@
   <script src="/static/session-events.js"></script>
   <script src="/static/viewer.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/site.js"></script>
 </body>
 </html>

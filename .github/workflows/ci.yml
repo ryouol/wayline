@@ -84,6 +84,7 @@ jobs:
           node --check lingbot_map/workspace/static/viewer.js
           node --check lingbot_map/workspace/static/share.js
           node tests/session-events.test.js
+          node tests/viewer-lifecycle.test.js
           bash -n download_weights.sh demo_render/process_videos.sh
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
           python - <<'PY'

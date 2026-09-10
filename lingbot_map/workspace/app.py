@@ -26,9 +26,11 @@ from fastapi import (
     Path as ApiPath,
 )
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import Settings
 from .database import (
@@ -40,6 +42,7 @@ from .database import (
     token_digest,
 )
 from .engines import EngineUnavailable
+from .pages import SUPPORT_PAGES, app_page, support_page
 from .service import UploadRejected, WorkspaceService
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 class LoginRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     token: str = Field(min_length=16, max_length=512)
 
 
@@ -420,10 +423,22 @@ def create_app(
         try:
             response = rejected or await call_next(request)
         except Exception:
-            logger.exception("unhandled request failure on %s", request.url.path)
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": "The request could not be completed."},
+            # Capability tokens appear in share URLs; never copy paths to logs.
+            logger.exception("unhandled workspace request failure")
+            response = (
+                support_page(
+                    "Something went wrong",
+                    "The workspace could not complete this request.",
+                    "<p>Please return to your workspace and try again. Existing jobs are not automatically resubmitted.</p>",
+                    status=500,
+                    origin=runtime.public_base_url,
+                )
+                if "text/html" in request.headers.get("accept", "")
+                and not request.url.path.startswith("/api/")
+                else JSONResponse(
+                    status_code=500,
+                    content={"detail": "The request could not be completed."},
+                )
             )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -434,8 +449,9 @@ def create_app(
             "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
             "form-action 'self'; require-trusted-types-for 'script'; trusted-types default"
         )
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith(("/api/", "/s/")):
             response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         principal_marker = getattr(request.state, "workspace_principal_marker", None)
         if principal_marker:
             response.headers["X-Workspace-Principal"] = principal_marker
@@ -461,6 +477,15 @@ def create_app(
             f"{value['tenant_id']}\0{value['user_id']}"
         )
         logout_request = request.method == "DELETE" and request.url.path == "/api/session"
+        if method == "cookie" and logout_request:
+            # Sign-out remains possible with stale CSRF state, but not from a
+            # cross-site browser request. SameSite=Strict is defense in depth.
+            origin = request.headers.get("origin")
+            expected_origin = runtime.public_base_url or str(request.base_url).rstrip("/")
+            if request.headers.get("sec-fetch-site") == "cross-site" or (
+                origin is not None and origin != expected_origin
+            ):
+                raise HTTPException(403, "Cross-origin sign out is not allowed.")
         if method == "cookie" and request.method in UNSAFE_METHODS and not logout_request:
             supplied = token_digest(x_csrf_token) if x_csrf_token else ""
             if not hmac.compare_digest(supplied, value["csrf_hash"]):
@@ -476,6 +501,37 @@ def create_app(
         )
 
     CurrentPrincipal = Annotated[Principal, Depends(principal)]
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, error: RequestValidationError):
+        # Pydantic's default response echoes input, including malformed tokens.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {"loc": item["loc"], "msg": item["msg"], "type": item["type"]}
+                    for item in error.errors()
+                ]
+            },
+        )
+
+    @application.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, error: StarletteHTTPException):
+        if (
+            error.status_code == 404
+            and "text/html" in request.headers.get("accept", "")
+            and not request.url.path.startswith("/api/")
+        ):
+            return support_page(
+                "Page unavailable",
+                "This page or share is unavailable.",
+                "<p>The page may have moved, or this share may have expired or been revoked. Ask the owner for a new link.</p>",
+                status=404,
+                origin=runtime.public_base_url,
+            )
+        return JSONResponse(
+            {"detail": error.detail}, status_code=error.status_code, headers=error.headers
+        )
 
     @application.exception_handler(QuotaExceeded)
     async def quota_error(_: Request, error: QuotaExceeded):
@@ -852,11 +908,45 @@ def create_app(
     def share_page(token: ShareToken):
         if not workspace.database.resolve_share(token):
             raise HTTPException(404, "Share not found or expired.")
-        return FileResponse(STATIC_DIR / "share.html")
+        return app_page(
+            "share.html",
+            "Shared 3D scene",
+            "A permissioned, expiring 3D scene review.",
+            runtime.public_base_url,
+        )
 
     @application.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        return app_page(
+            "index.html",
+            "3D Scene Workspace",
+            "A private workspace for reviewable 3D scene artifacts.",
+            runtime.public_base_url,
+        )
+
+    @application.get("/privacy", include_in_schema=False)
+    def privacy():
+        return support_page(*SUPPORT_PAGES["privacy"], origin=runtime.public_base_url)
+
+    @application.get("/terms", include_in_schema=False)
+    def terms():
+        return support_page(*SUPPORT_PAGES["terms"], origin=runtime.public_base_url)
+
+    @application.get("/contact", include_in_schema=False)
+    def contact():
+        return support_page(*SUPPORT_PAGES["contact"], origin=runtime.public_base_url)
+
+    @application.get("/robots.txt", include_in_schema=False)
+    def robots():
+        return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
+
+    @application.get("/sitemap.xml", include_in_schema=False)
+    def sitemap():
+        # A private application has no indexable routes. Never enumerate shares.
+        return Response(
+            '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>',
+            media_type="application/xml",
+        )
 
     application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return application

@@ -119,7 +119,8 @@ def build_synthetic_scene() -> SyntheticScene:
         max(point[2] for point in points),
     )
     position_data = b"".join(struct.pack("<fff", *point) for point in points)
-    color_data = b"".join(struct.pack("BBB", *color) for color in colors)
+    # Each vertex color needs a four-byte stride, not only an aligned buffer end.
+    color_data = b"".join(struct.pack("BBBB", *color, 255) for color in colors)
     while len(position_data) % 4:
         position_data += b"\0"
     while len(color_data) % 4:
@@ -165,7 +166,7 @@ def build_synthetic_scene() -> SyntheticScene:
                 "bufferView": 1,
                 "componentType": 5121,
                 "count": len(colors),
-                "type": "VEC3",
+                "type": "VEC4",
                 "normalized": True,
             },
         ],

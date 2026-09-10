@@ -38,6 +38,16 @@ def test_synthetic_sample_is_valid_glb_with_provenance():
         == "deterministically generated; no source imagery and no model inference"
     )
     assert scene.point_count > 4_000
+    assert build_synthetic_scene().glb == scene.glb
+    primitive = document["meshes"][0]["primitives"][0]
+    color = document["accessors"][primitive["attributes"]["COLOR_0"]]
+    assert color["type"] == "VEC4" and color["componentType"] == 5121
+    assert color["normalized"] and color["count"] == scene.point_count
+    view = document["bufferViews"][color["bufferView"]]
+    assert view["byteOffset"] % 4 == 0 and view["byteLength"] == scene.point_count * 4
+    binary = scene.glb[28 + json_length :]
+    rgba = binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+    assert rgba[3::4] == b"\xff" * scene.point_count
 
 
 def test_object_store_rejects_traversal_and_enforces_limit(tmp_path):

@@ -156,6 +156,35 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const fails of [false, true]) {
+    const h = harness(), pending = deferred(), button = h.node("logoutButton");
+    h.select();
+    h.context.respond = (path, options) => {
+      assert.equal(path, "/api/session");
+      assert.equal(options.method, "DELETE");
+      return pending.promise;
+    };
+    const signingOut = button.events.get("click")();
+    assert.equal(button.disabled, true);
+    assert.equal(button.textContent, "Signing out…");
+    assert.equal(h.node("appView").hidden, false, "keep the session visible until revocation succeeds");
+    await button.events.get("click")();
+    assert.equal(h.requests.length, 1, "a repeated click cannot submit another logout");
+    if (fails) pending.reject(new Error("Connection unavailable"));
+    else pending.resolve({});
+    await signingOut;
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, "Sign out");
+    assert.equal(h.node("appView").hidden, !fails);
+    if (fails) {
+      assert.equal(h.node("toast").textContent, "Sign out failed: Connection unavailable");
+      h.context.respond = async () => ({});
+      await button.events.get("click")();
+      assert.equal(h.node("appView").hidden, true, "logout can be retried after failure");
+    }
+    assert.equal(h.node("video").files.length, 0, "logout clears the private capture selection");
+    assert.equal(h.state.controllers.size, 0);
+  }
   {
     const h = harness();
     const pending = Object.fromEntries(["assets", "shares", "jobs"].map((name) => [name, deferred()]));

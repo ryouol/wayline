@@ -550,3 +550,12 @@ The 24-line, three-file source increment passed all three simplify focuses and a
 
 
 146. **The mobile-walk report implied a deployment receipt already existed — Fixed.** P3. [MOBILE_WALK_QA.md:3](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/MOBILE_WALK_QA.md:3). Final evidence review distinguished the new local source checks from the predecessor's live receipt. The introduction now explicitly says these checks do not establish production deployment.
+
+
+## Sign-out visibility — 2026-09-11
+
+147. **Sign out scrolled out of reach in the scene workspace — Fixed in source.** P2. [styles.css:151](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:151). The account header stays visible while the page scrolls, and Sign out uses the existing outlined secondary style. The mobile source-column offset and scroll padding keep account controls accessible.
+
+148. **Global pending feedback covered the signing-out label — Fixed in source.** P3. [styles.css:153](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:153). The redundant global status hides during logout while the disabled button displays Signing out…. Error/retry and successful session cleanup remain visible and tested.
+
+The focused source/test increment completed three simplify passes and four code-review subskills; no new actionable review finding remained. Existing aggregate size finding 139 remains open. All eleven Node suites and 56 Python API/static/production-UX tests pass. [Sign-out QA](SIGNOUT_QA.md) records local scrolling, narrow pending layout and actual cross-tab logout, separately from deployment verification.

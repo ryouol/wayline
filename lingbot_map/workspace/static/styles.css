@@ -148,7 +148,9 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 .form-message { margin: 10px 0 0; color: var(--danger); font-size: 14px; overflow-wrap: anywhere; }
 .form-message:empty { display: none; }
 .success-message { color: var(--accent); }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; height: 70px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.app-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 18px; height: 70px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--surface); }
+html:has(#appView:not([hidden])) { scroll-padding-top: 80px; }
+body:has(#logoutButton:disabled) > .request-status { display: none; }
 .app-header .wordmark { font-size: 25px; }
 .workspace-brand { display: flex; align-items: center; gap: 30px; min-width: 0; }
 .workspace-name { margin: 0; color: var(--muted); border-left: 1px solid var(--line); padding-left: 28px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -388,7 +390,7 @@ body:has(#appView:not([hidden])) .site-footer { padding-block: 6px; }
   .header-actions { gap: 4px; }
   .header-actions .secondary { font-size: 12px; padding-inline: 8px; }
   .workspace { grid-template-columns: 1fr; min-height: calc(100svh - 64px); }
-  .source-column { position: sticky; top: 0; z-index: 10; align-self: start; border-right: 0; border-bottom: 1px solid var(--line); }
+  .source-column { position: sticky; top: 64px; z-index: 10; align-self: start; border-right: 0; border-bottom: 1px solid var(--line); }
   .workspace:has(.viewer-section:not([hidden])) .source-column { position: static; }
   .jobs-section { padding: 12px 16px; display: grid; grid-template-columns: 1fr auto; column-gap: 16px; align-items: center; }
   .section-heading-row { justify-content: flex-start; gap: 12px; }

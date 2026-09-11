@@ -906,6 +906,10 @@ byId("loginForm").addEventListener("submit", async (event) => {
 });
 
 byId("logoutButton").addEventListener("click", async () => {
+  const button = byId("logoutButton");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Signing out…";
   try {
     await api("/api/session", { method: "DELETE" });
     broadcastSession("signed-out");
@@ -913,6 +917,9 @@ byId("logoutButton").addEventListener("click", async () => {
     showLogin();
   } catch (error) {
     if (!byId("appView").hidden) toast(`Sign out failed: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Sign out";
   }
 });
 

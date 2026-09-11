@@ -16,7 +16,7 @@ Updated 2026-09-11. This is an implementation and verification record, not a pub
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
 - Explicit online snapshots copy the running SQLite database and its referenced objects, reject missing/corrupt concurrent copies, and exclude later publications. Default snapshots still require the stopped runtime. An optional recovery worker adds scheduled age encryption, bounded multipart upload/readback verification and retention; it is enabled on Render, but its first live attempt failed and no completed automatic recovery set is verified yet. See [scheduled recovery QA](SCHEDULED_RECOVERY_QA.md).
-- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. [Render QA](RENDER_QA.md) records the generated-input original-model run, visitor isolation, shares and redeploy persistence; [the latest deployment receipt](ANALYTICS_QA.md) tracks runtime `b4dd896` with optional analytics disabled, [onboarding QA](ONBOARDING_QA.md) records the bounded pilot, and [recovery QA](SCHEDULED_RECOVERY_QA.md) records the backup rollout.
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. [Render QA](RENDER_QA.md) records the generated-input original-model run, visitor isolation, shares and redeploy persistence; [the latest deployment receipt](STUDIO_THEME_QA.md) tracks runtime `b8ac0fc` with corrected management actions and analytics disabled, [onboarding QA](ONBOARDING_QA.md) records the bounded pilot, and [recovery QA](SCHEDULED_RECOVERY_QA.md) records the backup rollout.
 
 ## Verification boundary
 
@@ -50,6 +50,10 @@ matched the source/state checks; allowances and recovery reservations were
 preserved. See [analytics QA](ANALYTICS_QA.md). The separate
 [current-theme pass](CURRENT_THEME_QA.md) verifies six public-screen contrast
 samples and mobile overflow/focus, without certifying every state or physical device.
+The [private studio audit](STUDIO_THEME_QA.md) adds current dialog/theme evidence
+and fixes clipped/narrow management actions. [Provider log QA](PROVIDER_LOG_QA.md)
+confirms Hobby workspace/Starter compute and preserves the upstream-redaction
+gate after a bounded empty-log probe.
 
 Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video allowance, mocked Modal cancellation/deadlines, sampling/export, viewer teardown/trace/timeline and backup/restore. See `REVIEW.md` for final check results. A reconstruction fixture passed the Khronos glTF Validator with zero errors and warnings. Fixtures and transport mocks are not real-model acceptance.
 

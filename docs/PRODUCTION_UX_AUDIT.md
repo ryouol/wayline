@@ -14,7 +14,7 @@ records the redesign's local browser evidence; [the release receipt](DESIGN_RELE
 separately records packaging, CI and deployment status. Earlier security, OAuth,
 GPU and browser reports remain evidence only for their stated revisions and
 inputs. The redesign does not close the pending account, device, recovery or
-legal gates. [Analytics QA](ANALYTICS_QA.md) records the latest runtime `b4dd896`: optional collection remains disabled, existing saved state and allowances were preserved.
+legal gates. [Studio QA](STUDIO_THEME_QA.md) records the latest runtime `b8ac0fc`: corrected management controls, optional collection disabled, saved state and allowances preserved.
 
 ✅ implemented with local evidence; ⚠️ needs input or verification; ➖ N/A with rationale. A phase containing ⚠️ is not release-complete. Paths below are relative to the repository root. Final executable check counts are recorded in `REVIEW.md`.
 
@@ -67,7 +67,7 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 | GET/HEAD `/static/{path}` | Packaged static directory only. |
 | GET `/docs`, `/docs/oauth2-redirect`, `/openapi.json` | Development/test only; disabled in production. |
 
-Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine,request_limits}.py`, tests, Docker/Render configuration. Declared and observed request bytes are bounded before parser consumption; tests cover chunked rejection and partial multipart spool cleanup. The redesign's additive job `displayName` uses an asset join constrained to the job's tenant; detail, pagination and cross-tenant tests cover it. Existing auth, quota and storage boundaries are retained. Skipped: invented commercial rights and shared-owner public signup. Provider scope, remaining deployed load/shutdown behavior, OAuth callback/query and authorization-header log redaction remain unverified. Phase 1 is not declared release-complete while these checks are open.
+Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine,request_limits}.py`, tests, Docker/Render configuration. Declared and observed request bytes are bounded before parser consumption; tests cover chunked rejection and partial multipart spool cleanup. The redesign's additive job `displayName` uses an asset join constrained to the job's tenant; detail, pagination and cross-tenant tests cover it. Existing auth, quota and storage boundaries are retained. Skipped: invented commercial rights and shared-owner public signup. [Provider log QA](PROVIDER_LOG_QA.md) confirms Hobby/Starter and records a bounded empty-log probe; it does not establish upstream redaction. Provider scope, remaining deployed load/shutdown behavior, OAuth callback/query and authorization-header log redaction remain unverified. Phase 1 is not declared release-complete while these checks are open.
 
 ## Phase 2 — Make it real
 
@@ -142,6 +142,8 @@ Changed: Phase 3/4 UI files. These are design decisions, not usability-study res
 ➖ Magic UI: React-specific, this app is plain JavaScript. ➖ Threlte/R3F: neither Svelte nor React is present; extending the existing WebGL renderer avoids a framework migration. ➖ Vectary/Jitter: no export is supplied or required; a future approved still/scene/motion export would enter the static-media workflow, not the dependency list. ✅ [Design QA](../design-qa.md) compares approved references with current desktop/mobile captures, theme changes, dialogs and the real precomputed scene. [Real-capture QA](REAL_CAPTURE_QA.md) separately records the licensed benchmark through the original model. ⚠️ Owned-phone capture, physical-device visual/performance and second-account acceptance remain pending; the redesign fixture invoked no new inference.
 
 Changed: public copy, `static/{styles.css,theme.js,landing.js,viewer.js,timeline.js,index.html,share.html}`, brand/image assets, metadata/manifest, `scripts/{prepare_landing_scene.py,export_web_assets.sh}` and current asset notices. The earlier CLI product name/alias is retained. Skipped: dependency/framework replacements without product benefit and invented reconstruction quality or product capabilities.
+
+The follow-up [private studio audit](STUDIO_THEME_QA.md) records current theme/dialog contrast samples, the corrected management footer at 320/390px and short desktop sizes, and selection/confirmation behavior. Physical-device and complete accessibility acceptance remain open.
 
 ## TODOs requiring operator input
 

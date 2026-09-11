@@ -457,3 +457,37 @@ preserved jobs/identities/usage/recovery state, zero analytics rows and health
 200. No provider plan, GPU use or extra backup admission changed. Final independent
 documentation review returned no findings. [Analytics QA](ANALYTICS_QA.md) retains
 the complete receipt; the full product goal and aggregate PR-size finding remain open.
+
+## Private studio footer and provider-log follow-up — 2026-09-11
+
+128. **The management action was clipped on mobile — Fixed.** P2. [styles.css:296](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:296). Actual 390×844 browser geometry placed the button bottom at 825 while the dialog ended at 820. The sticky footer now uses bottom zero; final checks retain the whole 44px button at 320px single-selection top/intermediate/end, 390px mixed-selection top/end, and short-desktop top/intermediate/end positions.
+
+129. **The first offset change left a mobile override active — Fixed.** P2. [styles.css:434](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:434). Both quality/testing and efficiency/change-size reviewers independently reported the same remaining bottom:-24px override. Removing it makes mobile inherit the corrected base rule. Both findings are retained here; subsequent source and actual-browser checks verified the correction.
+
+130. **A narrow footer shrank its button beneath the label — Fixed.** P2. [styles.css:297](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:297). The 320px interim screenshot showed a 90px button with overflowing label text. The scoped non-shrinking action now remains about 151×44px inside the dialog, including mixed selections.
+
+131. **Selection copy included empty categories and incorrect singular nouns — Fixed.** P3. [app.js:475](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:475). The footer now reports only selected categories with singular/plural forms. Real browser states verified Nothing selected, 1 scene selected and 1 scene · 1 share selected, including correct action enablement. Selection sets and removal handlers are unchanged.
+
+All three simplify passes and all four code-review subskill passes completed
+for the final 10-line source increment. No additional actionable issue remained;
+model-context was N/A. The aggregate PR-size finding remains open. The testing
+review explicitly noted that the inventory suite stubs the summary function;
+browser observations, not that stubbed suite, establish the wording evidence.
+All eleven existing Node suites passed, and exact-commit hosted CI passed for
+b8ac0fc, including Python, packaging and container verification. The local QA
+fixture was stopped and removed. [Studio QA](STUDIO_THEME_QA.md) records the
+seven-step visual audit and its limits.
+
+[Provider log QA](PROVIDER_LOG_QA.md) confirms Hobby workspace/Starter compute and
+records non-secret marker probes. The accessible log window was empty, so it
+does not prove upstream redaction. No provider setting, plan, GPU admission or
+backup retry was changed by that investigation. Authorized-operator confirmation
+from Render remains an external requirement; no support message was sent.
+
+Runtime b8ac0fc became live at `2026-09-11T18:40:07.818394Z`. The final read-only
+check verified all 64 static files, eight backend modules, all 12 saved artifacts,
+health 200 and unchanged saved state/allowances/recovery reservations. Analytics
+remains disabled. [The release receipt](STUDIO_THEME_QA.md) records scope; this
+release does not close the full product goal.
+
+132. **The summary overstated final scroll-position coverage — Fixed.** P3. [STUDIO_THEME_QA.md:31](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/STUDIO_THEME_QA.md:31). Final documentation review distinguished the final 320px single-selection top/intermediate/end checks, 320px mixed near-bottom sample and 390px mixed top/end checks. The earlier 390px intermediate observation predates the last button-width change. The QA report, review summary and illustrated report now preserve that matrix instead of implying every combination passed.

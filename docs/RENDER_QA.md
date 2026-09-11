@@ -9,6 +9,13 @@ This is a deployed research preview, not completed public-launch acceptance.
 A later [capacity pass](CAPACITY_QA.md) also verified live upload and deletion
 of generated 4096×4096 media, including a 64 MiB padded file. No GPU was invoked.
 
+The [reliability pass](RELIABILITY_QA.md) verified one further generated-input
+GPU cancellation, normal delayed cleanup, streamed/malformed-body handling,
+disconnect cleanup, and the application's 900-second deadline over loopback.
+The rolling GPU admission count is now two of six; the Google free video is
+still unused. [Credential-history checks](SECURITY_QA.md) found no matches in
+their stated scope.
+
 ## Deployment
 
 - Project **Wayline**, environment **Production**, service `srv-dahhn0u7bikc73e82h9g`.
@@ -123,7 +130,7 @@ it is not scoped to one app. Service-user/RBAC options require a paid plan.
 Separate project credentials/budgets remain a hardening item before public signup.
 
 An owned real capture, second-Google-account switching, physical mobile QA,
-running-inference cancellation/failure cleanup, automated backup/retention and
+remaining crash/failure cleanup boundaries, automated backup/retention and
 an isolated Render recovery drill,
 upstream logging/edge limits, hosted-use rights and approved operator legal/contact
 details remain open. See [launch readiness](launch-readiness.md),

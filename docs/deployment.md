@@ -84,7 +84,7 @@ prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
 Render deployment, a generated-input GPU round trip, download/share expiry and
 revocation, visitor isolation and redeploy persistence passed; see [live QA](RENDER_QA.md).
-The app runs commit `8e13910`. Google signup/returning login/logout passed in
+The app runs commit `351f339`. Google signup/returning login/logout passed in
 `wayline-roy-20260910`; the initial signup ceiling is one account. An owned
 capture, second-account switching, public Google branding, operator legal/contact
 identity, provider budgets and upstream logging/edge-limit checks remain pending. Render holds a private personal-workspace Modal credential; it

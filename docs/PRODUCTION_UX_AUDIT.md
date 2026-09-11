@@ -8,7 +8,7 @@ Updated 2026-09-10 against the attached six-phase brief. Stack: Python/FastAPI, 
 
 | Item | Status / evidence |
 |---|---|
-| Exposed keys | ✅ Working-tree high-confidence credential scan found no embedded live key; no key needed moving. Bootstrap, Google client secret and Modal credentials are server environment values. Runtime bearer/session/share secrets are private; tests use fake credentials. ⚠️ Provider secrets and complete Git history have not been independently audited. |
+| Exposed keys | ✅ Working-tree scan and a Gitleaks scan across locally available Git history found no credential matches. Exact comparison of five live credential values against 2,518 reachable blobs also found none; see `SECURITY_QA.md` for scope. Bootstrap, Google client secret and Modal credentials are server environment values. Runtime bearer/session/share secrets are private; tests use fake credentials. ⚠️ Provider credential scope, external/unreachable history and upstream log stores are not cleared by these scans. |
 | Every endpoint authenticated/validated | ✅ Inventory below; intentionally public shells/config/auth entrypoints expose no private tenant data. Private operations use server-derived ownership and cookie CSRF. Tests cover anonymous access, cross-tenant isolation and malformed input. |
 | RLS | ➖ SQLite is accessible only to the server; no network/browser DB access or RLS switch exists. Tenant checks and transactions are tested. A future Postgres migration needs its own roles/RLS tests. |
 | Broken/bypassed auth | ✅ No unconditional auth bypass introduced. Trial and Google sessions are isolated identities. Research acknowledgement and provider enablement remain deliberate gates. |

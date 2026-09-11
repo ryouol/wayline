@@ -150,7 +150,9 @@ The disk-fix simplify pass reported finding 49 from both quality and efficiency;
 
 Live Render hosting, a generated-input original-model run, owner Google signup/returning login/logout, visitor isolation and sharing are verified in `RENDER_QA.md`. An encrypted export of the live workspace and server environment passed an isolated Linux restore (`RECOVERY_QA.md`). The normal runtime is `351f339`, with green CI and verified private SSH permissions. Google-account capacity is one and the owner's free video is unused.
 
-Owned-capture quality, second-Google-account switching, physical mobile QA, running-inference cancellation/failure cleanup, upstream logging/edge limits, automated backup retention and a separate Render restore drill remain open. Public hosted-use rights and approved operator legal/contact details are unresolved. Shared Modal credentials/budgets still need project isolation. See `launch-readiness.md` and `PRODUCTION_UX_AUDIT.md` for every release gate and TODO.
+The later live reliability pass verified API cancellation during model inference, normal remote cleanup after the complete grace period, streamed request handling, disconnect cleanup, a 900-second loopback parser deadline and responsive sample creation during a stalled upload. No application code changed; see `RELIABILITY_QA.md`. Historical pattern and exact-live-credential scans found no matches within their stated scope (`SECURITY_QA.md`).
+
+Owned-capture quality, second-Google-account switching, physical mobile QA, remaining crash/failure cleanup boundaries, upstream logging/edge limits, automated backup retention and a separate Render restore drill remain open. Public hosted-use rights and approved operator legal/contact details are unresolved. Shared Modal credentials/budgets still need project isolation. See `launch-readiness.md` and `PRODUCTION_UX_AUDIT.md` for every release gate and TODO.
 
 ## Recovery access review — 2026-09-10
 

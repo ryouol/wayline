@@ -83,6 +83,12 @@ transport boundary. No user capture was used.
 
 ## Remaining acceptance
 
+The later [live reliability pass](RELIABILITY_QA.md) verified API cancellation
+during model inference, zero remaining GPU inputs/containers, and automatic
+physical cleanup after the unmodified 27-minute grace period on Render. It
+used one generated 120-frame input and does not close crash/failure recovery
+at every transport boundary.
+
 Run a short owned capture, then realistic upper-bound captures, including cold
 and warm timings, visual quality and physical mobile QA. Test cancellation and
 failure/crash cleanup with the deployed provider. Configure Render, Google OAuth,

@@ -98,10 +98,11 @@ allow their holders to access the selected artifact.</p>
 retention periods, rights-request process and privacy contact before public launch. -->
 <p>The operator must publish their identity, retention policy, processing purposes,
 service providers and data-rights contact before inviting public users.</p>
-<p>Optional analytics is disabled until the operator configures a collector and you opt in.
+<p>Optional first-party analytics stays off until the operator enables it and you opt in.
+When enabled, it counts public page views in daily totals for 30 days, without visitor profiles.
 No scene contents, tokens, filenames or share URLs belong in analytics.</p>
-<!-- TODO: provide approved analytics measurement ID and same-origin collector
-endpoint in static/site.js. -->""",
+<!-- TODO: provide an approved local WAYLINE_ANALYTICS_PROPERTY_ID and consent policy
+before setting WAYLINE_ANALYTICS_ENABLED. No external analytics service is used. -->""",
     ),
     "terms": (
         "Terms",

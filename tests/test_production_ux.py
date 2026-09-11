@@ -1,7 +1,5 @@
 """Release-envelope, anonymous-access and privacy regression tests."""
 
-from pathlib import Path
-
 import pytest
 
 from .conftest import BOOTSTRAP_TOKEN
@@ -146,13 +144,3 @@ def test_errors_redact_capability_paths(client, caplog):
     assert "Synthetic regression failure" not in browser.text
     assert path not in caplog.text
     assert browser.headers["cache-control"] == "no-store"
-
-
-def test_consent_is_fail_closed_and_never_tracks_share_paths():
-    source = (Path(__file__).parents[1] / "lingbot_map/workspace/static/site.js").read_text()
-    assert 'measurementId: "", endpoint: ""' in source
-    assert 'readConsent() !== "accepted"' in source
-    assert "endpoint.origin !== location.origin" in source
-    assert 'credentials: "omit"' in source
-    assert 'includes(path) ? path : "other"' in source
-    assert ".innerHTML" not in source

@@ -95,6 +95,8 @@ class Settings:
     recovery_recipient: str = ""
     recovery_volume_id: str = ""
     recovery_upload_budget_bytes: int = 10 * 1024**3
+    analytics_enabled: bool = False
+    analytics_property_id: str = ""
     generated_bootstrap_token: bool = field(default=False, compare=False)
 
     @classmethod
@@ -193,11 +195,19 @@ class Settings:
                 os.getenv("WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES", str(10 * 1024**3))
             ),
             generated_bootstrap_token=generated,
+            analytics_enabled=_bool_env("WAYLINE_ANALYTICS_ENABLED"),
+            analytics_property_id=os.getenv("WAYLINE_ANALYTICS_PROPERTY_ID", ""),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if (self.analytics_enabled or self.analytics_property_id) and not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", self.analytics_property_id
+        ):
+            raise ValueError(
+                "Analytics requires a local property ID of 1–64 letters, digits, _ or -"
+            )
         if bool(self.recovery_recipient) != bool(self.recovery_volume_id):
             raise ValueError("Recovery requires both an age recipient and a Modal volume ID")
         if self.recovery_recipient and not re.fullmatch(

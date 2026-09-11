@@ -190,6 +190,12 @@ class Database:
                     day INTEGER PRIMARY KEY,
                     reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes >= 0)
                 );
+                CREATE TABLE IF NOT EXISTS analytics_daily (
+                    day INTEGER NOT NULL,
+                    page TEXT NOT NULL CHECK(page IN ('/','/privacy','/terms','/contact')),
+                    views INTEGER NOT NULL CHECK(views BETWEEN 1 AND 10000),
+                    PRIMARY KEY(day,page)
+                );
                 CREATE TABLE IF NOT EXISTS identities (
                     provider TEXT NOT NULL CHECK(provider IN ('google','trial')),
                     subject TEXT NOT NULL,
@@ -2225,6 +2231,7 @@ class Database:
             ).rowcount
             connection.execute("DELETE FROM idempotency_keys WHERE expires_at<=?", (now,))
             connection.execute("DELETE FROM rate_buckets WHERE bucket_start<?", (int(now) - 3600,))
+            connection.execute("DELETE FROM analytics_daily WHERE day<?", (int(now // 86400) - 29,))
             job_ids = [
                 row[0]
                 for row in connection.execute(

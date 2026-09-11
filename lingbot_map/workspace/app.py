@@ -37,6 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import ClientDisconnect
 
+from .analytics import register_analytics_routes
 from .auth_routes import register_auth_routes
 from .config import Settings
 from .database import (
@@ -429,6 +430,9 @@ def create_app(
     )
 
     register_auth_routes(application, workspace, runtime, limiter, SESSION_COOKIE)
+    register_analytics_routes(
+        application, workspace.database, runtime, LoginLimiter(limit=120, max_keys=1)
+    )
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):

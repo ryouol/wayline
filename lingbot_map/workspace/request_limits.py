@@ -16,6 +16,8 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         limit = self.upload_ceiling if scope["path"] == "/api/assets" else 64 * 1024
+        if scope["path"] == "/analytics/page-view":
+            limit = 512
         declared = Headers(scope=scope).get("content-length")
         if declared is not None:
             try:

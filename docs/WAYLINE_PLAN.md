@@ -18,7 +18,7 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 ## Current delivery status — 2026-09-11
 
 [Wayline is live](https://wayline-9ten.onrender.com) as a restricted research
-preview. The Render runtime is `b14f0d716ea660197a1e562465f028eb87060bfe`;
+preview. The Render runtime is `21826402da53350132ab05fd1a08e9a53e7e8bd9`;
 later documentation commits do not require a runtime deployment. The original
 LingBot worker is deployed on Modal with its pinned, hash-verified checkpoint.
 Google owner signup, returning login, logout and saved-scene persistence passed.
@@ -72,7 +72,7 @@ controls reduce exposure; they are not a provider invoice cap. See
 - Original hardening and the fresh-canvas viewer fix are preserved in `027d338`.
 - Current local and runtime CI gates passed: 226 Python tests, six Node suites,
   strict Ruff/formatting, mypy for 20 modules, wheel build and container smoke.
-  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34562117631)
+  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34563859126)
   validates the deployed commit.
 - Secret scanning included reachable Git history and exact live-credential
   matching; the recorded scan found no credential matches. Endpoint, identity,
@@ -81,7 +81,10 @@ controls reduce exposure; they are not a provider invoice cap. See
 - Desktop QA covers repeated samples, the corrected real scene, replay, walking,
   download, sharing/revocation/expiry and layouts at 390 pixels. This is not a
   physical-phone performance or touch test.
+- macOS WebKit also passed the real scene's replay, walking and reset. Both
+  WebKit and Chromium verified open/full Google-button and input-border contrast;
+  see [accessibility QA](ACCESSIBILITY_QA.md).
 - Simplify's three passes and all four final code-review passes completed.
-  [REVIEW.md](REVIEW.md) retains 90 numbered findings and dispositions; aggregate
+  [REVIEW.md](REVIEW.md) retains 92 numbered findings and dispositions; aggregate
   change-size concerns 19, 66 and 83 remain open. The branch is pushed and
   [PR #10](https://github.com/ryouol/lingbot-map/pull/10) remains a draft.

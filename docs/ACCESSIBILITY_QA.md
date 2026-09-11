@@ -76,3 +76,14 @@ harness failures are retained separately from the final passing receipt.
 Private evidence: `.lingbot-workspace/webkit-qa/verification.json`, the retained
 harness and open/full screenshots for both engines. Mobile/touch emulation runs
 on macOS; iOS Safari and physical-phone validation remain unverified.
+
+The CSS correction is deployed in Render release `dep-dahojr142hec739r047g`,
+runtime `21826402da53350132ab05fd1a08e9a53e7e8bd9`, after
+[CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34563859126).
+The public stylesheet matched local source byte-for-byte (SHA-256
+`c7d575b01441643432c6fa31a6c7604f20a384990ec6953abb80b9790878b23e`).
+HTTPS health returned 200. All environment values were preserved. Six jobs
+remained READY, four GPU admissions were used, remote cleanup was settled and
+the two-account pilot ceiling remained in place. The owner's actual Google
+browser session, unused video and saved 5,908-point scene survived reload.
+No GPU job or additional recovery attempt was submitted for this release.

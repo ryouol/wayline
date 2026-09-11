@@ -13,13 +13,13 @@ from lingbot_map.workspace.service import VideoInspector
 
 
 def fixture_predictions():
-    poses = np.tile(np.eye(4)[:3], (3, 1, 1))
-    poses[:, 0, 3] = [0, 1, 2]
+    camera_to_world = np.tile(np.eye(4), (3, 1, 1))
+    camera_to_world[:, 0, 3] = [0, 1, 2]
     return {
         "images": np.full((3, 3, 4, 4), 0.5),
         "depth": np.full((3, 4, 4, 1), 2.0),
         "depth_conf": np.ones((3, 4, 4)),
-        "extrinsic": poses,
+        "extrinsic": np.linalg.inv(camera_to_world)[:, :3],
         "intrinsic": np.tile(np.array([[2.0, 0, 2], [0, 2, 2], [0, 0, 1]]), (3, 1, 1)),
     }
 
@@ -55,6 +55,48 @@ def test_depth_points_and_camera_trace_share_a_coordinate_system(tmp_path):
     colors = np.frombuffer(binary[color_view["byteOffset"] :], dtype=np.uint8).reshape(-1, 4)
     assert len(colors) == report["pointCount"]
     assert np.all(colors[:, 3] == 255)
+
+
+@pytest.mark.parametrize("use_world_points", [False, True])
+def test_moving_rotated_cameras_reconstruct_one_shared_world_landmark(tmp_path, use_world_points):
+    predictions = fixture_predictions()
+    landmark = np.array([1.0, 0.25, 4.0])
+    depths = [2.0, 3.0, 4.0]
+    camera_to_world = np.tile(np.eye(4), (3, 1, 1))
+    for index, (yaw, pitch) in enumerate(
+        [(0, 0), (np.pi / 4, np.pi / 6), (-np.pi / 6, -np.pi / 5)]
+    ):
+        cy, sy, cx, sx = np.cos(yaw), np.sin(yaw), np.cos(pitch), np.sin(pitch)
+        rotate_y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+        rotate_x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+        rotation = rotate_y @ rotate_x
+        camera_to_world[index, :3, :3] = rotation
+        # Each physical camera sees the same landmark at its center pixel.
+        camera_to_world[index, :3, 3] = landmark - rotation @ [0, 0, depths[index]]
+        predictions["depth"][index] = depths[index]
+    predictions["extrinsic"] = np.linalg.inv(camera_to_world)[:, :3]
+    if use_world_points:
+        predictions["world_points"] = np.broadcast_to(landmark, (3, 4, 4, 3)).copy()
+        predictions["world_points_conf"] = np.ones((3, 4, 4))
+
+    path = tmp_path / "shared-landmark.glb"
+    report = export_reconstruction(predictions, [0.0, 1.0, 2.0], path)
+    document, binary = parse_glb(path)
+    points = np.frombuffer(binary, dtype="<f4", count=report["pointCount"] * 3).reshape(-1, 3)
+    expected = landmark * [1, -1, -1]
+    selected = points if use_world_points else points[[10, 26, 42]]
+    np.testing.assert_allclose(selected, np.broadcast_to(expected, selected.shape), atol=1e-6)
+    for frame, physical_camera in zip(
+        document["extras"]["wayline"]["frames"], camera_to_world, strict=True
+    ):
+        np.testing.assert_allclose(
+            frame["position"], physical_camera[:3, 3] * [1, -1, -1], atol=1e-6
+        )
+        np.testing.assert_allclose(frame["right"], physical_camera[:3, 0] * [1, -1, -1], atol=1e-6)
+        np.testing.assert_allclose(frame["up"], physical_camera[:3, 1] * [-1, 1, 1], atol=1e-6)
+        np.testing.assert_allclose(
+            frame["forward"], physical_camera[:3, 2] * [1, -1, -1], atol=1e-6
+        )
 
 
 def test_export_bounds_points_and_rejects_bad_poses(tmp_path):

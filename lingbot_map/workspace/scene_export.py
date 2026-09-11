@@ -1,6 +1,8 @@
 """Bounded GLB export with source-frame and camera trace from LingBot predictions.
 
-The input extrinsics are camera-to-world, as returned by demo.postprocess.
+Input extrinsics follow the world-to-camera contract consumed by the original
+PointCloudViewer after demo.postprocess. Legacy pose helper/postprocess comments
+disagree, but the original depth and camera visualization inverts these matrices.
 All points and poses receive the same OpenCV-to-glTF basis change.
 """
 
@@ -123,24 +125,26 @@ def export_reconstruction(
     points, colors, trace_frames = [], [], []
     point_count = 0
     for index in range(frames):
-        camera = poses[index]
+        world_to_camera = poses[index]
         intrinsic = intrinsics[index]
         fx, fy = intrinsic[0, 0], intrinsic[1, 1]
         if min(fx, fy) <= 0:
             raise ValueError("Camera focal length must be positive")
-        rotation = camera[:, :3]
+        rotation = world_to_camera[:, :3]
         if (
             not np.allclose(rotation.T @ rotation, np.eye(3), atol=0.05)
             or np.linalg.det(rotation) < 0.9
         ):
             raise ValueError("Camera rotation is not a rigid transform")
+        camera_rotation = rotation.T
+        camera_position = -(camera_rotation @ world_to_camera[:, 3])
         if world is None:
             z = depth[index].reshape(height, width)
             camera_points = np.stack(
                 [(columns - intrinsic[0, 2]) * z / fx, (rows - intrinsic[1, 2]) * z / fy, z],
                 axis=-1,
             )
-            frame_points = camera_points @ rotation.T + camera[:, 3]
+            frame_points = camera_points @ camera_rotation.T + camera_position
             valid_depth = z.reshape(-1) > 0
         else:
             frame_points = world[index]
@@ -172,10 +176,10 @@ def export_reconstruction(
             {
                 "time": timestamps[index],
                 "pointEnd": point_count,
-                "position": (BASIS @ camera[:, 3]).tolist(),
-                "right": (BASIS @ rotation[:, 0]).tolist(),
-                "up": (BASIS @ -rotation[:, 1]).tolist(),
-                "forward": (BASIS @ rotation[:, 2]).tolist(),
+                "position": (BASIS @ camera_position).tolist(),
+                "right": (BASIS @ camera_rotation[:, 0]).tolist(),
+                "up": (BASIS @ -camera_rotation[:, 1]).tolist(),
+                "forward": (BASIS @ camera_rotation[:, 2]).tolist(),
                 "fov": 2 * math.atan(height / (2 * fy)),
                 "intrinsics": [
                     float(fx),

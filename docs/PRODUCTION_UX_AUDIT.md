@@ -14,7 +14,7 @@ records the redesign's local browser evidence; [the release receipt](DESIGN_RELE
 separately records packaging, CI and deployment status. Earlier security, OAuth,
 GPU and browser reports remain evidence only for their stated revisions and
 inputs. The redesign does not close the pending account, device, recovery or
-legal gates.
+legal gates. [Analytics QA](ANALYTICS_QA.md) records the latest runtime `b4dd896`: optional collection remains disabled, existing saved state and allowances were preserved.
 
 ✅ implemented with local evidence; ⚠️ needs input or verification; ➖ N/A with rationale. A phase containing ⚠️ is not release-complete. Paths below are relative to the repository root. Final executable check counts are recorded in `REVIEW.md`.
 
@@ -36,6 +36,7 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 |---|---|
 | GET `/healthz` | Public minimal readiness; database/storage/workers probed without disclosing paths. |
 | GET `/api/config` | Public allowlisted feature availability only. |
+| POST `/analytics/page-view` | Intentionally public aggregate ingestion; disabled by default. Strict same-origin/consent/privacy-signal checks, fixed event/page schema, 512-byte bodies, global rate and durable daily ceiling. No private reads or stored visitor identifiers. |
 | POST `/api/trial` | Public session creation; origin/fetch-metadata checks, rate/capacity bounds, isolated one-hour identity, no uploads/GPU/shares. |
 | GET `/auth/google/start` | OAuth initiation, feature gate, bounded attempts, browser-bound state, nonce and PKCE. |
 | GET `/auth/google/callback` | One-use browser state, bounded code exchange, signed issuer/audience/nonce verification, bounded signup. |
@@ -79,14 +80,14 @@ Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,servic
 | Full favicon set | ✅ The approved W mark is exported as `favicon.ico` with 16/32 sizes, `favicon-16.png`, `favicon-32.png`, 180px `apple-touch-icon.png`, and 192/512 PNG manifest icons. Metadata and manifest reference those files; `scripts/export_web_assets.sh` regenerates delivery assets from retained sources. |
 | robots.txt and generated sitemap | ✅ Deliberate non-indexable workspace; no private URLs enumerated. |
 | Alt text | ✅ Hero/account/studio imagery has descriptive alt text; source thumbnails have frame labels. Decorative brand/control images use empty alt text with visible or accessible control names. Interactive canvases expose instructions; decorative landing motion stays out of keyboard/screen-reader navigation. Social image alt is supplied. |
-| Analytics | ⚠️ Consent-aware adapter exists but measurement ID and audited collector are missing; collection disabled. |
+| Analytics | ✅ Optional first-party collector, bounded daily aggregates, automatic retention and read-only operator report are implemented and tested. Client/server consent and privacy-signal checks remain enforced. ⚠️ Approved policy and operator property label are still needed for activation; production collection stays disabled. See [analytics](ANALYTICS.md). |
 | Privacy policy | ⚠️ Real route with explicit draft/TODO; approved operator policy missing. |
 | Terms | ⚠️ Real route with explicit draft/TODO; approved terms missing. |
 | Cookie banner | ✅ Essential-only/opt-in/withdraw controls, analytics fails closed. ⚠️ Legal adequacy requires operator review. |
 | Thank-you page | ➖ OAuth/signup enters the studio; upload enters job progress. No lead/contact form warrants a separate page. Success/next-step states are present. |
 | Real contact information | ⚠️ Support email, phone policy and legal address unknown; no fake links or business details. |
 
-Changed: `lingbot_map/workspace/{pages,app}.py`, `static/{index.html,share.html,site.js,site.webmanifest}`, current favicon/brand/image exports and `ASSET-NOTICES.txt`, `scripts/export_web_assets.sh`, and page/asset tests. The old icon SVG, icon-license file and brand-generation script are superseded by the approved source artwork, current notices and export script. Skipped: fabricated legal/contact/analytics data and tracking requests without consent/configuration. Separate thank-you and indexable-content pages are N/A for the reasons above.
+Changed: `lingbot_map/workspace/{pages,app,analytics,auth_routes,config,database,recovery,request_limits}.py`, `static/{index.html,share.html,site.js,site.webmanifest}`, current favicon/brand/image exports and `ASSET-NOTICES.txt`, `scripts/export_web_assets.sh`, and page/asset tests. The old icon SVG, icon-license file and brand-generation script are superseded by the approved source artwork, current notices and export script. Skipped: fabricated legal/contact/analytics data and tracking requests without consent/configuration. Separate thank-you and indexable-content pages are N/A for the reasons above.
 
 ## Phase 3 — Forms, states and dead ends
 
@@ -112,7 +113,7 @@ Changed: `lingbot_map/workspace/static/{app.js,share.js,timeline.js,viewer.js,in
 | Mobile hamburger/focus trap | ➖ The compact landing has directly available Sign in and Get started actions; footer destinations remain visible. There is no hidden drawer needing a hamburger or trap. Creation, management, confirmation and sharing use native dialogs for their modal focus behavior. |
 | Sticky mobile CTA | ✅ The public mobile header keeps Get started visible while scrolling; the mobile workspace source column keeps New scene available. Browser inspection measured the public header at top 0 after scrolling. These existing navigation areas provide the sticky actions; the unused floating CTA is not the implementation. |
 | Optimize images/srcset/lazy | ✅ Both themes have 640px, 960px and full-width WebP hero/account/studio exports with `srcset` and `sizes`; native lazy loading defers hidden/below-fold imagery. A browser selected the 640px hero and studio variants at the inspected mobile viewport. The compact brand WebP is separate from retained PNG artwork and favicon exports. Original JPEGs remain source/social assets; bounded source thumbnails load lazily. `scripts/export_web_assets.sh` regenerates the delivery formats. |
-| Tap targets/readable fonts | ✅ Theme, refresh, scene, share/download, replay/mode, storage, selection and other styled controls now retain at least 44px hit dimensions, including mobile overrides. Current mobile browser measurements confirmed 44px buttons; responsive text and layouts were inspected in [design QA](../design-qa.md). [Accessibility QA](ACCESSIBILITY_QA.md) records earlier WebKit/Chromium contrast and focus checks for the prior palette; current theme review is limited to the inspected states. ⚠️ Physical-device and broader assistive-technology coverage remain pending. |
+| Tap targets/readable fonts | ✅ Theme, refresh, scene, share/download, replay/mode, storage, selection and other styled controls now retain at least 44px hit dimensions, including mobile overrides. Current mobile browser measurements confirmed 44px buttons; responsive text and layouts were inspected in [design QA](../design-qa.md). [Accessibility QA](ACCESSIBILITY_QA.md) records earlier WebKit/Chromium contrast and focus checks for the prior palette; the [current-theme pass](CURRENT_THEME_QA.md) now measures landing/signup/consent text at desktop and 390px, with a lowest observed contrast of 5.134:1. It excludes the private studio and uninspected states. ⚠️ Physical-device and broader assistive-technology coverage remain pending. |
 
 Changed: `lingbot_map/workspace/static/{styles.css,viewer.js,timeline.js,app.js,landing.js,index.html,share.html}`, responsive image/favicon exports, `pages.py` asset fingerprinting and `scripts/export_web_assets.sh`. Landing motion is visibility-, preference- and scroll-bounded; the poster remains useful without WebGL. Earlier model-memory and checkpoint-hash optimizations are retained without changing verified model loading. Sample work and local maintenance continue during a GPU wait. Skipped: a navigation drawer or framework migration without a product need, and unsupported physical-device/performance claims.
 
@@ -147,7 +148,7 @@ Changed: public copy, `static/{styles.css,theme.js,landing.js,viewer.js,timeline
 1. `lingbot_map/workspace/pages.py`: approved privacy policy, controller/subprocessors, actual retention, rights-request process and privacy contact.
 2. Same file: approved terms, entity, jurisdiction, billing/refund/acceptable-use/liability rules.
 3. Same file: support email/mailto, phone/tel or explicit no-phone-support policy, legal entity/address.
-4. Same file and `lingbot_map/workspace/static/site.js`: approved analytics measurement ID and collector configuration. The consent adapter exists, but an implemented/audited same-origin collector is also needed before enabling collection; update policy/consent together.
+4. `WAYLINE_ANALYTICS_PROPERTY_ID`: approved local property label, plus operator approval of privacy/consent wording before setting `WAYLINE_ANALYTICS_ENABLED=true`. The first-party collector and reporting path now exist; no external measurement account or endpoint is required. Update the policy TODO in `pages.py` together with activation.
 
 These are the explicit `TODO: provide ...` source markers; the contact page has separate email, phone/no-phone-policy and legal-address markers. No fabricated business information replaces them.
 

@@ -16,7 +16,7 @@ Updated 2026-09-11. This is an implementation and verification record, not a pub
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
 - Explicit online snapshots copy the running SQLite database and its referenced objects, reject missing/corrupt concurrent copies, and exclude later publications. Default snapshots still require the stopped runtime. An optional recovery worker adds scheduled age encryption, bounded multipart upload/readback verification and retention; it is enabled on Render, but its first live attempt failed and no completed automatic recovery set is verified yet. See [scheduled recovery QA](SCHEDULED_RECOVERY_QA.md).
-- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. [Render QA](RENDER_QA.md) records the generated-input original-model run, visitor isolation, shares and redeploy persistence; [the latest deployment receipt](RECOVERY_CRASH_QA.md) tracks runtime `d88da15`, [onboarding QA](ONBOARDING_QA.md) records the bounded pilot, and [recovery QA](SCHEDULED_RECOVERY_QA.md) records the backup rollout.
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. [Render QA](RENDER_QA.md) records the generated-input original-model run, visitor isolation, shares and redeploy persistence; [the latest deployment receipt](ANALYTICS_QA.md) tracks runtime `b4dd896` with optional analytics disabled, [onboarding QA](ONBOARDING_QA.md) records the bounded pilot, and [recovery QA](SCHEDULED_RECOVERY_QA.md) records the backup rollout.
 
 ## Verification boundary
 
@@ -40,6 +40,16 @@ scheduled storage is bounded to eight known prefixes with conservative cleanup.
 The local offline 3.49 GB restore remains distinct from provider acceptance.
 See `RECOVERY_CRASH_QA.md`. Cost allowances are unchanged; neither release invoked
 a GPU job, and the recovery release admitted no extra backup attempt.
+
+The latest optional-analytics release `b4dd896` passed 255 Python tests, eleven
+Node suites and exact-commit CI. The bounded first-party collector and read-only
+report are implemented; collection remains disabled pending operator policy
+approval and a property label. Real local-browser consent/withdrawal tests passed.
+Live health, eight backend modules, all 64 static assets and 12 saved artifacts
+matched the source/state checks; allowances and recovery reservations were
+preserved. See [analytics QA](ANALYTICS_QA.md). The separate
+[current-theme pass](CURRENT_THEME_QA.md) verifies six public-screen contrast
+samples and mobile overflow/focus, without certifying every state or physical device.
 
 Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video allowance, mocked Modal cancellation/deadlines, sampling/export, viewer teardown/trace/timeline and backup/restore. See `REVIEW.md` for final check results. A reconstruction fixture passed the Khronos glTF Validator with zero errors and warnings. Fixtures and transport mocks are not real-model acceptance.
 
@@ -69,7 +79,7 @@ complete.
 - [x] Verify the licensed real-camera benchmark on desktop: original-model reconstruction, replay, walking/reset, matching browser download and share revocation. See `REAL_CAPTURE_QA.md`; redesign fixture checks did not run new inference.
 - [ ] Complete owned-capture acceptance and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Existing benchmark and desktop viewport evidence do not establish physical-device performance or owned-phone quality.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.
-- [ ] Supply operator identity, approved privacy/terms and contact information. Select a custom domain if desired; the Render HTTPS origin already works. Analytics stays off until an approved collector and consent policy exist.
+- [ ] Supply operator identity, approved privacy/terms and contact information. Select a custom domain if desired; the Render HTTPS origin already works. The optional first-party collector and report are implemented; analytics stays off until the operator supplies its property label and approves the policy and consent wording.
 
 ## Scope and scale
 

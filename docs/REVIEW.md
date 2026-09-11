@@ -427,3 +427,33 @@ stored artifacts and preserved live state passed the read-only deployment check.
 121. **The crash summary overstated public artifact visibility — Fixed.** P2. [docs/launch-readiness.md:64](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/launch-readiness.md:64). Documentation review. The kill occurs after a private artifact transaction commits and before job completion. The acceptance record now names that boundary and preserves the HTTP rejection evidence; it does not claim a post-publication crash test.
 
 122. **The recovery summary generalized failure semantics — Fixed.** P3. [docs/RECOVERY_CRASH_QA.md:12](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/RECOVERY_CRASH_QA.md:12). Documentation review. The unchanged-success and failed-attempt retry statements now apply to failures before durable verified completion. A subsequent retention-deletion failure preserves the completed set and newer success and does not qualify that completed attempt for an operator retry.
+
+## Optional analytics and current-theme follow-up — 2026-09-11
+
+123. **The consent sender had no collector — Fixed.** P2. [lingbot_map/workspace/analytics.py:26](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/analytics.py:26). Completion audit identified an explicit unfinished brief item. The optional first-party collector now validates a fixed public schema, stores bounded daily aggregates and supplies an operator-readable report. Production activation and approved policy remain separate inputs.
+
+124. **A failed storage write could undo analytics withdrawal — Fixed.** P2. [lingbot_map/workspace/static/site.js:6](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/site.js:6). Breaking/privacy review. Readable old acceptance previously remained effective if writing rejection failed, allowing a later public-surface change to send an event. In-memory rejection now wins, with best-effort removal of stale acceptance. Regressions cover failed writes with both successful and failed removal, delayed config, account-to-landing transitions and failed re-acceptance.
+
+125. **Code and documentation together exceeded the small-change guidance — Addressed for this increment.** P2. [lingbot_map/workspace/app.py:433](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/app.py:433). Change-size review initially counted 557 lines, then 581 after the consent fix, when code and documentation were combined. The complete source/schema/client/tests/CI increment is 480 changed lines across ea61446 (476) and b4dd896 (four recovery-export assertions). The runbook, theme evidence and release documentation are reviewed and committed separately.
+
+126. **Aggregate PR size still exceeds guidance — Open.** P2. [docs/REVIEW.md:43](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/REVIEW.md:43). Duplicate aggregate finding retained from the change-size reviewer. Its snapshot was 16,005 changed text lines plus 48 binary files; subsequent evidence additions change that total. Prior size findings remain open. The independent sample RGBA correction remains the smallest coherent aggregate first stage. No main or dependency PR merge is performed.
+
+127. **The checklist described the completed collector as missing — Fixed.** P3. [docs/PRODUCTION_UX_AUDIT.md:83](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/PRODUCTION_UX_AUDIT.md:83). Documentation review. The implementation row and operator TODO now reference the local property label and explicit enable flag. The collector/reporting requirement is implemented; policy approval and production activation remain open. No external measurement-ID or endpoint placeholder is presented as unfinished code.
+
+All simplify passes (reuse, quality, efficiency) and four code-review subskill
+passes completed. The model-context pass was N/A. The withdrawal finding and
+regressions were independently rechecked; no remaining actionable code finding
+was reported. The source increment passed 255 Python tests, eleven Node suites,
+strict lint/format/type checks and a 512 MiB / 0.5 CPU container smoke (208.1 MiB
+peak). The isolated browser exercised opt-in, withdrawal, public navigation and
+account-surface exclusion against real SQLite totals. See `ANALYTICS_QA.md`.
+Current live public-theme contrast evidence is separately scoped in
+`CURRENT_THEME_QA.md`; no visual source edit was needed.
+
+Exact-commit [CI](https://github.com/ryouol/lingbot-map/actions/runs/34631234915) passed. Runtime `b4dd896`
+became live at `2026-09-11T18:10:32.618362Z`. The live disabled-state check
+verified eight backend modules, 64 static files, all 12 stored artifacts,
+preserved jobs/identities/usage/recovery state, zero analytics rows and health
+200. No provider plan, GPU use or extra backup admission changed. Final independent
+documentation review returned no findings. [Analytics QA](ANALYTICS_QA.md) retains
+the complete receipt; the full product goal and aggregate PR-size finding remain open.

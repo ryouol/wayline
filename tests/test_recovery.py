@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tarfile
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -52,6 +53,53 @@ class FakeVolume:
         self.files = {
             key: value for key, value in self.files.items() if not key.startswith(prefix + "/")
         }
+
+
+class FilesystemVolume:
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def upload(self, source, remote):
+        target = self.root / remote.lstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    def read(self, remote):
+        with (self.root / remote.lstrip("/")).open("rb") as incoming:
+            while chunk := incoming.read(65536):
+                yield chunk
+
+    def remove(self, prefix):
+        shutil.rmtree(self.root / prefix.lstrip("/"))
+
+
+@pytest.fixture
+def age_identity(tmp_path):
+    age, keygen = shutil.which("age"), shutil.which("age-keygen")
+    if not age or not keygen:
+        pytest.skip("Local age binaries are unavailable; CI installs them before this test")
+    key = tmp_path / "test-age.key"
+    result = subprocess.run([keygen, "-o", str(key)], capture_output=True, check=True)
+    recipient = result.stderr.decode().split("Public key: ", 1)[1].strip()
+    return age, key, recipient
+
+
+def decrypt_recovery_archive(volume, marker_path, age, key):
+    marker = json.loads(b"".join(volume.read(marker_path)))
+    assert len(marker["archive"]["parts"]) > 1
+    chunks = []
+    for part in marker["archive"]["parts"]:
+        chunk = b"".join(volume.read(marker_path.rsplit("/", 1)[0] + "/" + part["name"]))
+        assert len(chunk) == part["bytes"] <= recovery.PART_BYTES
+        assert hashlib.sha256(chunk).hexdigest() == part["sha256"]
+        chunks.append(chunk)
+    archive = b"".join(chunks)
+    assert len(archive) == marker["archive"]["bytes"]
+    assert hashlib.sha256(archive).hexdigest() == marker["archive"]["sha256"]
+    decrypted = subprocess.run(
+        [age, "-d", "-i", str(key)], input=archive, capture_output=True, check=True
+    ).stdout
+    return archive, decrypted
 
 
 @pytest.fixture
@@ -306,15 +354,10 @@ def test_rejects_unowned_retention_path_before_provider_access(setup):
 
 
 def test_real_age_archive_restores_and_environment_stays_encrypted(
-    service, tenant_id, tmp_path, monkeypatch
+    service, tenant_id, tmp_path, monkeypatch, age_identity
 ):
     monkeypatch.setattr(recovery, "PART_BYTES", 64 * 1024)
-    age, keygen = shutil.which("age"), shutil.which("age-keygen")
-    if not age or not keygen:
-        pytest.skip("Local age binaries are unavailable; CI installs them before this test")
-    key = tmp_path / "test-age.key"
-    result = subprocess.run([keygen, "-o", str(key)], capture_output=True, check=True)
-    recipient = result.stderr.decode().split("Public key: ", 1)[1].strip()
+    age, key, recipient = age_identity
     service.submit_sample(tenant_id)
     service.process_next_job()
     volume = FakeVolume(service.settings.data_dir)
@@ -328,21 +371,8 @@ def test_real_age_archive_restores_and_environment_stays_encrypted(
         environment={"LINGBOT_BOOTSTRAP_TOKEN": "private-test-token"},
     )
     marker_path = next(name for name in volume.files if name.endswith("complete.json"))
-    marker = json.loads(volume.files[marker_path])
-    assert len(marker["archive"]["parts"]) > 1
-    chunks = []
-    for part in marker["archive"]["parts"]:
-        chunk = volume.files[marker_path.rsplit("/", 1)[0] + "/" + part["name"]]
-        assert len(chunk) == part["bytes"] <= recovery.PART_BYTES
-        assert hashlib.sha256(chunk).hexdigest() == part["sha256"]
-        chunks.append(chunk)
-    archive = b"".join(chunks)
-    assert len(archive) == marker["archive"]["bytes"]
-    assert hashlib.sha256(archive).hexdigest() == marker["archive"]["sha256"]
+    archive, decrypted = decrypt_recovery_archive(volume, marker_path, age, key)
     assert b"private-test-token" not in archive and b"SQLite format" not in archive
-    decrypted = subprocess.run(
-        [age, "-d", "-i", str(key)], input=archive, capture_output=True, check=True
-    ).stdout
     extracted = tmp_path / "extracted"
     with tarfile.open(fileobj=io.BytesIO(decrypted)) as content:
         content.extractall(extracted, filter="data")
@@ -387,6 +417,138 @@ def test_failed_second_part_does_not_publish_completion_or_refund(setup, monkeyp
     assert not setup.run(NOW + 60)
     assert len(setup.volume.uploads) == 2
     assert not list(setup.staging.glob("wayline-recovery-*"))
+
+
+@pytest.mark.parametrize("crash_boundary", ["marker_upload", "completion_save"])
+def test_crash_at_marker_publication_preserves_restorable_source(
+    service, tenant_id, tmp_path, age_identity, crash_boundary
+):
+    age, key, recipient = age_identity
+    job = service.submit_sample(tenant_id)
+    service.process_next_job()
+    artifact = service.database.get_job(tenant_id, job["id"])["artifacts"][0]
+    data_dir, remote = service.settings.data_dir, tmp_path / "remote"
+    script = """import os,sys
+from pathlib import Path
+from lingbot_map.workspace import recovery
+from tests.test_recovery import FilesystemVolume
+class CrashingVolume(FilesystemVolume):
+    def upload(self, source, remote):
+        super().upload(source, remote)
+        if sys.argv[5] == 'marker_upload' and remote.endswith('/complete.json'):
+            os._exit(99)
+original_save = recovery.save_state
+def crash_before_completion_save(data_dir, state):
+    if sys.argv[5] == 'completion_save' and state['attempts'][-1]['status'] == 'complete':
+        os._exit(99)
+    original_save(data_dir, state)
+recovery.save_state = crash_before_completion_save
+recovery.PART_BYTES = 64 * 1024
+recovery.run_once(Path(sys.argv[1]), sys.argv[4], 'vo-test',
+    staging_root=Path(sys.argv[2]), volume=CrashingVolume(sys.argv[3]),
+    environment={}, now=1800000000)
+"""
+    child = subprocess.run(
+        [
+            recovery.sys.executable,
+            "-c",
+            script,
+            str(data_dir),
+            str(tmp_path),
+            str(remote),
+            recipient,
+            crash_boundary,
+        ],
+        capture_output=True,
+        timeout=20,
+    )
+    assert child.returncode == 99, child.stderr.decode()
+    admitted = recovery.load_state(data_dir)
+    attempt = admitted["attempts"][0]
+    prefix = attempt["prefix"]
+    marker_path = prefix + "/complete.json"
+    volume = FilesystemVolume(remote)
+    archive, decrypted = decrypt_recovery_archive(volume, marker_path, age, key)
+    extracted = tmp_path / "extracted"
+    with tarfile.open(fileobj=io.BytesIO(decrypted)) as content:
+        content.extractall(extracted, filter="data")
+    restored = tmp_path / "restored"
+    assert restore_snapshot(extracted / "workspace", restored)["files"] >= 4
+    assert (
+        hashlib.sha256((restored / "objects" / artifact["object_key"]).read_bytes()).hexdigest()
+        == artifact["sha256"]
+    )
+    assert attempt["status"] == "running" and attempt["completion_pending"]
+    assert admitted["last_success"] == 0
+    reserved = sum(item["bytes"] for item in attempt["reservations"])
+    assert reserved >= len(archive)
+    assert list(tmp_path.glob("wayline-recovery-*")), "The crash bypasses normal staging cleanup"
+
+    recovery.RecoveryWorker(
+        data_dir, recipient, "vo-test", staging_root=tmp_path
+    )._recover_interrupted()
+    restarted = recovery.load_state(data_dir)
+    assert restarted["attempts"][0]["status"] == "failed"
+    assert restarted["attempts"][0]["reservations"] == attempt["reservations"]
+    assert not list(tmp_path.glob("wayline-recovery-*"))
+    assert not recovery.run_once(
+        data_dir,
+        recipient,
+        "vo-test",
+        staging_root=tmp_path,
+        volume=volume,
+        environment={},
+        now=NOW + recovery.DAY,
+        upload_budget_bytes=reserved,
+    )
+    final = recovery.load_state(data_dir)
+    assert final["attempts"][-1]["error"] == "upload_allowance_exhausted"
+    assert final["attempts"][0]["status"] == "failed"
+    assert final["attempts"][0]["reservations"] == attempt["reservations"]
+    assert final["last_success"] == 0
+    assert (remote / marker_path.lstrip("/")).is_file()
+    assert decrypt_recovery_archive(volume, marker_path, age, key)[0] == archive
+
+
+@pytest.mark.parametrize("failure", ["upload", "readback"])
+def test_uncertain_marker_remains_retryable_until_seven_verified_replacements(
+    setup, monkeypatch, failure
+):
+    original_read = setup.volume.read
+
+    def interrupted_read(remote):
+        yield from original_read(remote)
+        if remote.endswith("/complete.json"):
+            raise OSError("completion acknowledgement lost")
+
+    if failure == "upload":
+        setup.volume.fail_upload_number = 2
+    else:
+        monkeypatch.setattr(setup.volume, "read", interrupted_read)
+        monkeypatch.setattr(recovery.time, "sleep", lambda _: None)
+    assert not setup.run()
+    state = recovery.load_state(setup.data_dir)
+    candidate = state["attempts"][0]
+    marker_path = candidate["prefix"] + "/complete.json"
+    assert candidate["status"] == "failed" and candidate["completion_pending"]
+    assert state["last_success"] == 0
+    assert marker_path in setup.volume.files
+
+    setup.volume.fail_upload_number = None
+    monkeypatch.setattr(setup.volume, "read", original_read)
+    assert setup.run(NOW + 60, retry_failed=True)
+    assert marker_path in setup.volume.files
+    assert recovery.load_state(setup.data_dir)["attempts"][-1]["operator_retry"]
+    for day in range(1, 7):
+        assert setup.run(NOW + 60 + day * recovery.DAY)
+        assert (marker_path in setup.volume.files) is (day < 6)
+    final = recovery.load_state(setup.data_dir)
+    assert final["attempts"][0]["status"] == "pruned"
+    assert final["attempts"][0]["reservations"] == candidate["reservations"]
+    completed = [item for item in final["attempts"] if item["status"] == "complete"]
+    assert len(completed) == 7
+    assert all(not item.get("completion_pending") for item in completed)
+    assert sum(name.endswith("/complete.json") for name in setup.volume.files) == 7
 
 
 def test_exhausted_allowance_avoids_snapshot_and_compacts_only_expired_pruned_rows(

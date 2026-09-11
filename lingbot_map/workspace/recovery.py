@@ -259,17 +259,22 @@ def _upload_archive(archive, prefix, volume, reserved_bytes):
 
 
 def _retire(data_dir, state, volume, *, prune_completed=False, active_prefix=None):
-    protected = {"complete", "retained"}
     completed = [item for item in state["attempts"] if item["status"] == "complete"]
+    candidates = {
+        item["prefix"]
+        for item in state["attempts"]
+        if item["status"] == "retained" or item.get("completion_pending", False)
+    }
+    protected = candidates | {item["prefix"] for item in completed}
     keep = {item["prefix"] for item in completed[-7:]}
     if len(completed) < 7:
-        keep.update(item["prefix"] for item in state["attempts"] if item["status"] == "retained")
+        keep.update(candidates)
     for item in state["attempts"]:
         if (
             item["prefix"] in keep
             or item["prefix"] == active_prefix
             or item["status"] == "pruned"
-            or (item["status"] in protected and not prune_completed)
+            or (item["prefix"] in protected and not prune_completed)
         ):
             continue
         volume.remove(item["prefix"])
@@ -392,12 +397,17 @@ def run_once(
             marker = temporary / "complete.json"
             marker.write_text(json.dumps({"format": 1, "created_at": now, "archive": metadata}))
             marker.chmod(0o600)
+            # A crash can lose the local acknowledgement of a restorable remote set.
+            # Protect this candidate before any completion-marker upload can start.
+            attempt["completion_pending"] = True
+            save_state(data_dir, state)
             _upload_verified(
                 marker,
                 attempt["prefix"] + "/complete.json",
                 volume,
                 MARKER_BYTES,
             )
+            attempt.pop("completion_pending")
             attempt.update(
                 status="complete",
                 archive={key: metadata[key] for key in ("bytes", "sha256")},

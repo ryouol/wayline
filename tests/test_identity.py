@@ -9,6 +9,8 @@ from lingbot_map.workspace import identity
 from lingbot_map.workspace.app import create_app
 from lingbot_map.workspace.identity import IdentityStore
 
+from .test_workspace_api import fake_mp4
+
 
 @pytest.mark.parametrize(
     "scenario",
@@ -161,6 +163,7 @@ def test_google_flow_provisions_once_and_blocks_replay(settings, monkeypatch):
     configured = replace(
         settings,
         signup_enabled=True,
+        signup_max_accounts=1,
         google_client_id="test-client",
         google_client_secret="test-secret",
         public_base_url="http://testserver",
@@ -175,6 +178,7 @@ def test_google_flow_provisions_once_and_blocks_replay(settings, monkeypatch):
     monkeypatch.setattr(identity, "exchange_google_code", exchange)
     with TestClient(create_app(configured, start_worker=False)) as browser:
         assert browser.get("/api/config").json()["googleSignIn"] is True
+        assert browser.get("/api/config").json()["newAccountsAvailable"] is True
         start = browser.get("/auth/google/start", follow_redirects=False)
         params = parse_qs(urlsplit(start.headers["location"]).query)
         assert params["code_challenge_method"] == ["S256"]
@@ -190,6 +194,9 @@ def test_google_flow_provisions_once_and_blocks_replay(settings, monkeypatch):
         me = browser.get("/api/me").json()
         assert me["user"]["displayName"] == "Ada"
         assert me["quota"]["available_units"] == 120
+        assert me["reconstructionAllowance"]["state"] == "available"
+        config = browser.get("/api/config").json()
+        assert config["googleSignIn"] is True and config["newAccountsAvailable"] is False
         assert exchanges[0]["nonce"] == params["nonce"][0]
         assert len(exchanges[0]["verifier"]) >= 43
         assert (
@@ -208,8 +215,47 @@ def test_google_flow_provisions_once_and_blocks_replay(settings, monkeypatch):
 
 def test_google_unconfigured_and_no_identity_leak(client):
     assert client.get("/api/config").json()["googleSignIn"] is False
+    assert client.get("/api/config").json()["newAccountsAvailable"] is False
     assert client.get("/auth/google/start").status_code == 503
     assert client.get("/api/me").status_code == 401
+
+
+def test_full_signup_redirects_to_product_without_creating_an_identity(settings, monkeypatch):
+    configured = replace(
+        settings,
+        signup_enabled=True,
+        signup_max_accounts=1,
+        google_client_id="test-client",
+        google_client_secret="test-secret",
+        public_base_url="http://testserver",
+    )
+    application = create_app(configured, start_worker=False)
+    with TestClient(application) as browser:
+        workspace = application.state.workspace
+        identities = IdentityStore(workspace.database)
+        identities.create_workspace(
+            subject="existing-user", name="Existing", guest=False, max_accounts=1, quota=120
+        )
+        monkeypatch.setattr(
+            identity, "exchange_google_code", lambda **_: {"sub": "new-user", "given_name": "New"}
+        )
+        start = browser.get("/auth/google/start", follow_redirects=False)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        response = browser.get(
+            "/auth/google/callback",
+            params={"state": state, "code": "valid-new-account-code"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/?signin=capacity"
+        assert "wayline_oauth_browser" not in browser.cookies
+        assert browser.get("/api/me").status_code == 401
+        assert browser.get(response.headers["location"]).status_code == 200
+        with workspace.database.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM identities").fetchone()[0] == 1
+            assert connection.execute("SELECT COUNT(*) FROM oauth_attempts").fetchone()[0] == 0
+        # Full Google signup must not close the independent synthetic playground.
+        assert browser.post("/api/trial").status_code == 200
 
 
 def test_expired_trial_releases_capacity_and_deletes_objects(client, service, tenant_id):
@@ -257,13 +303,34 @@ def test_oauth_pending_attempts_are_bounded(service, monkeypatch):
     store.begin("third-browser")
 
 
-def test_google_preview_limits_survive_scene_deletion(service):
+def test_google_preview_limits_survive_scene_deletion(service, client, monkeypatch):
     import pytest
 
     principal = IdentityStore(service.database).create_workspace(
         subject="preview-user", name="Explorer", guest=False, max_accounts=10, quota=120
     )
     tenant = principal["tenant_id"]
+    session, csrf = service.database.create_session(principal, 3600)
+    client.cookies.set("scene_workspace_session", session)
+    client.headers["X-CSRF-Token"] = csrf
+
+    def check_allowance(expected):
+        from starlette.requests import Request
+
+        allowance = client.get("/api/me").json()["reconstructionAllowance"]
+        assert allowance["state"] == expected
+        if expected != "available":
+
+            async def forbidden_parser(*args, **kwargs):
+                pytest.fail("Blocked reconstruction must be rejected before spooling an upload")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(Request, "form", forbidden_parser)
+                response = client.post("/api/assets", content=b"must-not-be-spooled")
+            assert response.status_code == 409
+            assert response.json()["detail"] == allowance["message"]
+
+    check_allowance("available")
 
     def submit():
         return service.database.create_job(
@@ -276,16 +343,34 @@ def test_google_preview_limits_survive_scene_deletion(service):
         )
 
     first = submit()
+    check_allowance("processing")
     with pytest.raises(ValueError, match="already in progress"):
         submit()
-    for job in [first, None, None]:
+    for index, job in enumerate([first, None, None]):
         current = job or submit()
-        service.database.request_cancellation(tenant, current["id"])
+        if index == 1:
+            attempt = service.database.claim_next_job(
+                worker_id="test-worker", lease_seconds=30, max_attempts=1
+            )
+            service.database.fail_job(
+                tenant,
+                current["id"],
+                attempt_token=attempt["attempt_token"],
+                worker_id="test-worker",
+                code="test_failure",
+                message="Simulated reconstruction failure",
+            )
+        else:
+            service.database.request_cancellation(tenant, current["id"])
         service.database.queue_delete_job(tenant, current["id"])
+        if index < 2:
+            check_allowance("available")
+    check_allowance("retry_later")
     with pytest.raises(ValueError, match="three reconstruction attempts"):
         submit()
     with service.database.transaction() as connection:
         connection.execute("UPDATE usage_ledger SET created_at=0 WHERE tenant_id=?", (tenant,))
+    check_allowance("available")
     completed = submit()
     attempt = service.database.claim_next_job(
         worker_id="test-worker", lease_seconds=30, max_attempts=1
@@ -298,5 +383,159 @@ def test_google_preview_limits_survive_scene_deletion(service):
         used_units=30,
     )
     service.database.queue_delete_job(tenant, completed["id"])
+    check_allowance("used")
     with pytest.raises(ValueError, match="included reconstruction has been used"):
         submit()
+
+
+def test_operator_does_not_receive_a_one_video_preview_allowance(authenticated_client):
+    assert authenticated_client.get("/api/me").json()["reconstructionAllowance"] is None
+
+
+@pytest.fixture
+def google_upload(service, client):
+    principal = IdentityStore(service.database).create_workspace(
+        subject="upload-replay-user", name="Explorer", guest=False, max_accounts=10, quota=120
+    )
+    session, csrf = service.database.create_session(principal, 3600)
+    client.cookies.set("scene_workspace_session", session)
+    client.headers["X-CSRF-Token"] = csrf
+    headers = {"Idempotency-Key": "google-upload-replay-key"}
+    files = {"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")}
+    first = client.post("/api/assets", files=files, headers=headers)
+    assert first.status_code == 201
+    return principal["tenant_id"], headers, files, first.json()
+
+
+def block_google_upload(service, tenant, asset_id, state="used"):
+    for _ in range(3 if state == "retry_later" else 1):
+        job = service.database.create_job(
+            tenant_id=tenant,
+            engine_id="lingbot-research-v1",
+            source_asset_id=asset_id,
+            params={},
+            provenance={},
+            reserve_units=30,
+        )
+        if state == "processing":
+            break
+        if state == "retry_later":
+            service.database.request_cancellation(tenant, job["id"])
+        else:
+            attempt = service.database.claim_next_job(
+                worker_id="upload-replay-worker", lease_seconds=30, max_attempts=1
+            )
+            service.database.finish_job(
+                tenant,
+                job["id"],
+                attempt_token=attempt["attempt_token"],
+                worker_id="upload-replay-worker",
+                used_units=30,
+            )
+    assert service.database.reconstruction_allowance(tenant)["state"] == state
+
+
+@pytest.mark.parametrize("state", ["processing", "used", "retry_later"])
+def test_completed_upload_replays_after_allowance_changes(service, client, google_upload, state):
+    tenant, headers, files, first = google_upload
+    block_google_upload(service, tenant, first["id"], state)
+    replay = client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json() == first
+    conflict = client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(128), "video/mp4")},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "idempotency_conflict"
+    assert len(client.get("/api/assets").json()["assets"]) == 1
+    assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
+    with service.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM object_claims").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "candidate", ["missing", "fresh", "expired", "wrong_scope", "wrong_tenant", "in_progress"]
+)
+def test_blocked_upload_only_parses_a_completed_replay_candidate(
+    service, client, google_upload, tenant_id, monkeypatch, candidate
+):
+    from starlette.requests import Request
+
+    tenant, headers, files, first = google_upload
+    block_google_upload(service, tenant, first["id"])
+    with service.database.transaction() as connection:
+        if candidate == "expired":
+            connection.execute(
+                "UPDATE idempotency_keys SET expires_at=0 WHERE tenant_id=?", (tenant,)
+            )
+        elif candidate == "wrong_scope":
+            connection.execute(
+                "UPDATE idempotency_keys SET scope='POST:/api/jobs/sample' WHERE tenant_id=?",
+                (tenant,),
+            )
+        elif candidate == "wrong_tenant":
+            connection.execute(
+                "UPDATE idempotency_keys SET tenant_id=? WHERE tenant_id=?", (tenant_id, tenant)
+            )
+        elif candidate == "in_progress":
+            connection.execute(
+                "UPDATE idempotency_keys SET state='in_progress' WHERE tenant_id=?", (tenant,)
+            )
+    if candidate == "missing":
+        headers = {}
+    elif candidate == "fresh":
+        headers = {"Idempotency-Key": "unused-upload-key"}
+
+    async def forbidden_parser(*args, **kwargs):
+        pytest.fail("A blocked fresh upload must not reach the multipart parser")
+
+    monkeypatch.setattr(Request, "form", forbidden_parser)
+    response = client.post("/api/assets", files=files, headers=headers)
+    assert response.status_code == 409
+    assert "included reconstruction has been used" in response.json()["detail"]
+    assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
+
+
+@pytest.mark.parametrize("race", ["allowance_used", "key_expired", "key_removed"])
+def test_upload_admission_is_rechecked_before_creating_an_asset(
+    service, client, google_upload, monkeypatch, race
+):
+    from starlette.requests import Request
+
+    tenant, headers, files, first = google_upload
+    if race == "allowance_used":
+        headers = {"Idempotency-Key": "fresh-upload-racing-allowance"}
+    else:
+        block_google_upload(service, tenant, first["id"])
+    original_form = Request.form
+
+    async def change_state_after_admission(request, **kwargs):
+        form = await original_form(request, **kwargs)
+        if race == "allowance_used":
+            block_google_upload(service, tenant, first["id"])
+        else:
+            with service.database.transaction() as connection:
+                if race == "key_expired":
+                    connection.execute(
+                        "UPDATE idempotency_keys SET expires_at=0 WHERE tenant_id=?", (tenant,)
+                    )
+                else:
+                    connection.execute("DELETE FROM idempotency_keys WHERE tenant_id=?", (tenant,))
+        return form
+
+    monkeypatch.setattr(Request, "form", change_state_after_admission)
+    response = client.post("/api/assets", files=files, headers=headers)
+    assert response.status_code == 409
+    assert "included reconstruction has been used" in response.json()["detail"]
+    assert len(client.get("/api/assets").json()["assets"]) == 1
+    assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
+    with service.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM object_claims").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM idempotency_keys WHERE state='in_progress'"
+            ).fetchone()[0]
+            == 0
+        )

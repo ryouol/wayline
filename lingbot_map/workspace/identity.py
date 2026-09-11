@@ -24,6 +24,15 @@ class IdentityStore:
     def __init__(self, database: Database):
         self.database = database
 
+    def has_google_capacity(self, max_accounts: int) -> bool:
+        with self.database.connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT COUNT(*) FROM identities WHERE provider='google'"
+                ).fetchone()[0]
+                < max_accounts
+            )
+
     def create_workspace(
         self, *, subject: str, name: str, guest: bool, max_accounts: int, quota: int
     ) -> dict[str, Any]:

@@ -468,6 +468,11 @@ class WorkspaceService:
                     connection=connection,
                 )
                 if replay is None:
+                    allowance = self.database.reconstruction_allowance(
+                        tenant_id, connection=connection
+                    )
+                    if allowance and allowance["state"] != "available":
+                        raise UploadRejected(allowance["message"], status_code=409)
                     created_result = self.database.create_asset(
                         tenant_id=tenant_id,
                         object_key=stored.key,

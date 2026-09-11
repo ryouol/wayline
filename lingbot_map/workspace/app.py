@@ -115,10 +115,16 @@ class QuotaResponse(BaseModel):
     share_limit: int
 
 
+class ReconstructionAllowanceResponse(BaseModel):
+    state: Literal["available", "processing", "used", "retry_later"]
+    message: str
+
+
 class MeResponse(BaseModel):
     user: UserResponse
     csrfToken: str | None
     quota: QuotaResponse
+    reconstructionAllowance: ReconstructionAllowanceResponse | None
 
 
 class EngineResponse(BaseModel):
@@ -447,7 +453,8 @@ def create_app(
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-            "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
+            "connect-src 'self'; media-src 'self' blob:; object-src 'none'; "
+            "frame-ancestors 'none'; base-uri 'self'; "
             "form-action 'self'; require-trusted-types-for 'script'; trusted-types default"
         )
         if request.url.path == "/s" or request.url.path.startswith(("/api/", "/s/", "/auth/")):
@@ -620,6 +627,9 @@ def create_app(
             },
             "csrfToken": csrf,
             "quota": workspace.database.quota(current.tenant_id),
+            "reconstructionAllowance": workspace.database.reconstruction_allowance(
+                current.tenant_id
+            ),
         }
 
     @application.delete("/api/session", status_code=204)
@@ -671,6 +681,20 @@ def create_app(
     ):
         if await run_in_threadpool(identities.is_guest, current.user_id):
             raise HTTPException(403, "Sign in with Google to upload your own video.")
+        allowance = await run_in_threadpool(
+            workspace.database.reconstruction_allowance, current.tenant_id
+        )
+        if (
+            allowance
+            and allowance["state"] != "available"
+            and not await run_in_threadpool(
+                workspace.database.has_completed_idempotency,
+                current.tenant_id,
+                "POST:/api/assets",
+                idempotency_key,
+            )
+        ):
+            raise HTTPException(409, allowance["message"])
         if not upload_lock.acquire(blocking=False):
             raise HTTPException(
                 429,

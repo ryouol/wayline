@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import identity
 from .config import Settings
+from .database import QuotaExceeded
 from .service import WorkspaceService
 
 OAUTH_COOKIE = "wayline_oauth_browser"
@@ -74,6 +75,8 @@ def register_auth_routes(
         return {
             "name": "Wayline",
             "googleSignIn": runtime.signup_enabled,
+            "newAccountsAvailable": runtime.signup_enabled
+            and identities.has_google_capacity(runtime.signup_max_accounts),
             "trialEnabled": runtime.trial_enabled,
             "maxUploadBytes": runtime.max_upload_bytes,
             "maxVideoSeconds": runtime.max_video_seconds,
@@ -155,11 +158,22 @@ def register_auth_routes(
         except Exception:
             # Provider responses can contain credentials. Never log or return them.
             raise HTTPException(401, "Google sign-in failed. Please start again.") from None
-        principal = identities.create_workspace(
-            subject=claims["sub"],
-            name=str(claims.get("given_name") or "Explorer"),
-            guest=False,
-            max_accounts=runtime.signup_max_accounts,
-            quota=runtime.signup_quota_units,
-        )
+        try:
+            principal = identities.create_workspace(
+                subject=claims["sub"],
+                name=str(claims.get("given_name") or "Explorer"),
+                guest=False,
+                max_accounts=runtime.signup_max_accounts,
+                quota=runtime.signup_quota_units,
+            )
+        except QuotaExceeded:
+            response = RedirectResponse("/?signin=capacity", status_code=303)
+            response.delete_cookie(
+                OAUTH_COOKIE,
+                path="/auth/google",
+                secure=runtime.cookie_secure,
+                httponly=True,
+                samesite="lax",
+            )
+            return response
         return finish(principal, request)

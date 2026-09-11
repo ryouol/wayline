@@ -20,6 +20,13 @@ def test_authentication_and_security_headers(client, service):
     assert response.status_code == 401
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    csp = dict(
+        directive.strip().split(" ", 1)
+        for directive in response.headers["content-security-policy"].split(";")
+        if directive.strip()
+    )
+    assert csp["media-src"] == "'self' blob:"
+    assert csp["script-src"] == "'self'"
 
     assert client.post("/api/session", json={"token": "wrong-token-value"}).status_code == 401
     login = client.post("/api/session", json={"token": BOOTSTRAP_TOKEN})

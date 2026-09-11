@@ -917,6 +917,48 @@ class Database:
         )
         return values, next_cursor
 
+    def reconstruction_allowance(
+        self, tenant_id: str, *, connection: sqlite3.Connection | None = None
+    ) -> dict[str, str] | None:
+        """Report the same Google preview policy used by upload and job admission."""
+        if connection is None:
+            with self.connect() as active:
+                return self.reconstruction_allowance(tenant_id, connection=active)
+        tenant = connection.execute(
+            "SELECT t.consumed_units FROM tenants t JOIN users u ON u.tenant_id=t.id "
+            "JOIN identities i ON i.user_id=u.id WHERE t.id=? AND i.provider='google' LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        if tenant is None:
+            return None
+        if tenant["consumed_units"] > 0:
+            return {
+                "state": "used",
+                "message": "Your included reconstruction has been used. "
+                "You can still view, download and share your space.",
+            }
+        if connection.execute(
+            "SELECT 1 FROM jobs WHERE tenant_id=? AND engine_id='lingbot-research-v1' "
+            "AND state IN ('queued','running') LIMIT 1",
+            (tenant_id,),
+        ).fetchone():
+            return {
+                "state": "processing",
+                "message": "A reconstruction is already in progress in your workspace.",
+            }
+        attempts = connection.execute(
+            "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
+            "AND units>1 AND created_at>?",
+            (tenant_id, time.time() - 86400),
+        ).fetchone()[0]
+        if attempts >= 3:
+            return {
+                "state": "retry_later",
+                "message": "The preview allows three reconstruction attempts per day. "
+                "Please try again later.",
+            }
+        return {"state": "available", "message": "One video available. No payment required."}
+
     def create_job(
         self,
         *,
@@ -933,37 +975,10 @@ class Database:
         job_id, now = _id("job"), time.time()
         with self.transaction_or(connection) as active:
             tenant = self._tenant(active, tenant_id)
-            if (
-                engine_id == "lingbot-research-v1"
-                and active.execute(
-                    "SELECT 1 FROM identities i JOIN users u ON u.id=i.user_id "
-                    "WHERE i.provider='google' AND u.tenant_id=? LIMIT 1",
-                    (tenant_id,),
-                ).fetchone()
-            ):
-                if tenant["consumed_units"] > 0:
-                    raise QuotaExceeded(
-                        "Your included reconstruction has been used. "
-                        "You can still view, download and share your space."
-                    )
-                if active.execute(
-                    "SELECT 1 FROM jobs WHERE tenant_id=? AND engine_id=? "
-                    "AND state IN ('queued','running') LIMIT 1",
-                    (tenant_id, engine_id),
-                ).fetchone():
-                    raise QuotaExceeded(
-                        "A reconstruction is already in progress in your workspace."
-                    )
-                attempts = active.execute(
-                    "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
-                    "AND units>1 AND created_at>?",
-                    (tenant_id, now - 86400),
-                ).fetchone()[0]
-                if attempts >= 3:
-                    raise QuotaExceeded(
-                        "The preview allows three reconstruction attempts per day. "
-                        "Please try again tomorrow."
-                    )
+            if engine_id == "lingbot-research-v1":
+                allowance = self.reconstruction_allowance(tenant_id, connection=active)
+                if allowance and allowance["state"] != "available":
+                    raise QuotaExceeded(allowance["message"])
             usage = self._resource_usage(active, tenant_id)
             if usage["job_count"] >= tenant["job_limit"]:
                 raise QuotaExceeded("tenant job count limit exceeded; delete retained jobs")
@@ -2062,6 +2077,20 @@ class Database:
             ).rowcount
         if changed != 1:
             raise KeyError(share_id)
+
+    def has_completed_idempotency(self, tenant_id: str, scope: str, raw_key: str | None) -> bool:
+        """Identify a replay candidate without claiming a key or trusting its payload."""
+        if not raw_key:
+            return False
+        with self.connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM idempotency_keys WHERE tenant_id=? AND scope=? "
+                    "AND key_hash=? AND state='complete' AND expires_at>?",
+                    (tenant_id, scope, token_digest(raw_key), time.time()),
+                ).fetchone()
+                is not None
+            )
 
     def begin_idempotency(
         self,

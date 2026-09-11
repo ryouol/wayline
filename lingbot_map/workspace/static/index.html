@@ -10,6 +10,7 @@
 </head>
 <body>
   <a class="skip-link" href="#loginTitle" id="skipLink">Skip to main content</a>
+  <p class="signin-notice" id="signinNotice" role="status" hidden></p>
 
   <main class="login-shell" id="loginView">
     <header class="landing-nav"><a class="wordmark" href="/"><img src="/static/icon.svg" alt="" width="32" height="32">wayline<span class="beta-badge">EARLY ACCESS</span></a><a href="#how-it-works" class="text-button">How it works ↗</a></header>
@@ -19,7 +20,7 @@
         <h1 id="loginTitle" tabindex="-1">Your video.<br>A new <em>perspective.</em></h1>
         <p class="hero-description">Turn a walkthrough into a space you can explore. Retrace the camera. Pause on a detail. See the whole picture.</p>
         <div class="welcome-actions">
-          <a class="primary google-button" id="googleLogin" href="/auth/google/start" hidden><span aria-hidden="true">G</span> Continue with Google <span aria-hidden="true">↗</span></a>
+          <a class="primary google-button" id="googleLogin" href="/auth/google/start" hidden><span aria-hidden="true">G</span> <span id="googleLoginLabel">Continue with Google</span> <span aria-hidden="true">↗</span></a>
           <button class="primary" id="trialButton" type="button">Explore the playground <span aria-hidden="true">↗</span></button>
         </div>
         <p class="supporting" id="onboardingStatus">Loading sign-in options…</p>
@@ -63,12 +64,14 @@
           <h1 id="createTitle">Create a space.</h1>
           <p class="supporting">A steady walkthrough is all it takes to start.</p>
           <form id="researchForm">
-            <label class="upload-drop" for="video"><span class="upload-icon" aria-hidden="true">↥</span><strong id="selectedFilename">Choose a video</strong><span>MP4 or MOV · start with a short clip</span><input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska" required></label>
+            <label class="upload-drop" id="capturePicker" for="video"><span class="upload-icon" aria-hidden="true">↥</span><strong id="selectedFilename">Choose a video</strong><span>MP4 or MOV · start with a short clip</span><input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska" aria-describedby="captureLimits captureMessage researchReason" disabled required></label>
+            <p class="capture-limits supporting" id="captureLimits">Loading capture limits…</p>
+            <p class="form-message capture-message" id="captureMessage" role="status"></p>
             <details class="capture-settings"><summary>Capture settings</summary><div class="form-row"><div><label for="sampleFps">Frames / second</label><input id="sampleFps" type="number" value="3" min="1" max="15" required></div><div><label for="frameLimit">Maximum frames</label><input id="frameLimit" type="number" value="120" min="30" max="120" required></div></div></details>
             <button class="primary wide" id="researchButton" type="submit" disabled>Reconstruct space <span aria-hidden="true">↗</span></button>
           </form>
           <p class="form-message" id="researchMessage" role="status"></p>
-          <div class="runner-status"><span class="status-label" id="researchStatus">Checking</span><p class="supporting" id="researchReason">Checking the reconstruction service…</p></div>
+          <div class="runner-status" role="status"><span class="status-label" id="researchStatus">Checking</span><p class="supporting" id="researchReason">Checking the reconstruction service…</p></div>
           <div class="sample-option"><span>Just looking around?</span><button class="text-button" id="sampleButton" type="button">Create synthetic scene ↗</button></div>
         </section>
 

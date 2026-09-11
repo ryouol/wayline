@@ -7,6 +7,7 @@ const state = {
   principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
+  reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -94,7 +95,9 @@ async function api(path, options = {}) {
       throw new Error(detail);
     }
     if (response.status === 204) return null;
-    return await response.json();
+    const result = await response.json();
+    if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+    return result;
   } catch (error) {
     if (timedOut) throw new Error("The request timed out. Refresh to check its status before trying again.");
     throw error;
@@ -115,11 +118,40 @@ function broadcastSession(type) {
   } catch (_) { /* storage can be disabled */ }
 }
 
-async function revalidateSession() {
+function refreshAccount({ fresh = false } = {}) {
+  const epoch = state.epoch;
+  if (state.accountRefresh) {
+    if (!fresh) return state.accountRefresh;
+    // A job transition needs a snapshot requested after that transition.
+    return state.accountRefresh.then(() => {
+      if (epoch !== state.epoch) throw new DOMException("Stale account refresh", "AbortError");
+      return refreshAccount();
+    });
+  }
+  const pending = (async () => {
+    try {
+      const result = await api("/api/me");
+      if (epoch !== state.epoch) throw new DOMException("Stale account response", "AbortError");
+      showApp(result.user, result.csrfToken, result.reconstructionAllowance);
+      return result;
+    } catch (error) {
+      if (epoch === state.epoch && state.accountType === "google") {
+        state.reconstructionAllowance = null;
+        renderReconstructionStatus();
+      }
+      throw error;
+    } finally {
+      if (state.accountRefresh === pending) state.accountRefresh = null;
+    }
+  })();
+  state.accountRefresh = pending;
+  return pending;
+}
+
+async function revalidateSession(options) {
   if (byId("appView").hidden) return;
   try {
-    const result = await api("/api/me");
-    showApp(result.user, result.csrfToken);
+    await refreshAccount(options);
   } catch (error) {
     if (error?.name !== "AbortError" && !byId("appView").hidden) report(error);
   }
@@ -174,6 +206,10 @@ function clearDetail() {
 
 function secureReset() {
   state.epoch += 1;
+  cancelCaptureCheck();
+  state.reconstructionAllowance = null;
+  state.accountRefresh = null;
+  state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
   state.controllers.clear();
   if (state.pollTimer) clearTimeout(state.pollTimer);
@@ -208,6 +244,8 @@ function secureReset() {
   byId("video").value = "";
   byId("selectedFilename").textContent = "Choose a video";
   byId("researchMessage").textContent = "";
+  byId("captureMessage").textContent = "";
+  byId("video").removeAttribute("aria-invalid");
   byId("shareUrl").value = "";
   if (byId("shareDialog").open) byId("shareDialog").close();
   byId("emptyJobs").hidden = false;
@@ -229,12 +267,13 @@ function showLogin() {
   byId("trialButton").focus();
 }
 
-function showApp(user, csrfToken) {
+function showApp(user, csrfToken, allowance = null) {
   const principal = `${user.tenantName}\u0000${user.displayName}`;
   if (state.principal && state.principal !== principal) secureReset();
   state.principal = principal;
   state.csrf = csrfToken || "";
   state.accountType = user.accountType || "operator";
+  state.reconstructionAllowance = allowance;
   byId("shareButton").hidden = state.accountType === "trial";
   renderAccountActions();
   byId("loginView").hidden = true;
@@ -246,9 +285,10 @@ function showApp(user, csrfToken) {
 
 function renderAccountActions() {
   byId("saveWorkspace").hidden = state.accountType !== "trial" || !state.config?.googleSignIn;
+  byId("saveWorkspace").textContent = state.config?.newAccountsAvailable
+    ? "Sign in with Google" : "Returning Google sign-in";
   byId("researchForm").hidden = state.accountType === "trial";
-  // A session refresh must not re-enable an in-flight operator upload.
-  if (state.accountType === "trial") renderReconstructionStatus();
+  renderReconstructionStatus();
 }
 
 function toast(message) {
@@ -321,6 +361,9 @@ function renderJobs() {
 }
 
 async function loadJobs({ selectNewest = false, append = false, preserveLoaded = false } = {}) {
+  const epoch = state.epoch;
+  const activeResearch = new Set(state.jobs.filter((job) => job.engineId === "lingbot-research-v1"
+    && !terminalStates.has(job.state)).map((job) => job.id));
   const cursor = append ? state.jobCursor : null;
   const loadedCursor = state.jobCursor;
   const query = new URLSearchParams({ limit: "25" });
@@ -343,8 +386,15 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   state.selectedJobs.forEach((id) => { if (!jobIds.has(id) && !append) state.selectedJobs.delete(id); });
   renderJobs();
   updateSelectionSummary();
+  const unobservedCompletion = state.reconstructionAllowance?.state === "processing"
+    && !state.jobs.some((job) => job.engineId === "lingbot-research-v1" && !terminalStates.has(job.state));
+  if (state.accountType === "google" && (unobservedCompletion
+      || result.jobs.some((job) => activeResearch.has(job.id) && terminalStates.has(job.state)))) {
+    await revalidateSession({ fresh: true });
+  }
+  if (epoch !== state.epoch) return;
   if (state.selectedId) await renderJobDetail(); else clearDetail();
-  schedulePoll();
+  if (epoch === state.epoch) schedulePoll();
 }
 
 function updateSelectionSummary() {
@@ -602,21 +652,98 @@ async function loadEngines() {
 
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
-  const enabled = !trial && Boolean(state.engine?.available);
-  byId("researchButton").disabled = !enabled;
-  byId("researchStatus").textContent = trial ? "Synthetic playground" : (enabled ? "GPU runner configured" : "Reconstruction unavailable");
+  const google = state.accountType === "google";
+  const allowance = state.reconstructionAllowance;
+  const allowed = !trial && (!google || allowance?.state === "available");
+  const enabled = allowed && Boolean(state.engine?.available);
+  const canChoose = enabled && Boolean(state.config) && !state.uploading;
+  byId("video").disabled = !canChoose;
+  byId("sampleFps").disabled = !canChoose;
+  byId("frameLimit").disabled = !canChoose;
+  byId("capturePicker").classList.toggle("unavailable", !canChoose);
+  byId("researchButton").disabled = !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
+  const titles = { available: "One video available", processing: "Reconstruction in progress",
+    used: "Included video used", retry_later: "Try again later" };
+  byId("researchStatus").textContent = trial ? "Synthetic playground"
+    : google && !allowed ? (titles[allowance?.state] || "Checking your video allowance")
+      : enabled ? (google ? titles.available : "Ready to reconstruct") : "Reconstruction unavailable";
   byId("researchStatus").classList.toggle("available", enabled);
   byId("researchReason").textContent = trial
-    ? (state.config?.googleSignIn ? "Sign in with Google to reconstruct your own capture."
+    ? (state.config?.googleSignIn ? (state.config.newAccountsAvailable
+      ? "Sign in with Google to reconstruct your own capture."
+      : "New video accounts are currently full. Existing accounts can still sign in with Google.")
       : "This private, one-hour playground creates synthetic scenes. Video signup is still being connected.")
-    : (enabled ? "Your capture is processed privately. Research preview; no payment required."
-      : "The GPU runner is not connected yet. You can explore the sample while setup is completed.");
+    : google && !allowed ? (allowance?.message || "Refresh your account to check availability before uploading.")
+      : enabled ? (google ? allowance.message : "Your capture is processed privately. Research preview; no payment required.")
+        : "Reconstruction is unavailable. You can explore the sample or return to a saved space.";
+}
+
+function cancelCaptureCheck() {
+  state.captureCheck?.cancel?.();
+  state.captureCheck = null;
+}
+
+function validateSelectedCapture() {
+  cancelCaptureCheck();
+  const file = byId("video").files[0];
+  byId("selectedFilename").textContent = file ? file.name : "Choose a video";
+  byId("video").removeAttribute("aria-invalid");
+  byId("captureMessage").textContent = "";
+  byId("researchMessage").textContent = "";
+  if (!file) { renderReconstructionStatus(); return; }
+  const check = { file, status: "checking", cancel: null };
+  state.captureCheck = check;
+  const epoch = state.epoch;
+  const current = () => epoch === state.epoch && state.captureCheck === check;
+  const display = (status, message) => {
+    if (!current()) return;
+    check.status = status;
+    byId("captureMessage").textContent = message;
+    byId("captureMessage").classList.toggle("invalid", status === "invalid");
+    if (status === "invalid") byId("video").setAttribute("aria-invalid", "true");
+    renderReconstructionStatus();
+  };
+  if (state.config && file.size > state.config.maxUploadBytes) {
+    display("invalid", `Choose a video no larger than ${formatBytes(state.config.maxUploadBytes)}.`);
+    return;
+  }
+  display("checking", "Checking clip length…");
+  const video = document.createElement("video");
+  let url = null, timer = null, finished = false;
+  const finish = (duration, cancelled = false) => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(timer);
+    video.onloadedmetadata = null;
+    video.onerror = null;
+    video.removeAttribute("src");
+    video.load();
+    if (url) URL.revokeObjectURL(url);
+    if (cancelled || !current()) return;
+    if (Number.isFinite(duration) && duration > 0) {
+      if (state.config && duration > state.config.maxVideoSeconds) {
+        display("invalid", `Choose a clip up to ${state.config.maxVideoSeconds} seconds. This clip is ${Math.ceil(duration)} seconds.`);
+      } else {
+        display("valid", `${formatBytes(file.size)} · ${duration.toFixed(1)} seconds · ready to upload`);
+      }
+    } else {
+      display("fallback", `${formatBytes(file.size)} · clip length will be checked after upload`);
+    }
+  };
+  check.cancel = () => finish(null, true);
+  video.preload = "metadata";
+  video.onloadedmetadata = () => finish(video.duration);
+  video.onerror = () => finish(null);
+  timer = window.setTimeout(() => finish(null), 10000);
+  try {
+    url = URL.createObjectURL(file);
+    video.src = url;
+  } catch (_) { finish(null); }
 }
 
 async function initialize() {
   try {
-    const result = await api("/api/me");
-    showApp(result.user, result.csrfToken);
+    await refreshAccount();
     await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
   } catch (_) {
     showLogin();
@@ -677,51 +804,70 @@ byId("sampleButton").addEventListener("click", async () => {
 
 byId("researchForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.uploading || byId("researchButton").disabled) return;
   const file = byId("video").files[0];
-  if (!file) return;
-  if (state.config && file.size > state.config.maxUploadBytes) {
-    byId("researchMessage").textContent = `Choose a video smaller than ${formatBytes(state.config.maxUploadBytes)}.`;
-    return;
-  }
-  const button = byId("researchButton");
+  const selection = state.captureCheck, epoch = state.epoch;
+  if (!file || selection?.file !== file) return;
+  const assertCurrent = () => {
+    if (epoch !== state.epoch || state.captureCheck !== selection) throw new DOMException("Capture changed", "AbortError");
+  };
+  const params = { extractFps: Number(byId("sampleFps").value), maxFrames: Number(byId("frameLimit").value) };
   let asset = null;
-  button.disabled = true;
-  byId("researchMessage").textContent = "Uploading video…";
+  state.uploading = true;
+  renderReconstructionStatus();
+  byId("researchMessage").textContent = "Checking your account before upload…";
   try {
+    await refreshAccount();
+    assertCurrent();
+    if (state.accountType === "google" && state.reconstructionAllowance?.state !== "available") {
+      byId("researchMessage").textContent = state.reconstructionAllowance?.message || "Your video allowance could not be checked. Refresh to try again.";
+      return;
+    }
+    if (state.accountType === "trial" || !state.engine?.available) return;
+    byId("researchMessage").textContent = "Uploading video…";
     const body = new FormData();
     body.append("file", file);
     asset = await api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 });
+    assertCurrent();
     byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     const job = await api("/api/jobs/research", {
       method: "POST",
       idempotent: true,
       json: {
         assetId: asset.id,
-        extractFps: Number(byId("sampleFps").value),
-        maxFrames: Number(byId("frameLimit").value),
+        ...params,
         rotate: false,
         maskSky: false,
         memoryGuard: true,
         mode: "streaming",
       },
     });
+    assertCurrent();
     state.selectedId = job.id;
     asset = null;
-    await Promise.all([loadJobs(), loadAssets()]);
+    await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
+    assertCurrent();
     byId("researchMessage").textContent = "Reconstruction queued. Follow its progress in Scene review.";
   } catch (error) {
+    if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (asset) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }
-    toast(error.message);
-    byId("researchMessage").textContent = error.message;
+    if (epoch === state.epoch) {
+      toast(error.message);
+      byId("researchMessage").textContent = error.message;
+      if (state.accountType === "google") await revalidateSession();
+    }
   } finally {
-    renderReconstructionStatus();
+    if (epoch === state.epoch) {
+      state.uploading = false;
+      renderReconstructionStatus();
+    }
   }
 });
 
-byId("refreshButton").addEventListener("click", () => loadJobs().catch(report));
+byId("refreshButton").addEventListener("click", () => Promise.all([loadJobs(), revalidateSession()]).catch(report));
 byId("loadMoreJobs").addEventListener("click", () => loadJobs({ append: true }).catch(report));
 byId("loadMoreAssets").addEventListener("click", () => loadAssets({ append: true }).catch(report));
 byId("loadMoreShares").addEventListener("click", () => loadShares({ append: true }).catch(report));
@@ -807,11 +953,7 @@ byId("fullScreen").addEventListener("click", async () => {
     else toast("Full screen is unavailable in this browser. Rotate your phone for a wider view.");
   } catch (_) { toast("Full screen is unavailable in this browser."); }
 });
-byId("video").addEventListener("change", () => {
-  const file = byId("video").files[0];
-  byId("selectedFilename").textContent = file ? file.name : "Choose a video";
-  byId("researchMessage").textContent = file ? `${formatBytes(file.size)} · ready to upload` : "";
-});
+byId("video").addEventListener("change", validateSelectedCapture);
 byId("trialButton").addEventListener("click", async () => {
   const button = byId("trialButton"); button.disabled = true;
   byId("trialMessage").textContent = "Opening your private playground…";
@@ -825,19 +967,34 @@ byId("trialButton").addEventListener("click", async () => {
   finally { button.disabled = false; }
 });
 async function loadPublicConfig() {
+  const messages = { cancelled: "Google sign-in was cancelled. You can try again.",
+    capacity: "New video accounts are currently full. You can explore the sample or sign in to an existing workspace.",
+    failed: "Google sign-in did not finish. Please try again.",
+    expired: "Your sign-in expired. Please start again." };
+  const signin = new URLSearchParams(location.search).get("signin");
+  if (Object.hasOwn(messages, signin)) {
+    byId("signinNotice").textContent = messages[signin];
+    byId("signinNotice").hidden = false;
+  }
   try {
     const response = await fetch("/api/config");
     if (!response.ok) throw new Error("Sign-in options could not be loaded. Refresh to retry.");
     state.config = await response.json();
     renderAccountActions();
+    byId("captureLimits").textContent = `Up to ${state.config.maxVideoSeconds} seconds · ${formatBytes(state.config.maxUploadBytes)} maximum`;
+    if (byId("video").files[0] && !state.uploading) validateSelectedCapture();
+    const signupOpen = state.config.googleSignIn && state.config.newAccountsAvailable;
     byId("googleLogin").hidden = !state.config.googleSignIn;
+    byId("googleLoginLabel").textContent = signupOpen ? "Continue with Google" : "Returning Google sign-in";
+    byId("googleLogin").classList.toggle("primary", signupOpen);
+    byId("googleLogin").classList.toggle("secondary", !signupOpen);
     byId("trialButton").hidden = !state.config.trialEnabled;
-    byId("trialButton").classList.toggle("secondary", state.config.googleSignIn);
-    byId("trialButton").classList.toggle("primary", !state.config.googleSignIn);
+    byId("trialButton").classList.toggle("secondary", signupOpen);
+    byId("trialButton").classList.toggle("primary", !signupOpen);
     byId("onboardingStatus").textContent = state.config.googleSignIn
-      ? "A private workspace. One video to start. No card needed."
+      ? (signupOpen ? "A private workspace. One video to start. No card needed."
+        : "New video accounts are currently full. Explore the sample, or sign in to your existing workspace.")
       : "Try the synthetic sample. Google sign-in is being connected.";
-    if (new URLSearchParams(location.search).get("signin") === "cancelled") byId("trialMessage").textContent = "Google sign-in was cancelled. You can try again.";
   } catch (error) { byId("onboardingStatus").textContent = error.message; }
 }
 loadPublicConfig();

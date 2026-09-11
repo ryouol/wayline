@@ -41,6 +41,7 @@ image = (
     .add_local_file("LICENSE.txt", "/opt/wayline/LICENSE.txt", copy=True)
     .add_local_file("THIRD_PARTY_NOTICES.md", "/opt/wayline/THIRD_PARTY_NOTICES.md", copy=True)
     .add_local_file("MODEL_PROVENANCE.md", "/opt/wayline/MODEL_PROVENANCE.md", copy=True)
+    .add_local_dir("third_party_licenses", "/opt/wayline/third_party_licenses", copy=True)
     .add_local_file("demo.py", "/opt/wayline/demo.py", copy=True)
     .add_local_file("modal_app.py", "/opt/wayline/modal_app.py", copy=True)
     .env({"PYTHONPATH": "/opt/wayline"})

@@ -130,9 +130,15 @@ jobs:
               for source in pathlib.Path("lingbot_map/workspace/static").rglob("*"):
                   if source.is_file() and archive.read(source.as_posix()) != source.read_bytes():
                       raise SystemExit(f"wheel static asset differs from source: {source}")
-          for suffix in ("LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md"):
-              if not any(name.endswith(suffix) for name in names):
-                  raise SystemExit(f"wheel is missing {suffix}")
+          notices = [pathlib.Path(name) for name in (
+              "LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md", "MODEL_PROVENANCE.md",
+          )] + sorted(pathlib.Path("third_party_licenses").glob("*.txt"))
+          with zipfile.ZipFile(wheel) as archive:
+              for source in notices:
+                  suffix = f".dist-info/licenses/{source.as_posix()}"
+                  matches = [name for name in names if name.endswith(suffix)]
+                  if len(matches) != 1 or archive.read(matches[0]) != source.read_bytes():
+                      raise SystemExit(f"wheel notice missing or different from source: {source}")
           PY
 
       - name: Upload wheel

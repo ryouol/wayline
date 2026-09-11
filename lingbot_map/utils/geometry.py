@@ -374,6 +374,9 @@ def cam_from_img(pred_tracks, intrinsics, extra_params=None):
     return tracks_normalized
 
 ## Droid SLAM Part
+# Derived from DROID-SLAM projective_ops.py, with modifications.
+# Copyright (c) 2021, Princeton Vision & Learning Lab. All rights reserved.
+# BSD-3-Clause; see third_party_licenses/DROID-SLAM.txt and THIRD_PARTY_NOTICES.md.
 
 MIN_DEPTH = 0.2
 

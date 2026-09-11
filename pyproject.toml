@@ -4,8 +4,8 @@ version = "0.2.0"
 description = "Wayline: private video-to-3D spaces powered by LingBot-Map"
 requires-python = ">=3.11,<3.13"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md"]
+license = "LicenseRef-Wayline-Bundled-Source"
+license-files = ["LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md", "MODEL_PROVENANCE.md", "third_party_licenses/*.txt"]
 dependencies = [
     "fastapi==0.141.1",
     "google-auth==2.40.3",

@@ -88,8 +88,8 @@ unchanged. This deployment adds safe stage diagnostics; it admits no extra backu
 
 After the later capacity release, a read-only live ledger check still showed the
 same two failed attempts, 18,141,370 reserved bytes and no successful automatic
-set. Current Render runtime `1fbfe9a557dcc1e5799814d46590f364ef699e71`
-retains the stage diagnostics; see [current deployment QA](GPU_CAPACITY_QA.md).
+set. At that check, Render runtime `1fbfe9a557dcc1e5799814d46590f364ef699e71`
+retained the stage diagnostics; see [that deployment's QA](GPU_CAPACITY_QA.md).
 The next daily admission becomes eligible at
 **2026-09-12 02:24:37 UTC / September 11, 10:24:37 PM America/Toronto**.
 Eligibility is not evidence that a backup has started or completed.

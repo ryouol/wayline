@@ -84,9 +84,11 @@ limits and verify retention. Backups need separate encrypted storage.
   allow recovery from failures. Work rejected for shared capacity before any
   remote attempt does not consume a personal retry. Deleting scenes does not
   reset usage or refund attempted remote runs.
-- The Render Blueprint defaults to 20 Google accounts; the live service is
-  deliberately limited to one during acceptance. Concurrent retained playgrounds
-  are capped at 100. Playground retirement releases capacity.
+- The Render Blueprint defaults to 20 Google accounts; the live service allows
+  two total accounts for the bounded pilot: the owner and one additional
+  first-come signup. This is not an invite allowlist or a GPU budget increase.
+  Concurrent retained playgrounds are capped at 100. Playground retirement
+  releases capacity. See [pilot onboarding QA](ONBOARDING_QA.md).
 - Captures: 60 seconds on the Render configuration, 64 MiB upload ceiling,
   at most 120 sampled frames and 750,000 exported points.
 - Storage: 3.5 GB global logical limit, 256 MiB for the operator workspace,

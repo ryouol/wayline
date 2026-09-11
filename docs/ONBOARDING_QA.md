@@ -41,6 +41,48 @@ independent real reconstruction are documented in [REAL_CAPTURE_QA.md](REAL_CAPT
 ## Limits
 
 Google callback tests use a mocked provider; prior real owner login evidence
-remains in RENDER_QA.md. Signup capacity is still one on Render. These checks do
+remains in RENDER_QA.md. Signup capacity was one at this checkpoint. These checks do
 not prove second-account switching, physical phone decoding/touch performance,
 or general reconstruction quality. Deployment verification is recorded separately.
+
+## One additional pilot slot — deployed 2026-09-11
+
+The signup ceiling was changed from one to two total Google accounts so one
+additional person can try the requested video flow. This is one first-come signup
+slot alongside the existing owner, not an invitation or email allowlist. Only
+`WAYLINE_SIGNUP_MAX_ACCOUNTS` changed; all other Render environment values were
+compared equal. The shared GPU budget remains six 600-second admissions per rolling
+30 days, with four used at this verification. Opening an
+account slot adds no GPU budget and does not itself start reconstruction.
+
+Deployment `dep-daho8f942hec739pfeg0` is live on CI-passed commit
+`b14f0d716ea660197a1e562465f028eb87060bfe`; application source is unchanged.
+HTTPS health returned 200. The running process confirmed the two-account ceiling
+and preserved budget values. Six existing jobs remained READY, with four GPU
+admissions, no active jobs or pending remote cleanup, and one Google account.
+The recovery ledger still contained the same two failed attempts.
+
+A fresh anonymous Chromium session at 390×844 received
+`newAccountsAvailable: true`, displayed **Continue with Google** and “A private
+workspace. One video to start. No card needed.” The document width was 390 pixels
+with no JavaScript errors. Clicking the CTA reached `accounts.google.com`;
+authentication was not completed and no GPU job was submitted. Reloading the
+owner's actual browser retained Google login, the unused included video and the
+saved 5,908-point scene. Private receipts and the narrow-view screenshot are in
+`.lingbot-workspace/pilot-signup/` (`deployment.json`, `live-verification.json`,
+`anonymous-browser.json`, `signed-out-390px.png`).
+
+This verifies signup availability and entry, not second-account QA or an
+outside-tester reconstruction. Actual second-account acceptance must confirm a
+separate private workspace, successful reconstruction and used-allowance feedback,
+saved-scene persistence after **Sign out** and returning login, and no access to
+the owner's private records. Physical mobile decoding, touch and reconstruction
+QA remain pending; the narrow Chromium check is desktop viewport emulation.
+
+Tester path: **Continue with Google** → **Choose a video** (a short owned MP4 or
+MOV within the displayed 60-second/64 MiB limits) → **Reconstruct space** → wait
+for **Ready** → **Play path** and **Source frame** → **Walk from here** and
+**Step forward** → **Whole space** → **Download GLB** → **Create expiring share**.
+Open the copied share in a separate session, then verify revocation/expiry.
+Reconstruction uses the existing shared allowance; availability may pause when
+that allowance is full even if the account's included video is unused.

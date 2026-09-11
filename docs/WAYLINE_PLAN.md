@@ -18,11 +18,14 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 ## Current delivery status — 2026-09-11
 
 [Wayline is live](https://wayline-9ten.onrender.com) as a restricted research
-preview. The Render runtime is `1fbfe9a557dcc1e5799814d46590f364ef699e71`;
+preview. The Render runtime is `b14f0d716ea660197a1e562465f028eb87060bfe`;
 later documentation commits do not require a runtime deployment. The original
 LingBot worker is deployed on Modal with its pinned, hash-verified checkpoint.
 Google owner signup, returning login, logout and saved-scene persistence passed.
-Signup remains capped at one account while the wider release checks are open.
+The live signup ceiling is two accounts: the existing owner and one additional
+first-come pilot slot. This is not an invitation or email allowlist. A fresh
+signed-out browser reached Google sign-in; a second person has not yet completed
+signup or the video flow. See [pilot onboarding QA](ONBOARDING_QA.md).
 
 A licensed real-camera TUM office clip passed the corrected pipeline: upload,
 original-model inference, coherent 750,000-point scene, 30-frame replay, walking,
@@ -61,14 +64,15 @@ controls reduce exposure; they are not a provider invoice cap. See
   are deployed. Preserve failed-attempt reservations and the daily gate.
 - Complete the remaining release checks recorded in
   [launch readiness](launch-readiness.md), including provider/logging and recovery
-  boundaries. The full product goal is not complete and public signup is not open.
+  boundaries. The full product goal is not complete. The bounded pilot is open;
+  broader signup has not been enabled.
 
 ## Verification and review
 
 - Original hardening and the fresh-canvas viewer fix are preserved in `027d338`.
 - Current local and runtime CI gates passed: 226 Python tests, six Node suites,
   strict Ruff/formatting, mypy for 20 modules, wheel build and container smoke.
-  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34560538161)
+  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34562117631)
   validates the deployed commit.
 - Secret scanning included reachable Git history and exact live-credential
   matching; the recorded scan found no credential matches. Endpoint, identity,

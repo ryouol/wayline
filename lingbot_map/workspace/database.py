@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 5
+_JOB_SELECT = """
+    SELECT j.*, a.original_name AS source_original_name FROM jobs j
+    LEFT JOIN assets a ON a.id = j.source_asset_id AND a.tenant_id = j.tenant_id
+"""
 
 
 def _id(prefix: str) -> str:
@@ -1044,7 +1048,7 @@ class Database:
     ) -> dict[str, Any]:
         value = _row(
             connection.execute(
-                "SELECT * FROM jobs WHERE id = ? AND tenant_id = ?", (job_id, tenant_id)
+                _JOB_SELECT + " WHERE j.id = ? AND j.tenant_id = ?", (job_id, tenant_id)
             ).fetchone()
         )
         if value is None:
@@ -1056,7 +1060,7 @@ class Database:
     def list_jobs(self, tenant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM jobs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+                _JOB_SELECT + " WHERE j.tenant_id = ? ORDER BY j.created_at DESC LIMIT ?",
                 (tenant_id, limit),
             ).fetchall()
         return [self._decode_job(dict(row)) for row in rows]
@@ -1066,15 +1070,15 @@ class Database:
     ) -> tuple[list[dict[str, Any]], str | None]:
         limit = min(100, max(1, limit))
         parameters: list[Any] = [tenant_id]
-        predicate = "tenant_id=?"
+        predicate = "j.tenant_id=?"
         if cursor:
             created_at, item_id = decode_cursor(cursor)
-            predicate += " AND (created_at<? OR (created_at=? AND id<?))"
+            predicate += " AND (j.created_at<? OR (j.created_at=? AND j.id<?))"
             parameters.extend([created_at, created_at, item_id])
         parameters.append(limit + 1)
         with self.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM jobs WHERE {predicate} ORDER BY created_at DESC,id DESC LIMIT ?",
+                _JOB_SELECT + f" WHERE {predicate} ORDER BY j.created_at DESC,j.id DESC LIMIT ?",
                 parameters,
             ).fetchall()
         more = len(rows) > limit

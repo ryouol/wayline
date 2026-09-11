@@ -173,6 +173,7 @@ class JobErrorResponse(BaseModel):
 
 class JobResponse(BaseModel):
     id: str
+    displayName: str
     engineId: str
     sourceAssetId: str | None
     state: Literal["queued", "running", "ready", "failed", "cancelled"]
@@ -327,8 +328,13 @@ def _artifact(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str, Any]:
+    source_name = Path(value.get("source_original_name") or "").stem
+    display_name = " ".join(source_name.replace("_", " ").split()) or "Captured space"
     result = {
         "id": value["id"],
+        "displayName": (
+            "Synthetic studio" if value["engine_id"] == "synthetic-sample-v1" else display_name
+        ),
         "engineId": value["engine_id"],
         "sourceAssetId": value["source_asset_id"],
         "state": value["state"],

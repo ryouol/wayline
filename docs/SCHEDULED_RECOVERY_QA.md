@@ -73,3 +73,13 @@ previous separately encrypted manual set remains preserved and readable. Full
 workspace capacity, live seven-set retention, external alerts, independent key
 escrow and a replacement Render restore remain open. Failed-attempt reservations
 remain charged while the worker waits for its normal daily admission.
+
+
+## Final diagnostic deployment
+
+Runtime `0ca62c35be8b77f8db1063b8c39fe560fb472907` is live in deployment
+`dep-dahmi2jm8hqs73cf72i0`. [Its CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34555027387),
+including all 196 Python tests and the production container smoke. Post-deploy
+checks returned HTTP 200, four READY jobs, one Google identity and the saved
+5,908-point scene. The two-attempt ledger and all configured allowances survived
+unchanged. This deployment adds safe stage diagnostics; it admits no extra backup.

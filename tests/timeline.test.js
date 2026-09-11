@@ -13,6 +13,7 @@ function element() {
     setAttribute(key, value) { this.attrs[key] = value; },
     append(...children) { this.children.push(...children); },
     replaceChildren() { this.children = []; },
+    getBoundingClientRect() { return { left: 0, right: 200 }; },
   };
 }
 const controls = Object.fromEntries([".filmstrip", 'input[type="range"]', ".frame-counter", ".play-path", ".show-all"].map(key => [key, element()]));
@@ -37,16 +38,26 @@ function tick(time) {
   callbacks.forEach(fn => fn(time));
 }
 timeline.attach(viewer);
+const strip = controls[".filmstrip"];
+strip.scrollLeft = 400;
+strip.children.forEach((button, index) => {
+  button.getBoundingClientRect = () => ({ left: index * 160 - strip.scrollLeft, right: index * 160 + 80 - strip.scrollLeft });
+});
 assert.equal(modes[0].attrs["aria-pressed"], "true");
 assert.equal(modes[1].disabled, false);
 timeline.toggle();
 assert.equal(selected.at(-1), 0, "Play from whole space starts at the first captured frame");
+assert.equal(strip.scrollLeft, 0, "Restart reveals the first thumbnail when the strip was scrolled late");
 assert.equal(modes[1].attrs["aria-pressed"], "true");
 assert.equal(controls[".play-path"].attrs["aria-pressed"], "true");
 tick(1500);
 assert.equal(selected.at(-1), 1, "Playback follows source timestamps, not frame count");
+assert.equal(strip.scrollLeft, 40, "Advancing reveals the complete active thumbnail at the right edge");
+timeline.seek(1);
+assert.equal(strip.scrollLeft, 40, "An already-visible thumbnail does not shift the strip");
 tick(3100);
 assert.equal(selected.at(-1), 2);
+assert.equal(strip.scrollLeft, 200, "The last captured frame remains visible during playback");
 assert.equal(scheduled.size, 0, "The final frame stops playback");
 assert.equal(controls[".play-path"].attrs["aria-pressed"], "false");
 timeline.toggle();

@@ -57,7 +57,8 @@
       return;
     }
     document.getElementById("shareTitle").textContent = data.artifact.filename;
-    document.getElementById("shareLicense").textContent = data.artifact.licenseId;
+    document.getElementById("shareLicense").textContent = data.artifact.licenseId === "NOASSERTION"
+      ? "Usage rights unconfirmed" : data.artifact.licenseId;
     document.getElementById("shareExpiry").textContent = `Link expires ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(data.expiresAt * 1000))}.`;
     const warning = document.getElementById("shareCommercialWarning");
     warning.hidden = !data.researchOnly;

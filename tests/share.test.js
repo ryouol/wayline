@@ -20,7 +20,7 @@ function element(values = {}) {
 }
 
 function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200,
-  webglFailure = false, renderFailure = false, pendingDownload = false } = {}) {
+  webglFailure = false, renderFailure = false, pendingDownload = false, licenseId = "NOASSERTION" } = {}) {
   const ids = ["sharedStatus", "sharedDownload", "sharedTimeline", "shareLicense", "shareTitle",
     "shareUnavailableMessage", "shareUnavailableTitle", "shareUnavailable", "sharedZoomIn",
     "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink"];
@@ -32,7 +32,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   const timers = new Map();
   let nextTimer = 0, contentRequests = 0;
   const metadata = {
-    artifact: { filename: "office.glb", licenseId: "NOASSERTION", contentUrl: "/api/public/share/content" },
+    artifact: { filename: "office.glb", licenseId, contentUrl: "/api/public/share/content" },
     expiresAt: Math.ceil(Date.now() / 1000) + 60,
     researchOnly: true, commercialWarning: "Research preview.",
   };
@@ -106,6 +106,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(unsupported.elements.shareUnavailable.hidden, true, "A valid share remains valid without WebGL");
   assert.equal(unsupported.elements.shareTitle.textContent, "office.glb");
   assert.equal(unsupported.elements.shareLicense.hidden, false);
+  assert.equal(unsupported.elements.shareLicense.textContent, "Usage rights unconfirmed");
   assert.equal(unsupported.elements.sharedDownload.hidden, false);
   assert.equal(unsupported.selectors[".shared-viewer .viewport-wrap"].hidden, true);
   assert.equal(unsupported.requests.length, 1, "WebGL failure doesn't waste a preview transfer");
@@ -134,11 +135,16 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(rendering.elements.sharedDownload.hidden, false);
   assert.equal(rendering.elements.shareUnavailable.hidden, true);
   assert.deepEqual(rendering.revokedUrls, rendering.createdUrls);
+  const cc0 = fixture({ licenseId: "CC0-1.0" });
+  await cc0.run;
+  assert.equal(cc0.elements.shareLicense.textContent, "CC0-1.0", "Known license identifiers remain unchanged");
+  cc0.window.listeners.pagehide();
   const artifactRevoked = fixture({ contentStatus: 410 });
   await artifactRevoked.run;
   assert.equal(artifactRevoked.viewers[0].destroyed, true);
   assert.equal(artifactRevoked.elements.sharedDownload.hidden, true, "A revoked content response closes the share immediately");
   assert.equal(artifactRevoked.elements.shareUnavailable.hidden, false);
+  assert.equal(artifactRevoked.elements.shareLicense.hidden, true);
 
   const expiring = fixture({ pendingDownload: true });
   await expiring.run;
@@ -151,6 +157,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(expiring.viewers[0].loadController.signal.aborted, true, "Expiry also tears down the active preview");
   assert.equal(expiring.timelineAttachments.at(-1), null);
   assert.equal(expiring.elements.sharedDownload.hidden, true);
+  assert.equal(expiring.elements.shareLicense.hidden, true);
   assert.equal(expiring.elements.shareUnavailable.hidden, false);
   assert.equal(expiring.selectors[".shared-viewer"].hidden, true);
   assert.equal(expiring.downloads.length, 0, "An expired request cannot produce a downloadable blob");

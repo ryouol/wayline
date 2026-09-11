@@ -101,6 +101,10 @@
       this.setMode("camera");
       this.viewer.setFrame(index);
       Array.from(this.strip.children).forEach((button, i) => button.setAttribute("aria-current", String(i === index)));
+      const selected = this.strip.children[index].getBoundingClientRect();
+      const visible = this.strip.getBoundingClientRect();
+      if (selected.left < visible.left) this.strip.scrollLeft += selected.left - visible.left;
+      else if (selected.right > visible.right) this.strip.scrollLeft += selected.right - visible.right;
     }
 
     toggle() {

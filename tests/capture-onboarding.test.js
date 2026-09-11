@@ -15,9 +15,9 @@ const engines = (available = true) => ({ engines: [{ id: "lingbot-research-v1", 
 const config = { googleSignIn: true, newAccountsAvailable: true, trialEnabled: true,
   maxVideoSeconds: 30, maxUploadBytes: 10 * 1024 * 1024 };
 const deferred = () => {
-  let resolve;
-  const promise = new Promise((done) => { resolve = done; });
-  return { promise, resolve };
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 };
 
 function harness(search = "") {
@@ -65,6 +65,10 @@ function harness(search = "") {
           child.parentNode = this;
           this.children.push(child);
         }
+      },
+      prepend(child) {
+        this.append(child);
+        this.children.unshift(this.children.pop());
       },
       replaceChildren(...children) {
         for (const child of this.children) child.parentNode = null;
@@ -152,6 +156,104 @@ function harness(search = "") {
 }
 
 async function main() {
+  {
+    const h = harness();
+    const pending = Object.fromEntries(["assets", "shares", "jobs"].map((name) => [name, deferred()]));
+    h.context.respond = (path) => pending[path.split("/").at(-1).split("?")[0]].promise;
+    h.click({ manageWorkspace: "" });
+    const status = h.node("requestStatus"), dialog = h.node("managementDialog");
+    assert.equal(status.parentNode, dialog, "management loading feedback belongs to the active modal");
+    assert.equal(dialog.children[0], status, "pending feedback precedes the scrollable inventory");
+    assert.equal(status.hidden, false);
+    assert.equal(h.state.controllers.size, 3);
+    pending.assets.resolve({ assets: [], nextCursor: null });
+    await new Promise(setImmediate);
+    assert.equal(status.hidden, false, "one completed request cannot hide other pending requests");
+    pending.shares.reject(new Error("Shares unavailable"));
+    await new Promise(setImmediate);
+    assert.equal(h.node("toast").textContent, "Shares unavailable");
+    assert.equal(h.node("toast").parentNode, dialog);
+    assert.equal(status.hidden, false, "an inventory error cannot hide the pending scene request");
+    pending.jobs.resolve({ jobs: [], nextCursor: null });
+    await new Promise(setImmediate);
+    assert.equal(status.hidden, true);
+    assert.equal(h.context.document.body.getAttribute("aria-busy"), "false");
+  }
+  {
+    const h = harness(), pending = deferred();
+    h.context.respond = () => pending.promise;
+    const request = h.context.api("/api/me");
+    const status = h.node("requestStatus"), body = h.context.document.body;
+    assert.equal(status.parentNode, body);
+    h.context.openCreateScene({ refresh: false });
+    assert.equal(status.parentNode, h.node("createDialog"), "opening a dialog carries existing pending feedback into it");
+    const confirmation = h.context.confirmAction("Continue?", "Test confirmation", "Continue");
+    assert.equal(status.parentNode, h.node("confirmDialog"), "only the front modal owns the indicator");
+    h.node("confirmCancel").events.get("click")();
+    assert.equal(await confirmation, false);
+    assert.equal(status.parentNode, h.node("createDialog"), "closing a nested dialog restores the underlying dialog's feedback");
+    h.node("createDialog").close();
+    await Promise.resolve();
+    assert.equal(status.parentNode, body, "native Escape/close returns ongoing feedback to the page");
+    assert.equal(status.classList.contains("dialog-request-status"), false);
+    assert.equal(status.hidden, false);
+    pending.resolve(account("available"));
+    await request;
+    assert.equal(status.hidden, true);
+  }
+  {
+    const h = harness(), oldPending = deferred(), currentPending = deferred();
+    h.context.respond = () => oldPending.promise;
+    h.context.openCreateScene({ refresh: false });
+    const oldRequest = h.context.api("/api/me");
+    const stale = assert.rejects(oldRequest, { name: "AbortError" });
+    const status = h.node("requestStatus"), body = h.context.document.body;
+    h.context.secureReset();
+    assert.equal(h.requests[0].options.signal.aborted, true);
+    assert.equal(status.hidden, true, "session reset clears feedback before an aborted transport settles");
+    assert.equal(status.parentNode, body);
+    assert.equal(body.getAttribute("aria-busy"), "false");
+    h.context.respond = () => currentPending.promise;
+    const currentRequest = h.context.api("/api/me");
+    oldPending.resolve(account("available"));
+    await stale;
+    assert.equal(status.hidden, false, "late old-session cleanup cannot clear a new request's indicator");
+    assert.equal(body.getAttribute("aria-busy"), "true");
+    currentPending.resolve(account("available"));
+    await currentRequest;
+    assert.equal(status.hidden, true);
+    assert.equal(body.getAttribute("aria-busy"), "false");
+  }
+  {
+    const h = harness(), sharePost = deferred(), shares = deferred();
+    h.node("shareButton").dataset.artifactId = "art-test";
+    h.state.selectedId = "job-test";
+    h.context.respond = (path, options) => {
+      if (path === "/api/artifacts/art-test/shares" && options.method === "POST") return sharePost.promise;
+      if (path.startsWith("/api/shares")) return shares.promise;
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    const sharing = h.node("shareButton").events.get("click")();
+    const deleting = h.node("deleteButton").events.get("click")();
+    assert.equal(h.node("confirmDialog").open, true);
+    sharePost.resolve({ url: "/s#local-test" });
+    await new Promise(setImmediate);
+    assert.equal(h.node("shareDialog").open, true);
+    assert.equal(h.node("requestStatus").parentNode, h.node("shareDialog"),
+      "a late Share response opens above confirmation despite its earlier DOM position");
+    assert.equal(h.node("requestStatus").hidden, false);
+    shares.reject(new Error("Share inventory unavailable"));
+    await sharing;
+    assert.equal(h.node("toast").parentNode, h.node("shareDialog"), "errors use the same front dialog");
+    assert.equal(h.node("requestStatus").hidden, true);
+    h.node("shareDialog").close();
+    await Promise.resolve();
+    assert.equal(h.node("requestStatus").parentNode, h.node("confirmDialog"));
+    h.node("confirmCancel").events.get("click")();
+    await deleting;
+    assert.equal(h.requests.some((request) => request.method === "DELETE"), false);
+    assert.equal(h.node("requestStatus").parentNode, h.context.document.body);
+  }
   {
     const h = harness();
     const video = h.select();
@@ -628,7 +730,7 @@ async function main() {
   {
     const h = harness();
     h.context.openCreateScene({ refresh: false });
-    h.node("managementDialog").showModal();
+    h.context.openDialog(h.node("managementDialog"));
     h.state.jobs = [{ id: "private-job", displayName: "Private customer room", state: "ready" }];
     h.context.renderJobs();
     assert.equal(h.node("managementJobList").children.length, 1);
@@ -732,11 +834,11 @@ async function main() {
   {
     const h = harness();
     const toast = h.node("toast");
-    h.node("managementDialog").showModal();
+    h.context.openDialog(h.node("managementDialog"));
     h.context.toast("Storage refreshed");
     assert.equal(toast.parentNode, h.node("managementDialog"));
     assert.equal(toast.classList.contains("dialog-toast"), true);
-    h.node("confirmDialog").showModal();
+    h.context.openDialog(h.node("confirmDialog"));
     h.context.toast("Confirmation feedback");
     assert.equal(toast.parentNode, h.node("confirmDialog"), "feedback moves to the later open dialog");
     assert.equal(h.node("managementDialog").children.includes(toast), false, "moving feedback leaves no duplicate in the previous dialog");

@@ -45,8 +45,7 @@ async function api(path, options = {}) {
   }
   const controller = new AbortController();
   state.controllers.add(controller);
-  byId("requestStatus").hidden = false;
-  document.body.setAttribute("aria-busy", "true");
+  renderRequestStatus();
   let timedOut = false;
   const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 60000);
   try {
@@ -105,9 +104,35 @@ async function api(path, options = {}) {
   } finally {
     window.clearTimeout(timeout);
     state.controllers.delete(controller);
-    byId("requestStatus").hidden = state.controllers.size === 0;
-    document.body.setAttribute("aria-busy", String(state.controllers.size > 0));
+    renderRequestStatus();
   }
+}
+
+const dialogOrder = new Set();
+
+function activeDialog() {
+  return Array.from(dialogOrder).filter((dialog) => dialog.open).at(-1);
+}
+
+function openDialog(dialog) {
+  if (!dialog.open) {
+    dialog.showModal();
+    dialogOrder.delete(dialog);
+    dialogOrder.add(dialog);
+  }
+  renderRequestStatus();
+}
+
+function renderRequestStatus() {
+  const node = byId("requestStatus");
+  const dialog = activeDialog();
+  const host = dialog || document.body;
+  if (node.parentNode !== host) {
+    if (dialog) host.prepend(node); else host.append(node);
+  }
+  node.classList.toggle("dialog-request-status", Boolean(dialog));
+  node.hidden = state.controllers.size === 0;
+  document.body.setAttribute("aria-busy", String(state.controllers.size > 0));
 }
 
 function broadcastSession(type) {
@@ -257,6 +282,7 @@ function secureReset() {
   byId("video").removeAttribute("aria-invalid");
   byId("shareUrl").value = "";
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
+  renderRequestStatus();
   byId("emptyJobs").hidden = false;
   byId("emptyAssets").hidden = false;
   byId("emptyShares").hidden = false;
@@ -317,7 +343,7 @@ function renderSignInOptions() {
 function openCreateScene({ refresh = true } = {}) {
   if (byId("appView").hidden) { openAccount("signup"); return; }
   const dialog = byId("createDialog");
-  if (!dialog.open) dialog.showModal();
+  openDialog(dialog);
   renderReconstructionStatus();
   if (refresh) refreshAccount({ fresh: true }).catch(report);
 }
@@ -350,7 +376,7 @@ function renderAccountActions() {
 
 function toast(message) {
   const node = byId("toast");
-  const dialog = Array.from(document.querySelectorAll("dialog[open]")).at(-1);
+  const dialog = activeDialog();
   (dialog || document.body).append(node);
   node.classList.toggle("dialog-toast", Boolean(dialog));
   if (state.toastTimer) clearTimeout(state.toastTimer);
@@ -1023,7 +1049,7 @@ byId("shareButton").addEventListener("click", async () => {
       idempotent: true,
     });
     byId("shareUrl").value = new URL(result.url, window.location.origin).href;
-    byId("shareDialog").showModal();
+    openDialog(byId("shareDialog"));
     await loadShares();
   } catch (error) { toast(error.message); }
 });
@@ -1120,7 +1146,7 @@ function confirmAction(title, message, label) {
   byId("confirmMessage").textContent = message;
   byId("confirmAccept").textContent = label;
   dialog.returnValue = "";
-  dialog.showModal();
+  openDialog(dialog);
   byId("confirmCancel").focus();
   return new Promise((resolve) => dialog.addEventListener("close", () => {
     resolve(dialog.returnValue === "confirm" && epoch === state.epoch);
@@ -1133,6 +1159,13 @@ byId("createDialog").addEventListener("cancel", (event) => {
   if (state.uploading) { event.preventDefault(); toast("Your scene is being submitted. Wait for it to finish before closing."); }
 });
 byId("createDialog").addEventListener("close", () => byId("capturePreview").pause());
+["createDialog", "managementDialog", "shareDialog", "confirmDialog"].forEach((id) => {
+  const dialog = byId(id);
+  dialog.addEventListener("close", () => {
+    if (!dialog.open) dialogOrder.delete(dialog);
+    renderRequestStatus();
+  });
+});
 document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-account-entry], [data-public-home], [data-workspace-home], [data-create-scene], [data-manage-workspace], [data-dialog-close]");
   if (!target) return;
@@ -1148,7 +1181,7 @@ document.addEventListener("click", (event) => {
     byId("workspaceMain").focus({ preventScroll: true });
   } else if (target.hasAttribute("data-create-scene")) openCreateScene();
   else if (target.hasAttribute("data-manage-workspace")) {
-    byId("managementDialog").showModal();
+    openDialog(byId("managementDialog"));
     Promise.all([loadInventory(), loadJobs({ preserveLoaded: true })]).catch(report);
   } else if (target.dataset.dialogClose === "createDialog" && state.uploading) {
     toast("Your scene is being submitted. Wait for it to finish before closing.");

@@ -136,6 +136,13 @@ A later live Render-to-Modal diagnostic reached READY in 41.28 seconds with four
 frames and a 7.82 MB scene, then scaled to zero workers. This used the same tiny
 generated source, not a room capture. See [live QA](RENDER_QA.md).
 
+On September 11, a licensed real-camera TUM office clip (10 seconds, 640×480)
+passed the corrected pipeline with 30 sampled frames and a 12,210,576-byte scene.
+The observer saw READY after 80.356 seconds; inference took 7.887 seconds and
+the runner reported 62.291 seconds total. These scopes do not establish invoiced
+duration or average cost per successful customer scene. This is one benchmark
+capture, not an owned-phone cost study. See [real-capture QA](REAL_CAPTURE_QA.md).
+
 ## Measure before pricing
 
 Use several owned captures and retain source metadata, sampled frames,

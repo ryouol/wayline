@@ -5,7 +5,7 @@ fixes, not owned-video reconstruction quality or public launch approval.
 
 ## Local verification
 
-- 196 Python tests passed, including real age encryption/reassembly/restore,
+- At the recovery checkpoint, 196 Python tests passed, including real age encryption/reassembly/restore,
   conservative reservation persistence, restored-source protection, seven verified
   retained sets, partial upload/readback failure, early allowance rejection,
   failed-provider ledger compaction and service shutdown with concurrent samples.
@@ -59,7 +59,7 @@ Three bounded diagnostic probes then passed: an 8 MiB existing-content transfer,
 a fresh random 8 MiB transfer, and the app's two-part archive transfer with an
 8 MiB existing part plus 1 KiB fresh tail. All diagnostic prefixes were removed;
 no GPU was invoked. These probes do not turn either failed attempt into a backup,
-and the root cause remains unknown. The next diagnostic-only change distinguishes
+and the root cause remains unknown. The subsequently deployed diagnostic change distinguishes
 terminal upload/readback errors and logs exception class names without provider
 messages or URLs; it does not change admission or claim to repair this failure.
 
@@ -75,11 +75,45 @@ escrow and a replacement Render restore remain open. Failed-attempt reservations
 remain charged while the worker waits for its normal daily admission.
 
 
-## Final diagnostic deployment
+## Diagnostic deployment
 
-Runtime `0ca62c35be8b77f8db1063b8c39fe560fb472907` is live in deployment
+Runtime `0ca62c35be8b77f8db1063b8c39fe560fb472907` deployed in
 `dep-dahmi2jm8hqs73cf72i0`. [Its CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34555027387),
 including all 196 Python tests and the production container smoke. Post-deploy
 checks returned HTTP 200, four READY jobs, one Google identity and the saved
 5,908-point scene. The two-attempt ledger and all configured allowances survived
 unchanged. This deployment adds safe stage diagnostics; it admits no extra backup.
+
+## Actual-data offline differential — 2026-09-11
+
+After the later capacity release, a read-only live ledger check still showed the
+same two failed attempts, 18,141,370 reserved bytes and no successful automatic
+set. Current Render runtime `1fbfe9a557dcc1e5799814d46590f364ef699e71`
+retains the stage diagnostics; see [current deployment QA](GPU_CAPACITY_QA.md).
+The next daily admission becomes eligible at
+**2026-09-12 02:24:37 UTC / September 11, 10:24:37 PM America/Toronto**.
+Eligibility is not evidence that a backup has started or completed.
+
+A separate offline differential used the existing encrypted manual workspace
+backup `workspace-online-20260910T234450Z.tar.age` (8,399,048 bytes; SHA-256
+`cf93bbdf9dfd7e6d0276cc64002c6a7e5b868afa4640027454aa2b3217124e98`).
+It decrypted and restored into a private temporary directory, then called the
+current `run_once` with real age encryption, an in-memory fake volume and an
+empty environment payload. Only the temporary restored copy's recovery ledger
+was written; the live ledger was unchanged. This exercises actual saved workspace
+contents, but not the production environment export or provider transfer.
+
+The run completed in 0.098 seconds and produced an 8,419,528-byte archive in
+8,388,608-byte and 30,920-byte parts. Reassembly matched the completion marker's
+archive hash; a completion marker was present and no error was recorded. The
+generated hash value was not retained. No provider credentials were read, no
+provider operations or GPU jobs were performed, and all temporary plaintext and
+generated ciphertext were removed on exit.
+
+This narrows the investigation: the actual-data snapshot/encryption/multipart
+loop works locally. It does not establish why the live attempts failed. One
+earlier isolated failure was traced to SDK readback; neither failed live attempt
+captured its exact stage. No source patch or further upload retry is justified
+by this differential alone. The next normally admitted attempt can supply the
+deployed stage diagnostics without resetting allowances. A complete automatic
+provider copy and scheduled-set restore remain unverified.

@@ -15,21 +15,69 @@ User selected Render + Modal on 2026-09-10. Keep the tested FastAPI/SQLite/objec
 5. Attached brief phases: metadata, icons, errors, consent, actual contact/legal placeholders only where owner inputs are absent, form/loading/error states, mobile/accessibility and visual QA.
 6. Finish: simplify's three review agents, all code-review skill agents, fix findings, run required checks, push and inspect CI, audit every requirement.
 
-## Current external inputs
+## Current delivery status — 2026-09-11
 
-- Modal is authenticated and the private original-model runner is deployed. Its pinned weights and one generated-video GPU diagnostic passed on 2026-09-10; owned-capture acceptance remains open.
-- Google OAuth client credentials and preferred project not yet supplied.
-- An owned video path is requested for the real acceptance run.
-- Legal/contact identity is not supplied. Do not invent it or assert commercial clearance.
+[Wayline is live](https://wayline-9ten.onrender.com) as a restricted research
+preview. The Render runtime is `1fbfe9a557dcc1e5799814d46590f364ef699e71`;
+later documentation commits do not require a runtime deployment. The original
+LingBot worker is deployed on Modal with its pinned, hash-verified checkpoint.
+Google owner signup, returning login, logout and saved-scene persistence passed.
+Signup remains capped at one account while the wider release checks are open.
 
-## Evidence
+A licensed real-camera TUM office clip passed the corrected pipeline: upload,
+original-model inference, coherent 750,000-point scene, 30-frame replay, walking,
+whole-scene view and matching browser download. The initial run exposed a
+world-to-camera export defect; the fix was independently tested and verified
+with a fresh deployed inference. The synthetic sample remains clearly labelled.
+See [real-capture QA](REAL_CAPTURE_QA.md) for results and quality limitations.
 
-- Original uncommitted hardening and canvas replacement preserved in 027d338.
-- Baseline: 99 Python tests and viewer lifecycle test passed in previous local run.
-- Tracked-file high-confidence secret signature scan: no matches (2026-09-10); not a full history audit.
-- Current local gate: 139 Python tests, strict lint/format and mypy for 19 modules passed, including streamed request limits and multipart spool cleanup. The updated Docker image built its wheel and passed the production smoke; unchanged JavaScript behavior suites passed in prior CI. The request-limit follow-up completed all simplify/code-review passes with no additional findings.
-- Simplify and all four code-review skill passes completed; every finding/disposition is retained in `REVIEW.md`. Aggregate review size remains an open merge concern.
-- New exports passed Khronos glTF validation. A synthetic VFR video verifies presentation timestamps; neither fixture proves real-model quality.
-- Browser QA resumed on 2026-09-10: repeat 5,908-point sample creation, a 750,000-point/120-frame synthetic fixture, completed replay, walking/reset, logout cleanup, anonymous sharing, byte-identical download and automatic expiry passed. Private/shared layouts fit at 390px. See `BROWSER_QA.md`; real reconstruction and physical mobile acceptance remain open.
+## Operating allowance
 
-- Actual Modal diagnostic: 731,004 points from six sampled synthetic frames; queued-to-ready 114.65 seconds, model inference 5.65 seconds. API download/share/revocation, successful-run remote cleanup and browser replay/walking passed. See `MODAL_QA.md`; this does not establish real-scene quality or public launch readiness.
+The user accepts $20/month as a target with some flexibility. The approved
+Render Starter instance and 5 GB disk cost $8.25/month before tax and usage.
+Keep Hobby, one instance, manual deployments and no preview instances. Preserve
+UNRENDER and RUSHES; do not change their resources or shared billing limits.
+
+Wayline limits GPU admission to six 600-second reservations per rolling 30 days,
+including queued work; four are used. The owner's included video is unused.
+Scene delivery and recovery uploads have separate durable allowances. These
+controls reduce exposure; they are not a provider invoice cap. See
+[operating costs](operating-costs.md) and [capacity QA](GPU_CAPACITY_QA.md).
+
+## Remaining acceptance and inputs
+
+- The dedicated Modal workspace still needs its $0.50 verification completed
+  in the owner's checkout. The production worker remains in the shared
+  workspace; independent provider limits and credential isolation are unverified.
+- Test an owned phone capture, a physical mobile browser and a second Google
+  account. The TUM benchmark and desktop viewport emulation do not establish
+  these results. Google credentials are already configured.
+- Obtain approved public operator/contact and privacy/terms information.
+  Keep the brief's explicit TODO scaffolds and analytics disabled until supplied;
+  do not invent business details or assert commercial hosted-use clearance.
+- Verify a complete automatic recovery set and restore. The manual encrypted
+  backup restored successfully, but both admitted automatic attempts failed.
+  The next normal admission opens September 12 at 02:24:37 UTC; stage diagnostics
+  are deployed. Preserve failed-attempt reservations and the daily gate.
+- Complete the remaining release checks recorded in
+  [launch readiness](launch-readiness.md), including provider/logging and recovery
+  boundaries. The full product goal is not complete and public signup is not open.
+
+## Verification and review
+
+- Original hardening and the fresh-canvas viewer fix are preserved in `027d338`.
+- Current local and runtime CI gates passed: 226 Python tests, six Node suites,
+  strict Ruff/formatting, mypy for 20 modules, wheel build and container smoke.
+  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34560538161)
+  validates the deployed commit.
+- Secret scanning included reachable Git history and exact live-credential
+  matching; the recorded scan found no credential matches. Endpoint, identity,
+  CSRF, storage and security scope are documented in
+  [the production audit](PRODUCTION_UX_AUDIT.md).
+- Desktop QA covers repeated samples, the corrected real scene, replay, walking,
+  download, sharing/revocation/expiry and layouts at 390 pixels. This is not a
+  physical-phone performance or touch test.
+- Simplify's three passes and all four final code-review passes completed.
+  [REVIEW.md](REVIEW.md) retains 90 numbered findings and dispositions; aggregate
+  change-size concerns 19, 66 and 83 remain open. The branch is pushed and
+  [PR #10](https://github.com/ryouol/lingbot-map/pull/10) remains a draft.

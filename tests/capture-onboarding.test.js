@@ -7,6 +7,9 @@ const source = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/
 const user = { tenantName: "Private space", displayName: "Visitor", accountType: "google" };
 const allowance = (state) => ({ state, message: `Allowance: ${state}` });
 const account = (state) => ({ user, csrfToken: "csrf", reconstructionAllowance: allowance(state) });
+const capacityMessage = "Reconstruction is temporarily paused because preview capacity is full. Please try again later.";
+const engines = (available = true) => ({ engines: [{ id: "lingbot-research-v1", available,
+  unavailableReasons: available ? [] : [capacityMessage] }] });
 const config = { googleSignIn: true, newAccountsAvailable: true, trialEnabled: true,
   maxVideoSeconds: 30, maxUploadBytes: 10 * 1024 * 1024 };
 const deferred = () => {
@@ -56,9 +59,10 @@ function harness(search = "") {
       querySelector: node, createElement(tag) { const created = element(); if (tag === "video") videos.push(created); return created; } },
     fetch: async (path, options = {}) => {
       requests.push({ path, method: options.method || "GET", options });
-      const result = await context.respond(path, options);
+      const result = await (path === "/api/engines" ? context.engineResponse() : context.respond(path, options));
       return { ok: true, status: 200, headers: new Headers(), json: async () => result };
     },
+    engineResponse: async () => engines(),
     respond: async (path) => {
       if (path === "/api/me") return account("available");
       if (path === "/api/config") return { ...config };
@@ -148,7 +152,7 @@ async function main() {
     h.select().onerror();
     h.context.respond = async () => account("used");
     await h.submit();
-    assert.deepEqual(h.requests.map((request) => request.path), ["/api/me"], "fresh used allowance stops before bytes are uploaded");
+    assert.deepEqual(h.requests.map((request) => request.path), ["/api/me", "/api/engines"], "fresh used allowance stops before bytes are uploaded");
     assert.equal(h.node("researchButton").disabled, true);
     assert.match(h.node("researchMessage").textContent, /used/);
   }
@@ -158,12 +162,12 @@ async function main() {
     h.context.respond = () => response.promise;
     const pending = h.submit();
     const focused = h.windowEvents.get("focus")();
-    assert.equal(h.requests.length, 1, "focus and pre-upload share one account refresh");
+    assert.equal(h.requests.length, 2, "focus and pre-upload share one account and capacity refresh");
     assert.equal(h.node("video").disabled, true);
     assert.equal(h.node("researchButton").disabled, true);
     response.resolve(account("used"));
     await Promise.all([pending, focused]);
-    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests.length, 2);
     assert.equal(h.state.uploading, false);
   }
   {
@@ -207,7 +211,7 @@ async function main() {
     assert.equal(h.state.principal, "", "stale account response does not restore a signed-out identity");
     assert.equal(h.state.captureCheck, null);
     assert.equal(h.state.uploading, true, "old submit cleanup cannot unlock the next session");
-    assert.equal(h.requests.length, 1, "stale preflight never uploads");
+    assert.equal(h.requests.length, 2, "stale preflight never uploads");
   }
   {
     const h = harness(), body = deferred(), responseReady = deferred();
@@ -300,6 +304,139 @@ async function main() {
     assert.equal(h.state.reconstructionAllowance.state, "available", "failed capture can be retried");
     await h.context.loadJobs();
     assert.equal(checks, 1, "reconciled state does not add recurring account polls");
+  }
+  {
+    const h = harness(), capacity = deferred();
+    h.select().onerror();
+    h.context.engineResponse = () => capacity.promise;
+    const upload = h.submit();
+    await new Promise(setImmediate);
+    assert.deepEqual(h.requests.map((request) => request.path), ["/api/me", "/api/engines"]);
+    assert.equal(h.node("researchButton").disabled, true, "account success cannot unlock a pending capacity check");
+    assert.equal(h.node("video").disabled, true);
+    capacity.resolve(engines(false));
+    await upload;
+    assert.equal(h.requests.some((request) => request.method === "POST"), false,
+      "full global capacity stops before uploading any bytes");
+    assert.equal(h.state.reconstructionAllowance.state, "available");
+    assert.equal(h.node("video").disabled, true);
+    assert.match(h.node("researchReason").textContent, /preview capacity is full/);
+    assert.match(h.node("researchReason").textContent, /included video is still available/);
+    assert.equal(h.node("researchMessage").textContent, "", "the live capacity status owns the pause message");
+    h.context.engineResponse = async () => engines();
+    await h.windowEvents.get("focus")();
+    assert.equal(h.node("researchButton").disabled, false, "focus can observe capacity reopening");
+    assert.equal(h.node("video").disabled, false);
+  }
+  {
+    const h = harness();
+    h.state.engine = engines(false).engines[0];
+    for (const state of ["used", "processing", "retry_later"]) {
+      h.context.showApp(user, "csrf", allowance(state));
+      assert.equal(h.node("researchReason").textContent, `Allowance: ${state}`,
+        "global capacity does not overwrite the user's existing restriction");
+    }
+  }
+  {
+    const h = harness();
+    const operator = { user: { ...user, accountType: "operator" }, csrfToken: "csrf", reconstructionAllowance: null };
+    h.context.showApp(operator.user, "csrf");
+    h.context.respond = async () => operator;
+    h.select().onerror();
+    h.context.engineResponse = async () => { throw new Error("Capacity check offline"); };
+    await h.submit();
+    assert.equal(h.requests.some((request) => request.method === "POST"), false);
+    assert.equal(h.state.engine, null);
+    assert.equal(h.node("video").disabled, true, "operator upload also fails closed on a failed capacity check");
+    assert.equal(h.node("researchButton").disabled, true);
+    assert.match(h.node("researchReason").textContent, /could not be confirmed/);
+    h.context.engineResponse = async () => engines();
+    await h.windowEvents.get("focus")();
+    assert.equal(h.node("researchButton").disabled, false, "a successful check restores operator upload");
+  }
+  {
+    const h = harness(), snapshot = deferred();
+    let checks = 0;
+    h.context.engineResponse = async () => ++checks === 1 ? snapshot.promise : engines(false);
+    const oldRefresh = h.context.refreshAccount();
+    const freshRefresh = h.context.refreshAccount({ fresh: true });
+    await new Promise(setImmediate);
+    assert.equal(checks, 1, "the fresh refresh waits for the entire preceding account/capacity pair");
+    snapshot.resolve(engines());
+    await Promise.all([oldRefresh, freshRefresh]);
+    assert.equal(checks, 2);
+    assert.equal(h.requests.filter((request) => request.path === "/api/me").length, 2);
+    assert.equal(h.state.engine.available, false, "the later capacity snapshot wins");
+    assert.equal(h.node("video").disabled, true);
+  }
+  {
+    const h = harness(), capacity = deferred();
+    h.context.engineResponse = () => capacity.promise;
+    h.select().onerror();
+    const oldUpload = h.submit();
+    await new Promise(setImmediate);
+    h.context.showLogin();
+    h.state.uploading = true;
+    capacity.resolve(engines());
+    await oldUpload;
+    assert.equal(h.state.engine, null, "late engine response cannot restore signed-out state");
+    assert.equal(h.state.uploading, true, "late preflight cannot unlock a new session's upload");
+    assert.equal(h.requests.some((request) => request.method === "POST"), false);
+  }
+  {
+    const h = harness();
+    const operator = { user: { ...user, accountType: "operator" }, csrfToken: "csrf", reconstructionAllowance: null };
+    h.context.showApp(operator.user, "csrf");
+    h.state.jobs = [{ id: "operator-job", engineId: "lingbot-research-v1", state: "queued" }];
+    h.context.respond = async (path) => path === "/api/me" ? operator
+      : { jobs: [{ id: "operator-job", engineId: "lingbot-research-v1", state: "ready" }], nextCursor: null };
+    h.context.engineResponse = async () => engines(false);
+    await h.context.loadJobs();
+    assert.equal(h.state.engine.available, false, "operator job completion also refreshes global capacity");
+    assert.equal(h.node("researchReason").textContent, capacityMessage);
+  }
+  {
+    const h = harness();
+    h.context.respond = async (path) => {
+      if (path === "/api/me") return account("available");
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/shares?")) return { shares: [], nextCursor: null };
+      throw new Error(path);
+    };
+    await h.context.initialize();
+    assert.equal(h.requests.filter((request) => request.path === "/api/engines").length, 1,
+      "initialization fetches capacity once");
+    h.context.engineResponse = async () => engines(false);
+    await h.node("refreshButton").events.get("click")();
+    assert.equal(h.state.engine.available, false, "manual refresh updates account and capacity together");
+  }
+  for (const accountType of ["operator", "trial"]) {
+    const h = harness(), capacity = deferred();
+    const identity = { user: { ...user, accountType }, csrfToken: "csrf", reconstructionAllowance: null };
+    let checks = 0;
+    h.context.engineResponse = async () => ++checks === 1 ? capacity.promise : engines(false);
+    h.context.respond = async (path) => {
+      if (["/api/session", "/api/trial", "/api/me"].includes(path)) return identity;
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/shares?")) return { shares: [], nextCursor: null };
+      throw new Error(path);
+    };
+    h.node("sampleButton").click = () => {};
+    const entry = accountType === "operator"
+      ? h.node("loginForm").events.get("submit")({ preventDefault() {},
+        currentTarget: { querySelector: () => h.node("loginButton") } })
+      : h.node("trialButton").events.get("click")();
+    await new Promise(setImmediate);
+    const newer = h.context.refreshAccount({ fresh: true });
+    await new Promise(setImmediate);
+    assert.equal(checks, 1, `${accountType} entry participates in the shared refresh coordinator`);
+    capacity.resolve(engines());
+    await Promise.all([entry, newer]);
+    assert.equal(checks, 2);
+    assert.equal(h.state.engine.available, false, "older entry response cannot overwrite newer capacity");
+    assert.equal(h.node("video").disabled, true);
   }
   console.log("Capture allowance, onboarding, metadata, and session behavior passed");
 }

@@ -130,13 +130,16 @@ function refreshAccount({ fresh = false } = {}) {
   }
   const pending = (async () => {
     try {
-      const result = await api("/api/me");
+      const [result, engines] = await Promise.all([api("/api/me"), api("/api/engines")]);
       if (epoch !== state.epoch) throw new DOMException("Stale account response", "AbortError");
       showApp(result.user, result.csrfToken, result.reconstructionAllowance);
+      state.engine = engines.engines.find((engine) => engine.id === "lingbot-research-v1");
+      renderReconstructionStatus();
       return result;
     } catch (error) {
-      if (epoch === state.epoch && state.accountType === "google") {
-        state.reconstructionAllowance = null;
+      if (epoch === state.epoch) {
+        state.engine = null;
+        if (state.accountType === "google") state.reconstructionAllowance = null;
         renderReconstructionStatus();
       }
       throw error;
@@ -388,7 +391,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   updateSelectionSummary();
   const unobservedCompletion = state.reconstructionAllowance?.state === "processing"
     && !state.jobs.some((job) => job.engineId === "lingbot-research-v1" && !terminalStates.has(job.state));
-  if (state.accountType === "google" && (unobservedCompletion
+  if (state.accountType !== "trial" && (unobservedCompletion
       || result.jobs.some((job) => activeResearch.has(job.id) && terminalStates.has(job.state)))) {
     await revalidateSession({ fresh: true });
   }
@@ -644,12 +647,6 @@ async function renderJobDetail() {
   }
 }
 
-async function loadEngines() {
-  const result = await api("/api/engines");
-  state.engine = result.engines.find((engine) => engine.id === "lingbot-research-v1");
-  renderReconstructionStatus();
-}
-
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
   const google = state.accountType === "google";
@@ -664,6 +661,8 @@ function renderReconstructionStatus() {
   byId("researchButton").disabled = !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
   const titles = { available: "One video available", processing: "Reconstruction in progress",
     used: "Included video used", retry_later: "Try again later" };
+  const unavailableReason = state.engine?.unavailableReasons?.join(" ")
+    || "Reconstruction availability could not be confirmed. Refresh to try again.";
   byId("researchStatus").textContent = trial ? "Synthetic playground"
     : google && !allowed ? (titles[allowance?.state] || "Checking your video allowance")
       : enabled ? (google ? titles.available : "Ready to reconstruct") : "Reconstruction unavailable";
@@ -675,7 +674,7 @@ function renderReconstructionStatus() {
       : "This private, one-hour playground creates synthetic scenes. Video signup is still being connected.")
     : google && !allowed ? (allowance?.message || "Refresh your account to check availability before uploading.")
       : enabled ? (google ? allowance.message : "Your capture is processed privately. Research preview; no payment required.")
-        : "Reconstruction is unavailable. You can explore the sample or return to a saved space.";
+        : `${unavailableReason}${google && allowed ? " Your included video is still available." : ""}`;
 }
 
 function cancelCaptureCheck() {
@@ -744,7 +743,7 @@ function validateSelectedCapture() {
 async function initialize() {
   try {
     await refreshAccount();
-    await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
+    await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
   } catch (_) {
     showLogin();
   }
@@ -763,7 +762,7 @@ byId("loginForm").addEventListener("submit", async (event) => {
     byId("token").value = "";
     showApp(result.user, result.csrfToken);
     broadcastSession("session-changed");
-    await Promise.all([loadEngines(), loadJobs({ selectNewest: true }), loadInventory()]);
+    await Promise.all([refreshAccount(), loadJobs({ selectNewest: true }), loadInventory()]);
     byId("workspaceMain").focus();
     toast("Signed in. Create a synthetic scene or open a recent scene.");
   } catch (error) {
@@ -817,13 +816,16 @@ byId("researchForm").addEventListener("submit", async (event) => {
   renderReconstructionStatus();
   byId("researchMessage").textContent = "Checking your account before upload…";
   try {
-    await refreshAccount();
+    await refreshAccount({ fresh: true });
     assertCurrent();
     if (state.accountType === "google" && state.reconstructionAllowance?.state !== "available") {
       byId("researchMessage").textContent = state.reconstructionAllowance?.message || "Your video allowance could not be checked. Refresh to try again.";
       return;
     }
-    if (state.accountType === "trial" || !state.engine?.available) return;
+    if (state.accountType === "trial" || !state.engine?.available) {
+      byId("researchMessage").textContent = "";
+      return;
+    }
     byId("researchMessage").textContent = "Uploading video…";
     const body = new FormData();
     body.append("file", file);
@@ -857,7 +859,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     if (epoch === state.epoch) {
       toast(error.message);
       byId("researchMessage").textContent = error.message;
-      if (state.accountType === "google") await revalidateSession();
+      await revalidateSession({ fresh: true });
     }
   } finally {
     if (epoch === state.epoch) {
@@ -867,7 +869,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
   }
 });
 
-byId("refreshButton").addEventListener("click", () => Promise.all([loadJobs(), revalidateSession()]).catch(report));
+byId("refreshButton").addEventListener("click", () => Promise.all([loadJobs(), revalidateSession({ fresh: true })]).catch(report));
 byId("loadMoreJobs").addEventListener("click", () => loadJobs({ append: true }).catch(report));
 byId("loadMoreAssets").addEventListener("click", () => loadAssets({ append: true }).catch(report));
 byId("loadMoreShares").addEventListener("click", () => loadShares({ append: true }).catch(report));
@@ -960,7 +962,7 @@ byId("trialButton").addEventListener("click", async () => {
   try {
     const result = await api("/api/trial", { method: "POST" });
     showApp(result.user, result.csrfToken); broadcastSession("session-changed");
-    await Promise.all([loadEngines(), loadJobs(), loadInventory()]);
+    await Promise.all([refreshAccount(), loadJobs(), loadInventory()]);
     byId("sampleButton").click();
     byId("workspaceMain").focus();
   } catch (error) { byId("trialMessage").textContent = error.message; }

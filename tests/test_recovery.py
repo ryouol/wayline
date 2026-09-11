@@ -132,6 +132,100 @@ def test_failed_readback_never_publishes_completion_or_prunes_good_set(setup):
     assert len(last["reservations"]) == 2
 
 
+@pytest.mark.parametrize("failures", [1, 2, 3])
+def test_transient_partial_readback_retries_reads_only(setup, monkeypatch, failures):
+    reads, sleeps = [], []
+    original_read = setup.volume.read
+
+    def flaky_read(remote):
+        reads.append(remote)
+        if len(reads) <= failures:
+            yield setup.volume.files[remote][:100]
+            raise OSError("transient provider read failure")
+        yield from original_read(remote)
+
+    monkeypatch.setattr(setup.volume, "read", flaky_read)
+    monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
+    assert setup.run() is (failures < 3)
+    state = recovery.load_state(setup.data_dir)
+    attempt = state["attempts"][-1]
+    assert sleeps == [2, 5][:failures]
+    assert len(setup.volume.uploads) == (2 if failures < 3 else 1)
+    assert len(reads) == (failures + 2 if failures < 3 else 3)
+    assert sum(item["bytes"] for item in attempt["reservations"]) > 1400
+    assert (attempt["prefix"] + "/complete.json" in setup.volume.files) is (failures < 3)
+
+
+def test_corrupt_readback_is_not_retried(setup, monkeypatch):
+    setup.volume.corrupt_read = True
+    sleeps = []
+    monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
+    assert not setup.run()
+    assert not sleeps
+    assert len(setup.volume.uploads) == 1
+    assert recovery.load_state(setup.data_dir)["attempts"][-1]["error"] == (
+        "remote_verification_failed"
+    )
+
+
+def test_operator_retry_keeps_charges_and_rejects_rolling_window_bypass(setup):
+    setup.volume.fail_after_upload = True
+    assert not setup.run()
+    original = recovery.load_state(setup.data_dir)["attempts"][0]
+    assert not setup.run(NOW + 3600, retry_failed=True)
+    state = recovery.load_state(setup.data_dir)
+    assert len(state["attempts"]) == 2
+    assert state["attempts"][0]["reservations"] == original["reservations"]
+    assert state["attempts"][1]["operator_retry"] is True
+    assert state["last_attempt"] == NOW + 3600
+    uploads = list(setup.volume.uploads)
+    assert not setup.run(NOW + 7200, retry_failed=True)
+    # The original scheduled failure aged out, but the operator retry has not.
+    assert not setup.run(NOW + recovery.DAY + 60, retry_failed=True)
+    assert setup.volume.uploads == uploads
+    assert recovery.load_state(setup.data_dir) == state
+    setup.volume.fail_after_upload = False
+    assert setup.run(NOW + recovery.DAY + 3600)
+    assert recovery.load_state(setup.data_dir)["attempts"][-1]["operator_retry"] is False
+
+
+def test_operator_retry_respects_lock_and_cannot_repeat_success(setup):
+    setup.volume.fail_after_upload = True
+    assert not setup.run()
+    before = recovery.load_state(setup.data_dir)
+    with (setup.data_dir / ".recovery.lock").open("a+b") as locked:
+        fcntl.flock(locked, fcntl.LOCK_EX)
+        assert not setup.run(NOW + 60, retry_failed=True)
+    assert recovery.load_state(setup.data_dir) == before
+    setup.volume.fail_after_upload = False
+    assert setup.run(NOW + 60, retry_failed=True)
+    assert not setup.run(NOW + 120, retry_failed=True)
+    assert len(recovery.load_state(setup.data_dir)["attempts"]) == 2
+
+
+def test_cli_accepts_retry_flag_without_bypassing_successful_admission(setup):
+    assert setup.run(time.time())
+    before = recovery.load_state(setup.data_dir)
+    subprocess.run(
+        [
+            recovery.sys.executable,
+            "-m",
+            "lingbot_map.workspace.recovery",
+            "--data-dir",
+            str(setup.data_dir),
+            "--recipient",
+            "age1test",
+            "--volume-id",
+            "vo-test",
+            "--retry-failed",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=5,
+    )
+    assert recovery.load_state(setup.data_dir) == before
+
+
 def test_retention_preserves_seven_verified_sets_and_other_prefixes(setup):
     for day in range(9):
         assert setup.run(NOW + day * recovery.DAY)
@@ -350,6 +444,7 @@ time.sleep(60)
 """
 
     def spawn(command, **kwargs):
+        assert command[-1] == "--retry-failed"
         return original_popen([command[0], "-c", script, str(setup.data_dir)], **kwargs)
 
     monkeypatch.setattr(recovery.subprocess, "Popen", spawn)
@@ -357,7 +452,7 @@ time.sleep(60)
         setup.data_dir, "age1test", "vo-test", staging_root=setup.staging, timeout_seconds=1
     )
     started = time.monotonic()
-    worker._run_child()
+    worker._run_child(retry_failed=True)
     assert time.monotonic() - started < 5
     state = recovery.load_state(setup.data_dir)
     assert state["attempts"][0]["status"] == "failed"

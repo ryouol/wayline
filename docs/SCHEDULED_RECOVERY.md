@@ -24,9 +24,19 @@ losing the only Mac copy would make the encrypted sets unrecoverable.
 
 ## Schedule and limits
 
-- The worker checks approximately every minute and admits at most one attempt
+- The worker checks approximately every minute and admits at most one automatic attempt
   per 24 hours, persisting admission before work. Restarting does not reset the
   interval or retry a failed attempt immediately.
+- An operator may explicitly retry a failed attempt once per rolling 24 hours.
+  The retry records its actual time and type, holds the same lock, and retains all
+  earlier reservations. It cannot repeat a successful attempt or chain retries
+  when the original failure ages out. Run it through the bounded supervisor:
+
+      RecoveryWorker(data_dir, recipient, volume_id)._run_child(retry_failed=True)
+
+  Supply the configured upload budget and staging directory when they differ
+  from defaults. The underlying CLI's --retry-failed flag still requires an
+  external deadline; the supervisor is the preferred operator entry point.
 - A child process performs the copy, encryption and transfer. The supervisor
   stops its process group after 15 minutes or during application shutdown.
   Startup cleanup removes recorded abandoned staging directories under the
@@ -53,6 +63,10 @@ losing the only Mac copy would make the encrypted sets unrecoverable.
 The encrypted archive is uploaded under /scheduled/TIMESTAMP-UUID/ as ordered
 part-0000.age, part-0001.age, etc. Every part is at most 8 MiB. Uploads and full
 readback/hash checks run sequentially; only one local part file exists at a time.
+Transient read exceptions get up to three read attempts, with 2- and 5-second
+delays. Each attempt starts a fresh digest; uploads are never retried here.
+Byte-count or checksum mismatches fail immediately. The supervisor's 15-minute
+deadline includes these reads and delays.
 This avoids the SDK's large-file parallel buffering path. The parts are pieces
 of one age archive and cannot be decrypted separately.
 

@@ -204,15 +204,27 @@ def _upload_verified(source, remote, volume, reserved_bytes):
     if size > reserved_bytes:
         raise RecoveryFailure("archive_exceeds_reservation")
     volume.upload(source, remote)
-    received, sha = 0, hashlib.sha256()
-    for chunk in volume.read(remote):
-        received += len(chunk)
-        if received > size:
+    for attempt in range(3):
+        received, sha = 0, hashlib.sha256()
+        try:
+            for chunk in volume.read(remote):
+                received += len(chunk)
+                if received > size:
+                    raise RecoveryFailure("remote_verification_failed")
+                sha.update(chunk)
+        except RecoveryFailure:
+            raise
+        except Exception:
+            if attempt == 2:
+                raise
+            # Refresh the SDK's download URLs after transient post-upload errors.
+            # Retry only reads; never duplicate an uncertain upload.
+            time.sleep((2, 5)[attempt])
+            continue
+        if received != size or sha.hexdigest() != expected:
             raise RecoveryFailure("remote_verification_failed")
-        sha.update(chunk)
-    if received != size or sha.hexdigest() != expected:
-        raise RecoveryFailure("remote_verification_failed")
-    return {"bytes": size, "sha256": expected}
+        return {"bytes": size, "sha256": expected}
+    raise RecoveryFailure("remote_verification_failed")
 
 
 def _upload_archive(archive, prefix, volume, reserved_bytes):
@@ -271,8 +283,9 @@ def run_once(
     volume=None,
     encrypt=encrypt_snapshot,
     environment: dict | None = None,
+    retry_failed: bool = False,
 ) -> bool:
-    """Admit at most one attempt per 24 hours; supervisor bounds total runtime."""
+    """Admit daily work or one explicit failed-attempt retry per rolling day."""
     now = time.time() if now is None else now
     with (data_dir / ".recovery.lock").open("a+b") as lock:
         os.chmod(lock.name, 0o600)
@@ -281,11 +294,20 @@ def run_once(
         except BlockingIOError:
             return False
         state = load_state(data_dir)
-        if now - state["last_attempt"] < DAY:
-            return False
+        operator_retry = now - state["last_attempt"] < DAY
+        if operator_retry:
+            recent = [item for item in state["attempts"] if item["created_at"] > now - DAY]
+            if (
+                not retry_failed
+                or len(recent) != 1
+                or recent[0]["status"] != "failed"
+                or recent[0].get("operator_retry", False)
+            ):
+                return False
         attempt: dict = {
             "prefix": f"/scheduled/{int(now):010d}-{uuid.uuid4().hex}",
             "created_at": now,
+            "operator_retry": operator_retry,
             "status": "running",
             "reservations": [],
         }
@@ -446,7 +468,7 @@ class RecoveryWorker:
                 logger.warning("Recovery supervisor requires attention")
             self._stop.wait(60)
 
-    def _run_child(self):
+    def _run_child(self, *, retry_failed=False):
         command = [
             sys.executable,
             "-m",
@@ -462,6 +484,8 @@ class RecoveryWorker:
             "--staging-root",
             str(self.staging_root),
         ]
+        if retry_failed:
+            command.append("--retry-failed")
         process = subprocess.Popen(command, start_new_session=True)
         deadline = time.monotonic() + self.timeout_seconds
         try:
@@ -506,6 +530,9 @@ def main():
     parser.add_argument("--volume-id", required=True)
     parser.add_argument("--upload-budget-bytes", type=int, default=DEFAULT_UPLOAD_BUDGET)
     parser.add_argument("--staging-root", type=Path, default=Path("/tmp"))
+    parser.add_argument(
+        "--retry-failed", action="store_true", help="one operator retry per 24 hours"
+    )
     args = parser.parse_args()
     run_once(**vars(args))
 

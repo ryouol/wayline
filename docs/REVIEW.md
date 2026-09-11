@@ -208,3 +208,17 @@ The CLI is an online snapshot capability, not an automated backup service.
 68. **Uncertain restored entries displaced verified retention slots — Fixed.** Breaking-change follow-up, P2. [lingbot_map/workspace/recovery.py:244](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:244). Retention selects seven completed sets independently of uncertain retained entries. Uncertain sources remain protected until seven completed sets exist, so they cannot displace a verified backup. Regression preserves seven actual completion markers.
 
 All three simplify passes and four final code-review skill passes completed. Reuse found no issue; model-visible context was N/A. Every actionable finding is retained above, including follow-ups. No review comments or merge were performed.
+
+## Recovery readback follow-up — 2026-09-11
+
+69. **Transient readback failure discarded a recoverable upload — Fixed in code; live retry pending.** Live verification, P2. [lingbot_map/workspace/recovery.py:207](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:207). The first live attempt failed after uploading its first part; a later read of the same bytes succeeded. Read exceptions now receive at most three attempts within the existing child deadline, resetting byte count and digest each time. Uploads are never repeated by this loop, checksum mismatches fail immediately, and failed reservations remain charged.
+
+70. **Operator retries could bypass their rolling-day limit — Fixed.** Simplify quality, P2. [lingbot_map/workspace/recovery.py:297](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:297). Counting recent attempts alone allowed a second operator retry when the original scheduled failure aged out. Admission now persists and checks the operator retry type. Regression tests cover that boundary, concurrent locking, retained charges and rejection after success.
+
+71. **Operator retry supervisor and CLI path were not exercised — Fixed.** Testing review, P3. [tests/test_recovery.py:424](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/tests/test_recovery.py:424). The bounded-child test now asserts forwarding of --retry-failed. A real CLI subprocess parses that flag and proves it cannot bypass a recent successful admission, without accessing a provider.
+
+The local suite passes 196 tests, strict lint/format checks and mypy. Reuse,
+quality and efficiency passes found no remaining actionable issues. Final
+compatibility and change-size passes found no new issues; existing size findings
+19 and 66 remain open. Testing found only the fixed coverage gap above;
+model-context review was N/A. No comments or merge were performed.

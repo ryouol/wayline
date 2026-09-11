@@ -79,7 +79,7 @@ Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webma
 | Item | Status / implementation |
 |---|---|
 | Loading states | ✅ Busy state, upload/queue/progress/viewer feedback. API calls bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation bounded. |
-| Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. |
+| Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. Capture metadata/size checks and authoritative one-video allowance now appear before upload; capacity callbacks return a visible notice. Real Chromium exercised accepted/oversized/overlong files at 390px without CSP errors. See `ONBOARDING_QA.md`. |
 | Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
 | Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ✅ Live Render diagnostic and owner Google signup/returning-login/logout passed (`RENDER_QA.md`). ⚠️ Second-Google-account and owned-capture flows remain pending. |
 | Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. Google callback verified on the Render hostname. ⚠️ A custom domain, if selected, needs its own callback and metadata verification. |

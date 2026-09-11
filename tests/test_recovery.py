@@ -551,6 +551,128 @@ def test_uncertain_marker_remains_retryable_until_seven_verified_replacements(
     assert sum(name.endswith("/complete.json") for name in setup.volume.files) == 7
 
 
+@pytest.mark.parametrize("failure", ["upload", "readback"])
+def test_uncertain_markers_stop_at_eight_prefixes_across_allowance_windows(
+    setup, monkeypatch, failure
+):
+    original_upload, original_read = setup.volume.upload, setup.volume.read
+
+    def uncertain_upload(source, remote):
+        if remote.endswith("/complete.json") and any(
+            name.endswith("/complete.json") for name in setup.volume.files
+        ):
+            raise OSError("later completion marker never arrived")
+        original_upload(source, remote)
+        if remote.endswith("/complete.json"):
+            raise OSError("first completion acknowledgement lost")
+
+    def uncertain_read(remote):
+        yield from original_read(remote)
+        if remote.endswith("/complete.json"):
+            raise OSError("completion read acknowledgement lost")
+
+    if failure == "upload":
+        monkeypatch.setattr(setup.volume, "upload", uncertain_upload)
+    else:
+        monkeypatch.setattr(setup.volume, "read", uncertain_read)
+        monkeypatch.setattr(recovery.time, "sleep", lambda _: None)
+
+    for window in range(8):
+        assert not setup.run(NOW + window * 31 * recovery.DAY)
+    candidates = recovery.load_state(setup.data_dir)["attempts"]
+    assert len(candidates) == 8
+    assert all(item["status"] == "failed" and item["completion_pending"] for item in candidates)
+    assert len(setup.calls) == 8
+    markers = [name for name in setup.volume.files if name.endswith("/complete.json")]
+    assert len(markers) == (1 if failure == "upload" else 8)
+    assert candidates[0]["prefix"] + "/complete.json" in markers
+    assert (
+        len(
+            {
+                name.rsplit("/", 1)[0]
+                for name in setup.volume.files
+                if name.startswith("/scheduled/")
+            }
+        )
+        == 8
+    )
+    remote_files, uploads = dict(setup.volume.files), list(setup.volume.uploads)
+    blocked_at = NOW + 8 * 31 * recovery.DAY
+    assert all(
+        charge["at"] < blocked_at - 30 * recovery.DAY
+        for item in candidates
+        for charge in item["reservations"]
+    )
+
+    def forbidden_snapshot(*args, **kwargs):
+        pytest.fail("The remote storage ceiling must stop work before snapshot copying")
+
+    monkeypatch.setattr(recovery, "create_snapshot", forbidden_snapshot)
+    for at, retry in [
+        (blocked_at, False),
+        (blocked_at + 60, True),
+        (blocked_at + 31 * recovery.DAY, False),
+    ]:
+        recovery.RecoveryWorker(
+            setup.data_dir, "age1test", "vo-test", staging_root=setup.staging
+        )._recover_interrupted()
+        assert not setup.run(at, retry_failed=retry)
+        state = recovery.load_state(setup.data_dir)
+        assert state["attempts"][:8] == candidates
+        assert state["attempts"][-1]["error"] == "recovery_storage_limit"
+        assert state["attempts"][-1]["reservations"] == []
+        assert state["attempts"][-1]["operator_retry"] is retry
+        assert state["last_success"] == 0
+        assert setup.volume.files == remote_files
+        assert setup.volume.uploads == uploads
+    assert len(setup.calls) == 8
+    assert not list(setup.staging.glob("wayline-recovery-*"))
+
+
+def test_failed_completed_set_cleanup_blocks_uploads_until_deletion_recovers(setup, monkeypatch):
+    for day in range(7):
+        assert setup.run(NOW + day * recovery.DAY)
+    oldest = recovery.load_state(setup.data_dir)["attempts"][0]["prefix"]
+    setup.volume.fail_remove = True
+    assert not setup.run(NOW + 7 * recovery.DAY)
+    state = recovery.load_state(setup.data_dir)
+    assert len([item for item in state["attempts"] if item["status"] == "complete"]) == 8
+    assert state["last_success"] == NOW + 7 * recovery.DAY
+    remote_files, uploads = dict(setup.volume.files), list(setup.volume.uploads)
+
+    def forbidden_snapshot(*args, **kwargs):
+        pytest.fail("Unremoved completed sets must block another snapshot")
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(recovery, "create_snapshot", forbidden_snapshot)
+        for day in (8, 9, 40):
+            removals = len(setup.volume.removed)
+            assert not setup.run(NOW + day * recovery.DAY)
+            state = recovery.load_state(setup.data_dir)
+            assert state["attempts"][-1]["status"] == "failed"
+            assert state["attempts"][-1]["reservations"] == []
+            assert state["last_success"] == NOW + 7 * recovery.DAY
+            assert len(setup.volume.removed) == removals + 1
+            assert setup.volume.removed[-1] == oldest
+            assert setup.volume.files == remote_files
+            assert setup.volume.uploads == uploads
+    assert len(setup.calls) == 8
+
+    setup.volume.fail_remove = False
+    assert setup.run(NOW + 41 * recovery.DAY)
+    state = recovery.load_state(setup.data_dir)
+    completed = [item for item in state["attempts"] if item["status"] == "complete"]
+    assert len(completed) == 7
+    assert state["last_success"] == NOW + 41 * recovery.DAY
+    assert state["attempts"][0]["status"] == "pruned"
+    assert oldest + "/complete.json" not in setup.volume.files
+    assert len([name for name in setup.volume.files if name.endswith("/complete.json")]) == 7
+    assert all(item["prefix"] + "/complete.json" in setup.volume.files for item in completed)
+    assert setup.volume.files["/manual-20260910/keep.age"] == b"keep"
+    assert len(setup.volume.uploads) == len(uploads) + 2
+    assert len(setup.calls) == 9
+
+
 def test_exhausted_allowance_avoids_snapshot_and_compacts_only_expired_pruned_rows(
     setup, monkeypatch
 ):
@@ -732,7 +854,7 @@ with (path/'.recovery.lock').open('a+b') as lock:
     assert state["attempts"][0]["reservations"][0]["bytes"] == 1400
 
 
-def test_uncertain_restored_candidate_does_not_replace_a_verified_retention_slot(setup):
+def test_uncertain_restored_candidate_keeps_verified_slots_and_blocks_ninth_prefix(setup):
     for day in range(7):
         assert setup.run(NOW + day * recovery.DAY)
     state = recovery.load_state(setup.data_dir)
@@ -745,10 +867,14 @@ def test_uncertain_restored_candidate_does_not_replace_a_verified_retention_slot
         }
     )
     recovery.save_state(setup.data_dir, state)
-    assert setup.run(NOW + 8 * recovery.DAY)
-    verified = [
-        i for i in recovery.load_state(setup.data_dir)["attempts"] if i["status"] == "complete"
-    ]
+    uploads = list(setup.volume.uploads)
+    assert not setup.run(NOW + 8 * recovery.DAY)
+    final = recovery.load_state(setup.data_dir)
+    assert final["attempts"][:8] == state["attempts"]
+    assert final["attempts"][-1]["error"] == "recovery_storage_limit"
+    assert final["attempts"][-1]["reservations"] == []
+    assert setup.volume.uploads == uploads
+    verified = [i for i in final["attempts"] if i["status"] == "complete"]
     assert len(verified) == 7
     assert all(i["prefix"] + "/complete.json" in setup.volume.files for i in verified)
 

@@ -34,6 +34,7 @@ MAX_SNAPSHOT_BYTES = 4 * 1024**3
 DEFAULT_UPLOAD_BUDGET = 10 * 1024**3
 PART_BYTES = 8 * 1024**2
 MARKER_BYTES = 128 * 1024
+MAX_REMOTE_SETS = 8
 STATE_NAME = "recovery-state.json"
 PREFIX = re.compile(r"^/scheduled/[0-9]{10}-[a-f0-9]{32}$")
 ENVIRONMENT_KEYS = frozenset(
@@ -265,7 +266,6 @@ def _retire(data_dir, state, volume, *, prune_completed=False, active_prefix=Non
         for item in state["attempts"]
         if item["status"] == "retained" or item.get("completion_pending", False)
     }
-    protected = candidates | {item["prefix"] for item in completed}
     keep = {item["prefix"] for item in completed[-7:]}
     if len(completed) < 7:
         keep.update(candidates)
@@ -274,7 +274,7 @@ def _retire(data_dir, state, volume, *, prune_completed=False, active_prefix=Non
             item["prefix"] in keep
             or item["prefix"] == active_prefix
             or item["status"] == "pruned"
-            or (item["prefix"] in protected and not prune_completed)
+            or (item["prefix"] in candidates and not prune_completed)
         ):
             continue
         volume.remove(item["prefix"])
@@ -335,10 +335,17 @@ def run_once(
                 or any(reservation["at"] > now - 30 * DAY for reservation in item["reservations"])
             ]
             save_state(data_dir, state)
-            # Cleanup of previous partial uploads must continue when this month's
-            # upload allowance is exhausted. Completed sets are preserved here.
+            # Retry partial-upload and superseded-set cleanup even when this
+            # month's allowance is exhausted; newer verified copies already exist.
             volume = volume if volume is not None else ModalRecoveryVolume(volume_id)
             _retire(data_dir, state, volume, active_prefix=attempt["prefix"])
+            # Seven retained sets plus one replacement; uncertain completions
+            # must not accumulate new storage as monthly upload charges age out.
+            remote_sets = sum(
+                item is not attempt and item["status"] != "pruned" for item in state["attempts"]
+            )
+            if remote_sets >= MAX_REMOTE_SETS:
+                raise RecoveryFailure("recovery_storage_limit")
             objects = referenced_objects(data_dir)
             estimate = sum(size for _, size, _ in objects)
             estimate += (data_dir / "workspace.sqlite3").stat().st_size

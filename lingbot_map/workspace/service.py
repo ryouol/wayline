@@ -37,7 +37,7 @@ from .engines import (
     engine_registry,
 )
 from .identity import IdentityStore
-from .modal_engine import ModalLingbotEngine
+from .modal_engine import ModalLingbotEngine, ReconstructionCapacityExceeded
 from .recovery import RecoveryWorker
 from .storage import LocalObjectStore, ObjectStore, ObjectTooLarge, StoredObject
 
@@ -253,17 +253,33 @@ class WorkspaceService:
         values = []
         for engine in self.engines.values():
             descriptor = engine.descriptor
+            reasons = list(descriptor.unavailable_reasons)
+            if isinstance(engine, ModalLingbotEngine):
+                reason = engine.capacity_unavailable_reason()
+                if reason:
+                    reasons.append(reason)
             values.append(
                 {
                     "id": descriptor.id,
                     "name": descriptor.name,
-                    "available": descriptor.available,
+                    "available": descriptor.available and not reasons,
                     "researchOnly": descriptor.research_only,
                     "commerciallyCleared": descriptor.commercially_cleared,
-                    "unavailableReasons": list(descriptor.unavailable_reasons),
+                    "unavailableReasons": reasons,
                 }
             )
         return values
+
+    def upload_unavailable_reason(
+        self, tenant_id: str, *, connection: sqlite3.Connection | None = None
+    ) -> str | None:
+        allowance = self.database.reconstruction_allowance(tenant_id, connection=connection)
+        if allowance and allowance["state"] != "available":
+            return allowance["message"]
+        engine = self.engines.get("lingbot-research-v1")
+        if isinstance(engine, ModalLingbotEngine):
+            return engine.capacity_unavailable_reason(connection=connection)
+        return None
 
     @staticmethod
     def request_hash(payload: dict[str, Any]) -> str:
@@ -468,11 +484,9 @@ class WorkspaceService:
                     connection=connection,
                 )
                 if replay is None:
-                    allowance = self.database.reconstruction_allowance(
-                        tenant_id, connection=connection
-                    )
-                    if allowance and allowance["state"] != "available":
-                        raise UploadRejected(allowance["message"], status_code=409)
+                    reason = self.upload_unavailable_reason(tenant_id, connection=connection)
+                    if reason:
+                        raise UploadRejected(reason, status_code=409)
                     created_result = self.database.create_asset(
                         tenant_id=tenant_id,
                         object_key=stored.key,
@@ -567,6 +581,10 @@ class WorkspaceService:
             )
             if replay is not None:
                 return replay
+            if isinstance(engine, ModalLingbotEngine):
+                reason = engine.capacity_unavailable_reason(connection=connection)
+                if reason:
+                    raise ReconstructionCapacityExceeded(reason)
             job = self.database.create_job(
                 tenant_id=tenant_id,
                 engine_id=engine_id,
@@ -806,6 +824,9 @@ class WorkspaceService:
             logger.exception("job %s failed", job_id)
             self._discard_attempt_artifacts(tenant_id, job_id, attempt_token, stored_objects)
             code = "engine_unavailable" if isinstance(error, EngineUnavailable) else "job_failed"
+            message = "The job could not be completed. Check server logs with the job ID."
+            if isinstance(error, ReconstructionCapacityExceeded):
+                code, message = "preview_capacity", str(error)
             try:
                 self.database.fail_job(
                     tenant_id,
@@ -813,7 +834,7 @@ class WorkspaceService:
                     attempt_token=attempt_token,
                     worker_id=worker_id,
                     code=code,
-                    message="The job could not be completed. Check server logs with the job ID.",
+                    message=message,
                 )
             except StaleAttempt:
                 logger.info("attempt %s lost ownership before failure settlement", attempt_token)

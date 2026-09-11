@@ -1340,6 +1340,15 @@ class Database:
             if cancelled:
                 code, message = "cancelled", "Job cancelled."
             self._release_reservation(connection, tenant_id, job_id, row["reserved_units"], state)
+            if code == "preview_capacity":
+                # Preserve the ledger across job deletion without charging a
+                # personal retry for work rejected before any remote attempt.
+                connection.execute(
+                    "UPDATE usage_ledger SET event='capacity_denied' "
+                    "WHERE tenant_id=? AND job_id=? AND event='reserve' "
+                    "AND NOT EXISTS (SELECT 1 FROM remote_runs WHERE job_id=?)",
+                    (tenant_id, job_id, job_id),
+                )
             connection.execute(
                 """
                 UPDATE jobs SET state=?, stage=?, error_code=?, error_message=?,

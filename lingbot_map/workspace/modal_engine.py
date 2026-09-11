@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import shutil
+import sqlite3
 import tempfile
 import time
 import uuid
@@ -35,6 +36,10 @@ from .runner_contract import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ReconstructionCapacityExceeded(QuotaExceeded):
+    pass
 
 
 class ModalLingbotEngine(LingbotResearchEngine):
@@ -91,19 +96,39 @@ class ModalLingbotEngine(LingbotResearchEngine):
             int(params.get("extractFps", 3)),
         )
 
+    def capacity_unavailable_reason(
+        self,
+        *,
+        connection: sqlite3.Connection | None = None,
+        exclude_job_id: str | None = None,
+    ) -> str | None:
+        if connection is None:
+            with self.database.connect() as active:
+                return self.capacity_unavailable_reason(
+                    connection=active, exclude_job_id=exclude_job_id
+                )
+        # Pending jobs hold a full attempt in addition to prior remote charges.
+        # This conservatively double-counts another already-running attempt until
+        # it settles; requeued jobs must never reuse a previous attempt's charge.
+        attempts = connection.execute(
+            "SELECT (SELECT COUNT(*) FROM remote_runs WHERE created_at>?) + "
+            "(SELECT COUNT(*) FROM jobs WHERE engine_id='lingbot-research-v1' "
+            "AND state IN ('queued','running') AND id!=?)",
+            (time.time() - 30 * 86400, exclude_job_id or ""),
+        ).fetchone()[0]
+        if (attempts + 1) * REMOTE_TIMEOUT > self.settings.modal_gpu_seconds_budget:
+            return (
+                "Reconstruction is temporarily paused because preview capacity is full. "
+                "Please try again later."
+            )
+        return None
+
     def reserve_run(self, attempt_id: str, job_id: str, deadline: float) -> None:
         now = time.time()
-        # A rolling 30-day budget is conservative: every submission is charged its
-        # maximum GPU runtime, including failures, and retries reserve another slot.
         with self.database.transaction() as connection:
-            used = (
-                connection.execute(
-                    "SELECT COUNT(*) FROM remote_runs WHERE created_at>?", (now - 30 * 86400,)
-                ).fetchone()[0]
-                * REMOTE_TIMEOUT
-            )
-            if used + REMOTE_TIMEOUT > self.settings.modal_gpu_seconds_budget:
-                raise QuotaExceeded("The beta's GPU allowance is used up. Please try again later.")
+            reason = self.capacity_unavailable_reason(connection=connection, exclude_job_id=job_id)
+            if reason:
+                raise ReconstructionCapacityExceeded(reason)
             connection.execute(
                 "INSERT INTO remote_runs(attempt_id,job_id,created_at,cleanup_after) "
                 "VALUES (?,?,?,?)",

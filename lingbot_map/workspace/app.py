@@ -681,20 +681,14 @@ def create_app(
     ):
         if await run_in_threadpool(identities.is_guest, current.user_id):
             raise HTTPException(403, "Sign in with Google to upload your own video.")
-        allowance = await run_in_threadpool(
-            workspace.database.reconstruction_allowance, current.tenant_id
-        )
-        if (
-            allowance
-            and allowance["state"] != "available"
-            and not await run_in_threadpool(
-                workspace.database.has_completed_idempotency,
-                current.tenant_id,
-                "POST:/api/assets",
-                idempotency_key,
-            )
+        reason = await run_in_threadpool(workspace.upload_unavailable_reason, current.tenant_id)
+        if reason and not await run_in_threadpool(
+            workspace.database.has_completed_idempotency,
+            current.tenant_id,
+            "POST:/api/assets",
+            idempotency_key,
         ):
-            raise HTTPException(409, allowance["message"])
+            raise HTTPException(409, reason)
         if not upload_lock.acquire(blocking=False):
             raise HTTPException(
                 429,

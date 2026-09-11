@@ -6,6 +6,9 @@ uses the private original-model Modal worker. Google signup, returning login and
 logout are verified for the owner; the initial account ceiling is one.
 This is a deployed research preview, not completed public-launch acceptance.
 
+A later [capacity pass](CAPACITY_QA.md) also verified live upload and deletion
+of generated 4096×4096 media, including a 64 MiB padded file. No GPU was invoked.
+
 ## Deployment
 
 - Project **Wayline**, environment **Production**, service `srv-dahhn0u7bikc73e82h9g`.

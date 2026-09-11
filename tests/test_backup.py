@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lingbot_map.workspace import backup
+from lingbot_map.workspace import backup, recovery
 from lingbot_map.workspace.backup import create_snapshot, restore_snapshot
 from lingbot_map.workspace.runtime_lock import workspace_lock
 from lingbot_map.workspace.service import WorkspaceService
@@ -146,3 +146,46 @@ def test_snapshot_database_timeout_removes_partial_copy(service, tmp_path, monke
     with pytest.raises(TimeoutError, match="30 seconds"):
         create_snapshot(service.settings.data_dir, snapshot, online=True)
     assert not snapshot.exists()
+
+
+def test_online_restore_retains_upload_that_completes_after_snapshot(service, tmp_path):
+    now = 1_800_000_000
+    prefix = "/scheduled/1800000000-" + "a" * 32
+    state = {
+        "format": 1,
+        "last_attempt": now,
+        "last_success": 0,
+        "attempts": [
+            {
+                "prefix": prefix,
+                "created_at": now,
+                "status": "running",
+                "reservations": [{"at": now, "bytes": 123456}],
+            }
+        ],
+    }
+    recovery.save_state(service.settings.data_dir, state)
+    snapshot = tmp_path / "manual-online"
+    create_snapshot(service.settings.data_dir, snapshot, online=True)
+    state["attempts"][0]["status"] = "complete"
+    recovery.save_state(service.settings.data_dir, state)
+    restored = tmp_path / "restored"
+    restore_snapshot(snapshot, restored)
+    restored_state = recovery.load_state(restored)
+    assert restored_state["attempts"][0]["status"] == "retained"
+    assert restored_state["attempts"][0]["reservations"] == [{"at": now, "bytes": 123456}]
+    removed = []
+
+    def fail_encryption(*args):
+        raise RuntimeError("next backup fails")
+
+    assert not recovery.run_once(
+        restored,
+        "age1test",
+        "vo-test",
+        staging_root=tmp_path,
+        now=now + recovery.DAY,
+        volume=SimpleNamespace(remove=removed.append),
+        encrypt=fail_encryption,
+    )
+    assert prefix not in removed

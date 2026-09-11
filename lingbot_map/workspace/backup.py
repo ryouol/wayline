@@ -34,13 +34,18 @@ def check_database(path: Path) -> None:
             raise ValueError("Snapshot contains broken database references")
 
 
-def copy_private(source: Path, target: Path) -> None:
+def copy_private(source: Path, target: Path, *, max_bytes: int | None = None) -> None:
     if source.is_symlink() or not source.is_file():
         raise ValueError("Snapshots support regular files only")
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with source.open("rb") as incoming, target.open("xb") as outgoing:
         target.chmod(0o600)
-        shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
+        copied = 0
+        while chunk := incoming.read(1024 * 1024):
+            copied += len(chunk)
+            if max_bytes is not None and copied > max_bytes:
+                raise ValueError("Snapshot exceeds its byte ceiling")
+            outgoing.write(chunk)
 
 
 def referenced_objects(data_dir: Path) -> list[tuple[str, int, str]]:
@@ -60,7 +65,9 @@ def check_objects(data_dir: Path, files: dict) -> None:
             raise ValueError("A database-referenced object is missing or corrupt")
 
 
-def create_snapshot(data_dir: Path, output: Path, *, online: bool = False) -> dict:
+def create_snapshot(
+    data_dir: Path, output: Path, *, online: bool = False, max_bytes: int | None = None
+) -> dict:
     """Copy a SQLite snapshot and verify its immutable object references.
 
     Online copies exclude unreferenced files. Concurrent deletion may make a
@@ -84,18 +91,44 @@ def create_snapshot(data_dir: Path, output: Path, *, online: bool = False) -> di
                 closing(sqlite3.connect(output / "workspace.sqlite3")) as target,
             ):
                 deadline = time.monotonic() + 30
+                page_size = source.execute("PRAGMA page_size").fetchone()[0]
 
                 def check_deadline(_status: int, _remaining: int, _total: int) -> None:
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Snapshot database copy exceeded 30 seconds")
+                    if max_bytes is not None and _total * page_size > max_bytes:
+                        raise ValueError("Snapshot exceeds its byte ceiling")
 
                 source.backup(target, pages=256, progress=check_deadline)
                 target.execute("PRAGMA journal_mode=DELETE")
             (output / "workspace.sqlite3").chmod(0o600)
-            copy_private(data_dir / "share-token.secret", output / "share-token.secret")
-            manifest_file = data_dir / "runtime-manifest.json"
-            if manifest_file.exists():
-                copy_private(manifest_file, output / manifest_file.name)
+            copied_bytes = (output / "workspace.sqlite3").stat().st_size
+
+            def copy(source_file: Path, target_file: Path) -> None:
+                nonlocal copied_bytes
+                if max_bytes is None:
+                    copy_private(source_file, target_file)
+                else:
+                    copy_private(source_file, target_file, max_bytes=max_bytes - copied_bytes)
+                copied_bytes += target_file.stat().st_size
+
+            copy(data_dir / "share-token.secret", output / "share-token.secret")
+            for name in ("runtime-manifest.json", "recovery-state.json"):
+                manifest_file = data_dir / name
+                if manifest_file.exists():
+                    copy(manifest_file, output / name)
+                    if name == "recovery-state.json":
+                        state = json.loads((output / name).read_text())
+                        # This upload can finish after an online snapshot's cutoff.
+                        # A restore must retain it until a newer verified set exists.
+                        for attempt in state["attempts"]:
+                            if attempt["status"] == "running":
+                                attempt["status"] = "retained"
+                        payload = json.dumps(state).encode()
+                        copied_bytes += len(payload) - (output / name).stat().st_size
+                        if max_bytes is not None and copied_bytes > max_bytes:
+                            raise ValueError("Snapshot exceeds its byte ceiling")
+                        (output / name).write_bytes(payload)
             objects = (
                 [
                     data_dir / "objects" / validate_object_key(key)
@@ -108,7 +141,7 @@ def create_snapshot(data_dir: Path, output: Path, *, online: bool = False) -> di
                 if source_file.is_symlink():
                     raise ValueError("Object storage contains a symlink")
                 if online or source_file.is_file():
-                    copy_private(source_file, output / source_file.relative_to(data_dir))
+                    copy(source_file, output / source_file.relative_to(data_dir))
             check_database(output / "workspace.sqlite3")
             files = {
                 str(path.relative_to(output)): {"size": path.stat().st_size, "sha256": digest(path)}

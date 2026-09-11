@@ -38,6 +38,7 @@ from .engines import (
 )
 from .identity import IdentityStore
 from .modal_engine import ModalLingbotEngine
+from .recovery import RecoveryWorker
 from .storage import LocalObjectStore, ObjectStore, ObjectTooLarge, StoredObject
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class WorkspaceService:
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
         self._research_worker: threading.Thread | None = None
+        self._recovery_worker: RecoveryWorker | None = None
         self._research_engines = tuple(
             name for name, engine in self.engines.items() if engine.descriptor.research_only
         )
@@ -224,11 +226,22 @@ class WorkspaceService:
         )
         self._research_worker.start()
         self._worker.start()
+        if self.settings.recovery_recipient:
+            self._recovery_worker = RecoveryWorker(
+                self.settings.data_dir,
+                self.settings.recovery_recipient,
+                self.settings.recovery_volume_id,
+                upload_budget_bytes=self.settings.recovery_upload_budget_bytes,
+            )
+            self._recovery_worker.start()
 
     def stop_worker(self) -> None:
         self._stop.set()
         self._wake.set()
         deadline = time.monotonic() + self.settings.shutdown_timeout_seconds
+        if self._recovery_worker:
+            self._recovery_worker.stop(timeout=max(0, deadline - time.monotonic()))
+            self._recovery_worker = None
         for worker in (self._worker, self._research_worker):
             if worker:
                 worker.join(timeout=max(0, deadline - time.monotonic()))

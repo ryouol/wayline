@@ -1,7 +1,7 @@
 FROM python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 age=1.1.1-1+b3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home wayline \
     && install -d -m 0700 -o wayline -g wayline /home/wayline/.ssh \

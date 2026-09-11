@@ -43,6 +43,15 @@ and setting an independent spend limit are pending. The existing production
 token can list the recovery volume by ID, so workspace separation alone has not
 established credential isolation. Do not assume an independent cap is active.
 
+Credential scope is a compromise-blast-radius concern, not a demonstrated visitor
+authorization bypass. The supervised preview can continue using the bounded SDK
+transport. Before broadly opening signup, replace the Render-held personal API
+pair with a narrow HTTP gateway authenticated by a Wayline-only workspace proxy
+token. Starter proxy tokens authenticate Web Functions, not native Volume or
+FunctionCall APIs; creating another personal profile is not that isolation.
+No $250/month Team upgrade is planned. See [Modal proxy tokens](https://modal.com/docs/guide/webhook-proxy-auth)
+and [service users](https://modal.com/docs/guide/service-users).
+
 | Illustrative GPU allocation per attempt | GPU cost per attempt | 100 attempts |
 |---|---:|---:|
 | 5 minutes | $0.2082 | $20.82 |
@@ -98,6 +107,14 @@ limits and verify retention. Backups need separate encrypted storage.
   on the provider invoice. Provider budgets/alerts remain to be configured.
 
 ## First diagnostic measurement
+
+Scheduled recovery now has a separate 10 GiB rolling upload reservation allowance,
+with daily admission and seven retained verified sets. Its corresponding public
+Render egress is about $1.61 before shared allowances, SDK retries and protocol
+traffic. It is not an additional service subscription or a total invoice cap.
+At the full 3.5 GB storage ceiling this allowance cannot support daily full copies
+throughout the month; a stale warning signals exhaustion. See
+[scheduled recovery](SCHEDULED_RECOVERY.md) for limits and restoration procedure.
 
 The original model completed one generated-video diagnostic on Modal: six sampled
 64x48 source frames, 114.65 seconds queued-to-ready, 78.32 seconds inside the

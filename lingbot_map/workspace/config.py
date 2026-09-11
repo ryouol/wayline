@@ -92,6 +92,9 @@ class Settings:
     signup_max_accounts: int = 100
     trial_max_accounts: int = 100
     signup_quota_units: int = 120
+    recovery_recipient: str = ""
+    recovery_volume_id: str = ""
+    recovery_upload_budget_bytes: int = 10 * 1024**3
     generated_bootstrap_token: bool = field(default=False, compare=False)
 
     @classmethod
@@ -184,12 +187,29 @@ class Settings:
             signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "100")),
             trial_max_accounts=int(os.getenv("WAYLINE_TRIAL_MAX_ACCOUNTS", "100")),
             signup_quota_units=int(os.getenv("WAYLINE_SIGNUP_QUOTA_UNITS", "120")),
+            recovery_recipient=os.getenv("WAYLINE_RECOVERY_RECIPIENT", ""),
+            recovery_volume_id=os.getenv("WAYLINE_RECOVERY_VOLUME_ID", ""),
+            recovery_upload_budget_bytes=int(
+                os.getenv("WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES", str(10 * 1024**3))
+            ),
             generated_bootstrap_token=generated,
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if bool(self.recovery_recipient) != bool(self.recovery_volume_id):
+            raise ValueError("Recovery requires both an age recipient and a Modal volume ID")
+        if self.recovery_recipient and not re.fullmatch(
+            r"age1[0-9a-z]{58}", self.recovery_recipient
+        ):
+            raise ValueError("Recovery requires a native age public recipient")
+        if self.recovery_volume_id and not re.fullmatch(
+            r"vo-[A-Za-z0-9]+", self.recovery_volume_id
+        ):
+            raise ValueError("Recovery requires an explicit Modal volume ID")
+        if self.recovery_upload_budget_bytes < 1:
+            raise ValueError("Recovery upload allowance must be positive")
         if self.modal_enabled and self.job_timeout_seconds > 3600:
             raise ValueError("Modal jobs require LINGBOT_JOB_TIMEOUT_SECONDS <= 3600")
         if self.modal_gpu_seconds_budget < 600:

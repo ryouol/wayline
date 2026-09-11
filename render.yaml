@@ -71,3 +71,10 @@ services:
         sync: false
       - key: MODAL_TOKEN_SECRET
         sync: false
+      # Leave both unset until an encrypted recovery volume has been provisioned.
+      - key: WAYLINE_RECOVERY_RECIPIENT
+        sync: false
+      - key: WAYLINE_RECOVERY_VOLUME_ID
+        sync: false
+      - key: WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES
+        value: "10737418240"

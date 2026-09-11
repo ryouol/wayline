@@ -167,6 +167,29 @@ def test_production_settings_require_long_secure_token(tmp_path):
         ).validate()
 
 
+def test_recovery_settings_require_explicit_encrypted_destination(settings, monkeypatch):
+    from dataclasses import replace
+
+    recipient = "age1" + "a" * 58
+    for fields in (
+        {"recovery_recipient": recipient},
+        {"recovery_volume_id": "vo-test"},
+        {"recovery_recipient": "AGE-SECRET-KEY-1PRIVATE", "recovery_volume_id": "vo-test"},
+        {"recovery_recipient": recipient, "recovery_volume_id": "arbitrary-volume-name"},
+        {"recovery_upload_budget_bytes": 0},
+    ):
+        with pytest.raises(ValueError, match="Recovery"):
+            replace(settings, **fields).validate()
+    monkeypatch.setenv("LINGBOT_ENV", "test")
+    monkeypatch.setenv("WAYLINE_RECOVERY_RECIPIENT", recipient)
+    monkeypatch.setenv("WAYLINE_RECOVERY_VOLUME_ID", "vo-test")
+    monkeypatch.setenv("WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES", "123456789")
+    configured = Settings.from_env()
+    assert configured.recovery_volume_id == "vo-test"
+    assert configured.recovery_recipient == recipient
+    assert configured.recovery_upload_budget_bytes == 123456789
+
+
 def test_runtime_settings_reject_unsafe_ranges(settings):
     from dataclasses import replace
 

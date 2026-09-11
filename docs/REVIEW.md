@@ -379,3 +379,16 @@ is retained; no GitHub review comments or dependency merges were made.
 113. **Selecting a scene could hide its actions behind the new sticky bar — Fixed.** Final breaking-change review, P2. [lingbot_map/workspace/static/app.js:639](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:639). Small-screen selection now scrolls the containing workspace to its start, keeping the scene bar in normal layout above title and actions. It no longer aligns the details underneath the sticky layer.
 
 114. **Account artwork advertised a full-width image slot — Fixed.** Final efficiency review, P3. [lingbot_map/workspace/static/index.html:85](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/index.html:85). Account imagery now declares its actual responsive column, padding and maximum 618px desktop/420px mobile width. A 1440px 1× display can select the 31 KB 640px light variant instead of the 115 KB full-width variant. The export and fingerprinting follow-up found no other issues.
+
+### Deployed release verification
+
+Runtime `9516dbfe7e3b672ad13a9b5288c26bf589484fb8` passed hosted CI and became
+live on the existing Render service at 2026-09-11 16:43:56 UTC. All 64 deployed
+static files match the reviewed source. Live public/signup layouts, Google
+returning login, the saved 5,908-point scene and library reopening passed. The
+database comparison retained six READY jobs, one Google identity, four remote
+runs and zero pending remote cleanups. No new GPU job or provider service was
+created. [The release receipt](DESIGN_RELEASE_QA.md) records deployment IDs,
+public screenshots and the remaining acceptance/recovery boundaries. The draft
+PR remains unmerged, with the aggregate-size finding and other recorded open
+launch requirements preserved.

@@ -304,6 +304,8 @@ def test_snapshot_excludes_work_orphans_and_unrelated_environment(setup):
             "WAYLINE_GOOGLE_CLIENT_SECRET": "test-google-secret",
             "MODAL_TOKEN_SECRET": "test-modal-secret",
             "UNRELATED_PROJECT_TOKEN": "must-not-copy",
+            "WAYLINE_ANALYTICS_ENABLED": "true",
+            "WAYLINE_ANALYTICS_PROPERTY_ID": "approved_test_label",
             "RENDER_API_KEY": "must-not-copy",
             "SSH_AUTH_SOCK": "must-not-copy",
         }
@@ -311,6 +313,8 @@ def test_snapshot_excludes_work_orphans_and_unrelated_environment(setup):
     assert setup.calls[0]["environment"] == {
         "WAYLINE_GOOGLE_CLIENT_SECRET": "test-google-secret",
         "MODAL_TOKEN_SECRET": "test-modal-secret",
+        "WAYLINE_ANALYTICS_ENABLED": "true",
+        "WAYLINE_ANALYTICS_PROPERTY_ID": "approved_test_label",
     }
     assert "objects/uncommitted.bin" not in setup.calls[0]["files"]
     assert all(not name.startswith("work/") for name in setup.calls[0]["files"])

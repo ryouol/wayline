@@ -211,7 +211,7 @@ All three simplify passes and four final code-review skill passes completed. Reu
 
 ## Recovery readback follow-up — 2026-09-11
 
-69. **Transient readback failure discarded a recoverable upload — Fixed in code; live retry pending.** Live verification, P2. [lingbot_map/workspace/recovery.py:207](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:207). The first live attempt failed after uploading its first part; a later read of the same bytes succeeded. Read exceptions now receive at most three attempts within the existing child deadline, resetting byte count and digest each time. Uploads are never repeated by this loop, checksum mismatches fail immediately, and failed reservations remain charged.
+69. **Backup verification lacked bounded read retries — Implemented; live backup still failing.** Live verification, P2. [lingbot_map/workspace/recovery.py:207](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:207). The first live attempt failed after its first part appeared remotely; a later read succeeded. Its exact failing operation was not captured. The deployed retry also failed, so these changes do not establish a repaired live backup. Read exceptions now receive at most three attempts within the existing child deadline, resetting byte count and digest each time. Uploads are never repeated by this loop, checksum mismatches fail immediately, and failed reservations remain charged.
 
 70. **Operator retries could bypass their rolling-day limit — Fixed.** Simplify quality, P2. [lingbot_map/workspace/recovery.py:297](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:297). Counting recent attempts alone allowed a second operator retry when the original scheduled failure aged out. Admission now persists and checks the operator retry type. Regression tests cover that boundary, concurrent locking, retained charges and rejection after success.
 
@@ -222,3 +222,10 @@ quality and efficiency passes found no remaining actionable issues. Final
 compatibility and change-size passes found no new issues; existing size findings
 19 and 66 remain open. Testing found only the fixed coverage gap above;
 model-context review was N/A. No comments or merge were performed.
+
+72. **Generic backup errors did not identify the failed transfer stage — Fixed in code.** Operator diagnosis, P2. [lingbot_map/workspace/recovery.py:208](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:208). Terminal upload and readback errors now record distinct safe categories and log exception class names only. Tests assert raw provider messages are absent. This is an observability fix; the original live failure remains unresolved and no additional full backup admission was granted.
+
+All three simplify passes and four final code-review skill passes also completed
+for the diagnostic follow-up. No additional findings remain; context review is
+N/A. All 196 Python tests, strict lint/format checks and mypy passed locally.
+The failed live backups remain an acceptance limitation, not a passing test.

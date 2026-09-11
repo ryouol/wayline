@@ -84,7 +84,8 @@ prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
 Render deployment, a generated-input GPU round trip, download/share expiry and
 revocation, visitor isolation and redeploy persistence passed; see [live QA](RENDER_QA.md).
-The app runs commit `351f339`. Google signup/returning login/logout passed in
+The [latest deployment and recovery receipt](SCHEDULED_RECOVERY_QA.md) records the
+current runtime and rollout status. Google signup/returning login/logout passed in
 `wayline-roy-20260910`; the initial signup ceiling is one account. An owned
 capture, second-account switching, public Google branding, operator legal/contact
 identity, provider budgets and upstream logging/edge-limit checks remain pending. Render holds a private personal-workspace Modal credential; it
@@ -162,7 +163,7 @@ Application-level logging cannot certify upstream logging configuration.
 ## Backups
 
 The snapshot tool coordinates the database, private object files, runtime
-manifest and `share-token.secret`. Always use a **new directory outside the data
+manifest, recovery ledger when present, and `share-token.secret`. Always use a **new directory outside the data
 directory**, with enough space for the copy. Default mode takes an exclusive
 workspace lock and requires the application to be stopped:
 
@@ -197,9 +198,24 @@ off the application disk with restricted access; verify a restore before switchi
 the live data path. On 2026-09-10 a pre-start Render maintenance snapshot and
 separate server-environment export were encrypted to the operator's Mac. An
 isolated Linux restore served the original artifact with its exact hash; see
-[recovery procedure and evidence](RECOVERY_QA.md). Automation, retention, alerting,
-separate key escrow and an isolated Render recovery drill remain open. Render's
-automatic disk snapshots alone do not close this gate.
+[recovery procedure and evidence](RECOVERY_QA.md). These verified manual sets
+remain preserved independently of the scheduled recovery rollout.
+
+The optional recovery worker now schedules online snapshots, streams their tar
+archive and selected server environment directly through age, uploads bounded
+parts to an explicit private Modal volume, verifies readback, and retains seven
+verified sets. It is enabled on Render. The first automatic attempt failed after
+uploading one 8 MiB part; a later read of the existing part succeeded, but no
+completed automatic live set has been verified. The retry fix deployed, but its single bounded operator retry also failed. The
+precise failing operation remains unknown; safe stage diagnostics are added
+without admitting another full backup. Use [scheduled recovery
+operations](SCHEDULED_RECOVERY.md) for configuration and limits, and [the latest
+QA receipt](SCHEDULED_RECOVERY_QA.md) for runtime and rollout evidence.
+
+Complete live-copy/readback/restore and retention verification, full-capacity
+testing, external failure/staleness alerts, separate key escrow and an isolated
+replacement-Render recovery drill remain open. Render's automatic disk snapshots
+alone do not close these gates.
 
 ## Observability required before public launch
 

@@ -1,6 +1,6 @@
 # Wayline production and UX checklist
 
-Updated 2026-09-10 against the attached six-phase brief. Stack: Python/FastAPI, plain JavaScript and CSS, SQLite/private files, Render for the app and Modal for original LingBot GPU jobs. No React, Svelte, Supabase or Firebase.
+Updated 2026-09-11 against the attached six-phase brief. Stack: Python/FastAPI, plain JavaScript and CSS, SQLite/private files, Render for the app and Modal for original LingBot GPU jobs. No React, Svelte, Supabase or Firebase.
 
 ✅ implemented with local evidence; ⚠️ needs input or verification; ➖ N/A with rationale. A phase containing ⚠️ is not release-complete. Paths below are relative to the repository root. Final executable check counts are recorded in `REVIEW.md`.
 
@@ -135,6 +135,6 @@ Changed: public copy, CSS, markup, brand assets, metadata/manifest, CLI product 
 3. Same file: support email/mailto, phone/tel or explicit no-phone-support policy, legal entity/address.
 4. Same file and `static/site.js`: approved analytics measurement ID and an implemented/audited same-origin collector; update policy/consent before enabling.
 5. Final custom domain, if desired. `LINGBOT_PUBLIC_BASE_URL` currently supplies the working Render HTTPS hostname for absolute metadata.
-6. Remaining provider setup: scoped Modal credentials/budgets, owned acceptance capture, spend alerts, automatic offsite backups/retention and separate key escrow. Render hosting, the Google client/callback, and a manual encrypted export plus isolated Linux restore are verified (`RENDER_QA.md`, `RECOVERY_QA.md`).
+6. Remaining provider setup and acceptance: scoped Modal credentials/budgets, owned acceptance capture, spend alerts, external recovery failure/staleness alerts, separate key escrow, full-capacity recovery testing and a replacement-Render recovery drill. Scheduled encrypted offsite recovery and seven-set retention are implemented and enabled on Render, but the first automatic attempt failed after uploading one 8 MiB part. A later read of that part succeeded; a complete automatic live set and live retention remain unverified. The retry fix deployed, but its single operator retry also failed. The failing operation remains unknown; the successful diagnostic probes do not constitute a completed backup. See [the latest runtime and recovery receipt](SCHEDULED_RECOVERY_QA.md). Render hosting, the Google client/callback, and a manual encrypted export plus isolated Linux restore are verified (`RENDER_QA.md`, `RECOVERY_QA.md`); those manual sets remain preserved.
 
 See `launch-readiness.md` for remaining deployment, mobile, model-quality and rights gates. These unresolved items prevent claiming the full requested product is finished.

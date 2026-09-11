@@ -101,13 +101,15 @@ def test_daily_admission_survives_restart_and_reservations_precede_upload(setup)
     assert not list(setup.staging.glob("wayline-recovery-*"))
 
 
-def test_uncertain_upload_remains_charged_and_cleanup_runs_at_exhausted_allowance(setup):
+def test_uncertain_upload_remains_charged_and_cleanup_runs_at_exhausted_allowance(setup, caplog):
     setup.volume.fail_after_upload = True
     assert not setup.run()
     first = recovery.load_state(setup.data_dir)["attempts"][0]
     charged = sum(item["bytes"] for item in first["reservations"])
     assert charged > 1400
-    assert first["error"] == "backup_failed"
+    assert first["error"] == "remote_upload_failed"
+    assert "Recovery upload failed (OSError)" in caplog.text
+    assert "provider URL and private token" not in caplog.text
     assert len(setup.volume.uploads) == 1
     assert not setup.run(upload_budget_bytes=charged)
     setup.volume.fail_after_upload = False
@@ -133,7 +135,7 @@ def test_failed_readback_never_publishes_completion_or_prunes_good_set(setup):
 
 
 @pytest.mark.parametrize("failures", [1, 2, 3])
-def test_transient_partial_readback_retries_reads_only(setup, monkeypatch, failures):
+def test_transient_partial_readback_retries_reads_only(setup, monkeypatch, failures, caplog):
     reads, sleeps = [], []
     original_read = setup.volume.read
 
@@ -154,6 +156,10 @@ def test_transient_partial_readback_retries_reads_only(setup, monkeypatch, failu
     assert len(reads) == (failures + 2 if failures < 3 else 3)
     assert sum(item["bytes"] for item in attempt["reservations"]) > 1400
     assert (attempt["prefix"] + "/complete.json" in setup.volume.files) is (failures < 3)
+    if failures == 3:
+        assert attempt["error"] == "remote_readback_failed"
+        assert "Recovery readback failed (OSError)" in caplog.text
+        assert "transient provider read failure" not in caplog.text
 
 
 def test_corrupt_readback_is_not_retried(setup, monkeypatch):

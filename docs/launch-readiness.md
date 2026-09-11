@@ -1,6 +1,6 @@
 # Wayline launch readiness
 
-Updated 2026-09-10. This is an implementation and verification record, not a public-launch approval.
+Updated 2026-09-11. This is an implementation and verification record, not a public-launch approval.
 
 ## What works locally
 
@@ -15,8 +15,8 @@ Updated 2026-09-10. This is an implementation and verification record, not a pub
 - Viewer supports frame-by-frame camera replay, whole-scene orbit, and walk controls from a captured position. Walk navigation has no collision detection or metric-scale guarantee; the output is a point cloud, not a textured mesh.
 - Shared links use `/s#capability` and fixed API paths with authorization headers. Expiry/revocation is checked on every content request. The shared viewer supports replay and exploration.
 - Offline snapshots verify database integrity, referenced object sizes/hashes and the share secret; restore requires a fresh destination. The CLI prevents simultaneous runtime/snapshot access.
-- Explicit online snapshots copy the running SQLite database and its referenced objects, reject missing/corrupt concurrent copies, and exclude later publications. Default snapshots still require the stopped runtime. Scheduling, encryption and upload are separate operations; see `deployment.md`.
-- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. The live service runs commit `351f339`; [Render QA](RENDER_QA.md) verifies a generated-input original-model run, visitor isolation, shares and redeploy persistence.
+- Explicit online snapshots copy the running SQLite database and its referenced objects, reject missing/corrupt concurrent copies, and exclude later publications. Default snapshots still require the stopped runtime. An optional recovery worker adds scheduled age encryption, bounded multipart upload/readback verification and retention; it is enabled on Render, but its first live attempt failed and no completed automatic recovery set is verified yet. See [scheduled recovery QA](SCHEDULED_RECOVERY_QA.md).
+- A Dockerfile and single-instance Starter/5 GB Render Blueprint validate. The Wayline project, Production environment, Starter service and disk exist. The user accepted $20/month as a target with flexibility. Application delivery/GPU allowances reduce exposure without guaranteeing a bill total. The root-owned disk permission issue is fixed with `/data/wayline`. [Render QA](RENDER_QA.md) records the generated-input original-model run, visitor isolation, shares and redeploy persistence; [the latest deployment receipt](SCHEDULED_RECOVERY_QA.md) tracks the current runtime and recovery rollout.
 
 ## Verification boundary
 
@@ -36,7 +36,9 @@ Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video
 - [x] Cancel one actual original-model GPU invocation through the app during inference and verify zero remaining GPU inputs/containers, no published artifact, unchanged Google allowance, and automatic physical cleanup after the full unmodified grace period. See `RELIABILITY_QA.md` for the generated-input evidence.
 - [ ] Validate provider limits/alerts and the remaining failure/crash cleanup boundaries. Successful-run cleanup, due-record cleanup after restart, and the live running-inference cancellation/grace-period case passed. The app's admission budget is not a provider invoice cap.
 - [x] Export the live Render database/objects/share secret and server environment encrypted; restore and serve the original artifact in an isolated Linux container. See `RECOVERY_QA.md`.
-- [ ] Automate offsite backups/retention and alerts, escrow the recovery key separately, and run an isolated Render recovery drill. The encrypted recovery set has a downloaded-and-hash-verified copy on Modal; it is still a manual point-in-time backup.
+- [x] Implement scheduled encrypted offsite recovery and seven-set retention, and enable the worker on Render. Local tests and a constrained real-SDK transfer passed; implementation and enablement do not prove a completed automatic live copy. See `SCHEDULED_RECOVERY.md` and `SCHEDULED_RECOVERY_QA.md`.
+- [ ] Verify a complete automatic live recovery set, its readback/restore and live retention behavior. The first attempt failed after one 8 MiB part uploaded; a later read of that part succeeded. The reviewed retry fix deployed, but its single operator retry also failed. The failing operation remains unknown; safe stage diagnostics are added for the next normally admitted attempt. See `SCHEDULED_RECOVERY_QA.md`. Existing verified manual recovery sets remain preserved.
+- [ ] Validate recovery at the full workspace capacity, configure external failure/staleness alerts, escrow the recovery key separately, and run an isolated replacement-Render recovery drill. A smaller constrained-container transfer and manual Linux restore do not close these gates.
 - [ ] Complete real-capture desktop QA and at least one physical mobile browser; include long uploads, real scene sizes, camera calibration, touch gestures, accessibility and contrast. Synthetic replay/walk/share checks have passed in the desktop browser.
 - [ ] Resolve model/checkpoint/data terms and permitted hosted use. `MODEL_PROVENANCE.md` remains authoritative; commercial clearance is not asserted.
 - [ ] Supply operator identity, approved privacy/terms, contact information and the final domain. Analytics stays off until an approved collector and consent policy exist.

@@ -133,7 +133,9 @@ while recent reservations and unpruned prefixes remain recorded.
 
 LINGBOT_DATA_DIR/recovery-state.json is private operator state, written atomically
 with mode 0600. It records attempts, reservations, last success and safe failure
-categories. The supervisor logs a stale warning when no verified success exists
+categories, including remote_upload_failed and remote_readback_failed for terminal
+transfer exceptions. Logs include exception class names, without raw provider
+messages or signed URLs. The supervisor logs a stale warning when no verified success exists
 within 36 hours. These logs are not an independently delivered alert; an external
 notification channel and monitored recovery objective remain to be configured.
 

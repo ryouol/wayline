@@ -18,13 +18,17 @@ their stated scope.
 
 ## Deployment
 
+The details below preserve the 2026-09-10 verification baseline. See [the latest
+deployment and scheduled recovery receipt](SCHEDULED_RECOVERY_QA.md) for the
+current runtime, CI and recovery rollout status.
+
 - Project **Wayline**, environment **Production**, service `srv-dahhn0u7bikc73e82h9g`.
 - Starter, one instance, Ohio, 5 GB persistent disk; automatic deployments,
   previews and autoscaling are off. Fixed hosting is $8.25/month before tax/usage.
-- Current application commit `351f339f9847530fae5955d2e9ce2ce68753624e`;
-  deploy `dep-dahk166k1f9s73fk7bq0` is live with normal Docker startup.
+- Verified application commit `351f339f9847530fae5955d2e9ce2ce68753624e`;
+  deploy `dep-dahk166k1f9s73fk7bq0` was live with normal Docker startup during that pass.
   The SSH directory is owned by UID 10001 with mode `0700`.
-- [Current CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34543233887),
+- [CI for that application commit passed](https://github.com/ryouol/lingbot-map/actions/runs/34543233887),
   including 170 Python tests and the production container smoke.
   The initial application deployment also
   [passed CI](https://github.com/ryouol/lingbot-map/actions/runs/34534857893).
@@ -120,6 +124,13 @@ READY job, exact 7,819,504-byte GLB, share secret, authentication and new share
 access passed. Normal service startup was restored and the temporary server
 script removed. See [the procedure and limits](RECOVERY_QA.md).
 
+The scheduled recovery implementation is now enabled on Render, with age
+encryption, bounded multipart upload/readback and seven-set retention. Its first
+automatic attempt failed after one 8 MiB part uploaded; a later read of that
+same part succeeded. This is not a completed automatic backup. The retry fix deployed, but its single bounded operator retry also failed; [the follow-up receipt](SCHEDULED_RECOVERY_QA.md)
+tracks the current runtime and result. Existing verified manual sets remain
+preserved.
+
 ## Remaining gates
 
 Modal's shared Starter workspace showed a $200 usage limit, no custom spend
@@ -130,8 +141,9 @@ it is not scoped to one app. Service-user/RBAC options require a paid plan.
 Separate project credentials/budgets remain a hardening item before public signup.
 
 An owned real capture, second-Google-account switching, physical mobile QA,
-remaining crash/failure cleanup boundaries, automated backup/retention and
-an isolated Render recovery drill,
+remaining crash/failure cleanup boundaries, a verified complete automatic live
+recovery set and retention behavior, full-capacity recovery testing, external
+failure/staleness alerts, separate key escrow and an isolated replacement-Render recovery drill,
 upstream logging/edge limits, hosted-use rights and approved operator legal/contact
 details remain open. See [launch readiness](launch-readiness.md),
 [operating costs](operating-costs.md) and the [UX checklist](PRODUCTION_UX_AUDIT.md).

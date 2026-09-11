@@ -203,7 +203,11 @@ def _upload_verified(source, remote, volume, reserved_bytes):
     size, expected = source.stat().st_size, digest(source)
     if size > reserved_bytes:
         raise RecoveryFailure("archive_exceeds_reservation")
-    volume.upload(source, remote)
+    try:
+        volume.upload(source, remote)
+    except Exception as error:
+        logger.warning("Recovery upload failed (%s)", type(error).__name__)
+        raise RecoveryFailure("remote_upload_failed") from None
     for attempt in range(3):
         received, sha = 0, hashlib.sha256()
         try:
@@ -214,9 +218,10 @@ def _upload_verified(source, remote, volume, reserved_bytes):
                 sha.update(chunk)
         except RecoveryFailure:
             raise
-        except Exception:
+        except Exception as error:
             if attempt == 2:
-                raise
+                logger.warning("Recovery readback failed (%s)", type(error).__name__)
+                raise RecoveryFailure("remote_readback_failed") from None
             # Refresh the SDK's download URLs after transient post-upload errors.
             # Retry only reads; never duplicate an uncertain upload.
             time.sleep((2, 5)[attempt])

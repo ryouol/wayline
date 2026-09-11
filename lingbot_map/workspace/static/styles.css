@@ -328,6 +328,7 @@ details[open]>summary::after { content:'−'; }
 .viewer-help { font-size:10px; }
 .viewport-wrap { position:relative; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#0e110c; }
 .scene-canvas { height:min(60vh,650px); min-height:360px; border:0; margin:0; }
+.scene-canvas:focus-visible { outline-offset:-4px; }
 .viewport-badge { position:absolute; top:18px; left:18px; display:flex; gap:8px; align-items:center; padding:7px 10px; background:#121610bb; border:1px solid #ffffff0a; border-radius:5px; font:9px var(--mono); color:var(--muted); pointer-events:none; }
 .viewport-tools { position:absolute; bottom:16px; right:16px; display:flex; background:#20271bcc; border:1px solid #ffffff15; border-radius:8px; }
 .viewport-tool { min-width:44px; min-height:44px; border:0; background:transparent; color:var(--text); cursor:pointer; font-size:20px; }
@@ -349,6 +350,7 @@ details[open]>summary::after { content:'−'; }
 .frame-counter { font-size:11px; color:var(--muted); }
 .playback-actions { display:flex; gap:6px; }
 .playback-actions button { font-size:11px; }
+.shared-view-controls button { min-width:44px; }
 .timeline input[type="range"] { width:100%; height:44px; accent-color:var(--accent); cursor:pointer; }
 .filmstrip { display:flex; overflow-x:auto; gap:6px; padding-bottom:6px; }
 .frame-button { flex:0 0 90px; padding:0; border:2px solid transparent; border-radius:6px; background:#111; cursor:pointer; overflow:hidden; color:var(--muted); font:9px var(--mono); }

@@ -178,3 +178,12 @@ GPU admission remains reserved for acceptance. Capture guidance clarifies a
 known limitation; reliable reconstruction of an owned capture is still open.
 This section records source/local evidence; provider deployment is verified
 separately by an exact-commit release receipt.
+
+
+### Mobile walking follow-up
+
+The [mobile walk check](MOBILE_WALK_QA.md) resolves the earlier control-placement
+limitation in source/local testing: movement sits on the viewport and the narrow
+scene list scrolls away while viewing. The actual saved artifact verifies private
+and shared walking, reset, logout and revoked-share cleanup. It does not improve
+the reconstructed geometry or close physical-device/owned-capture acceptance.

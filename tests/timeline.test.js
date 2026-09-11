@@ -18,7 +18,8 @@ function element() {
 }
 const controls = Object.fromEntries([".filmstrip", 'input[type="range"]', ".frame-counter", ".play-path", ".show-all"].map(key => [key, element()]));
 const modes = ["orbit", "camera", "walk"].map(mode => ({ ...element(), dataset: { viewMode: mode } }));
-const root = { ...element(), querySelector: key => controls[key], closest: () => ({ querySelectorAll: () => modes }) };
+const viewport = element();
+const root = { ...element(), querySelector: key => controls[key], closest: () => ({ querySelectorAll: () => modes, querySelector: () => viewport }) };
 let now = 0, nextId = 0;
 const scheduled = new Map();
 const document = { ...element(), createElement: element };
@@ -31,6 +32,9 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspac
 const selected = [];
 const viewer = {canvas: element(), trace: {frames: [0, 1, 3].map(time => ({time, thumbnail: "fixture"}))}, setFrame: index => selected.push(index), reset: () => selected.push("all")};
 const timeline = new scope.window.SceneTimeline(root, element());
+assert.ok(viewport.children.includes(timeline.walkControls), "Walk movement stays with the scene, including fullscreen");
+assert.equal(timeline.walkControls.hidden, true, "Movement is hidden before any scene loads");
+assert.equal(timeline.walkControls.attrs["aria-label"], "Walk movement");
 function tick(time) {
   now = time;
   const callbacks = Array.from(scheduled.values());
@@ -79,6 +83,7 @@ timeline.toggle();
 timeline.attach(null);
 assert.equal(scheduled.size, 0, "Changing identity or scene cancels pending animation");
 assert.equal(root.hidden, true);
+assert.equal(timeline.walkControls.hidden, true, "Detached scenes hide movement outside the timeline");
 assert.equal(controls[".filmstrip"].children.length, 0, "Private frame thumbnails are cleared");
 assert.equal(viewer.canvas.listeners.viewmode, undefined);
 assert.ok(modes.every(button => button.disabled), "Detached scenes cannot leave active mode controls");

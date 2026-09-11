@@ -9,7 +9,8 @@
       this.scrubber = root.querySelector('input[type="range"]');
       this.counter = root.querySelector(".frame-counter");
       this.play = root.querySelector(".play-path");
-      this.modes = root.closest(".viewer-section, .shared-viewer").querySelectorAll("[data-view-mode]");
+      const section = root.closest(".viewer-section, .shared-viewer");
+      this.modes = section.querySelectorAll("[data-view-mode]");
       this.viewer = null;
       this.timer = null;
       this.viewerEvents = null;
@@ -25,6 +26,9 @@
       document.addEventListener("visibilitychange", () => { if (document.hidden) this.stop(); });
       this.walkControls = document.createElement("div");
       this.walkControls.className = "walk-controls";
+      this.walkControls.hidden = true;
+      this.walkControls.setAttribute("role", "group");
+      this.walkControls.setAttribute("aria-label", "Walk movement");
       const actions = [
         ["Forward", () => this.viewer?.moveWalk(1, 0)],
         ["Back", () => this.viewer?.moveWalk(-1, 0)],
@@ -44,7 +48,8 @@
       this.walkHint.className = "muted walk-hint";
       this.walkHint.textContent = "Drag to look. Use the step buttons, or focus the view and use W A S D to move and arrow keys to look. Orbit resets your view.";
       this.walkHint.hidden = true;
-      root.append(this.walkControls, this.walkHint);
+      section.querySelector(".viewport-wrap").append(this.walkControls);
+      root.append(this.walkHint);
     }
 
     stop() {

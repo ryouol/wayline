@@ -38,3 +38,41 @@ The temporary live share contains only the CC0 synthetic sample and expires afte
 The source audit also calculated the named text palette: the weakest reviewed pair
 was quiet text on the second surface at 5.42:1. This does not cover every possible
 image/background combination, screen reader behavior or all interactive states.
+
+## Signup and field contrast — 2026-09-11
+
+The full-signup state exposed a missed style interaction: app.js changed the
+Google link from primary to secondary, but its unconditional Google background
+stayed the same light color as secondary text (calculated contrast 1.00:1).
+Scoping that background to `.google-button.primary` preserves open signup and
+lets returning login use the existing secondary palette. Text/password/number
+field borders now reuse `--quiet`; their former faint boundary was about 1.52:1
+against the landing background. Decorative dividers and button borders are unchanged.
+
+Actual computed colors in macOS WebKit 26.5 and Chromium 151 at 390×844 agree:
+
+| Rendered state | Contrast |
+|---|---:|
+| Google signup open | 13.44:1 |
+| Returning Google login when signup is full | 16.47:1 |
+| Workspace-token input border against its fill | 6.19:1 |
+| Same input border against the surrounding page | 6.72:1 |
+
+Both engines rendered the actual frontend against isolated open/full config
+responses. Screenshots include the expanded operator field. No Google account,
+production signup limit or provider job was used for these local checks.
+The source palette audit found no additional normal solid-background text issue;
+this is not a claim about every image/background or a WCAG certification.
+
+The same local WebKit run rendered the verified real TUM scene; details are in
+[real-capture QA](REAL_CAPTURE_QA.md). Playwright's WebKit screenshot preparation
+injects an inline `body {}` style to synchronize animations. A controlled run
+completed all app interactions without screenshots and observed no CSP violations;
+a final screenshot introduced exactly one `style-src-elem` event. The installed
+Playwright `inPagePrepareForScreenshots` implementation confirms the injection.
+Application CSP was not relaxed. The earlier selector-ambiguity and screenshot
+harness failures are retained separately from the final passing receipt.
+
+Private evidence: `.lingbot-workspace/webkit-qa/verification.json`, the retained
+harness and open/full screenshots for both engines. Mobile/touch emulation runs
+on macOS; iOS Safari and physical-phone validation remain unverified.

@@ -58,7 +58,7 @@ h3 { margin-bottom: 8px; font-size: 16px; }
 .login-copy { max-width: 46ch; margin-bottom: 26px; }
 label { display: block; margin-bottom: 7px; color: var(--muted); font-weight: 650; }
 input[type="password"], input[type="number"], input[type="text"], input:not([type]) {
-  width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius);
+  width: 100%; min-height: 44px; border: 1px solid var(--quiet); border-radius: var(--radius);
   background: var(--surface); color: var(--text); padding: 10px 12px;
 }
 input[type="file"] {
@@ -253,7 +253,7 @@ button,.primary,.secondary { transition:background .16s, border-color .16s, tran
 .welcome-actions { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
 .welcome-actions>* { min-width:265px; }
 #onboardingStatus { margin-top:14px; font-size:12px; }
-.google-button { background:var(--text); }
+.google-button.primary { background:var(--text); }
 .google-button span:first-child { font-size:19px; font-weight:700; }
 .operator-login { margin-top:18px; max-width:400px; }
 .operator-login summary { font-size:12px; min-height:44px; color:var(--quiet); cursor:pointer; }

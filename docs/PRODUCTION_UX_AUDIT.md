@@ -98,7 +98,7 @@ Changed: `static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,si
 | Mobile hamburger/focus trap | ➖ No drawer/navigation menu is needed; footer links stay visible. Existing share dialog uses native dialog semantics. |
 | Sticky mobile CTA | ✅ Jump to upload/create action for authenticated users. |
 | Optimize images/srcset/lazy | ✅ Small local brand assets; embedded bounded JPEG source thumbnails lazily displayed. ➖ No responsive photo hero/gallery requires srcset. |
-| Tap targets/readable fonts | ✅ CSS minimum 44px controls and readable mobile text; directional walking buttons measured 44px high in the browser. ⚠️ Full contrast/device checks pending. |
+| Tap targets/readable fonts | ✅ CSS minimum 44px controls and readable mobile text; directional walking buttons measured 44px high in the browser. Normal solid-palette text and input boundaries reviewed; open/full Google button and token-field contrast measured in WebKit and Chromium (`ACCESSIBILITY_QA.md`). ⚠️ Physical-device checks and broader assistive-technology coverage remain pending. |
 
 Changed: CSS, viewer/timeline/app scripts, markup and icon generation. Performance fixes remove an eager full confidence tensor and redundant checkpoint hash pass while retaining mandatory verified model loading. Sample work and local maintenance continue during a GPU wait. Skipped: new frontend frameworks, decorative media, unsupported physical-device claims.
 

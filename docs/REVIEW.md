@@ -289,3 +289,19 @@ The reviewed capacity release `1fbfe9a` is live on Render deploy
 HTTPS health, deployed source hashes, dynamic engine availability and the saved
 Google browser session/scene were verified. Six READY jobs, four GPU admissions
 and the owner's unused video remain unchanged. No GPU inference was repeated.
+
+## Signup contrast and WebKit — 2026-09-11
+
+91. **Returning Google login became unreadable when signup filled — Fixed.** Contrast review, P2. [lingbot_map/workspace/static/styles.css:256](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:256). The secondary state inherited light text while the unconditional Google background stayed the same light color, giving 1.00:1 contrast. Restricting the light background to `.google-button.primary` restores the secondary palette. Rendered WebKit and Chromium checks measured 16.47:1 for returning login while open signup remains 13.44:1.
+
+92. **Empty text fields had an indistinct input boundary — Fixed.** Contrast review, P2. [lingbot_map/workspace/static/styles.css:61](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:61). Text/password/number fields used the faint decorative line color; the empty token field's boundary was about 1.52:1 against its surroundings. Reusing `--quiet` gives measured 6.19:1 against the fill and 6.72:1 against the landing background. File, range and checkbox controls and decorative dividers are unchanged.
+
+All three simplify passes and all four xhigh code-review passes completed for the
+two-line CSS follow-up. Reuse, quality, efficiency, compatibility and testing
+found no additional issues; model-visible context was N/A. The incremental size
+review passed; existing aggregate findings 19, 66 and 83 remain open. No new
+implementation-mirroring tests were added for this presentation change: actual
+computed styles and screenshots cover both signup states in WebKit and Chromium.
+The verified real scene also passed WebKit replay, frame selection, walking and
+reset. A screenshot-tool CSP injection was isolated without changing app CSP.
+See ACCESSIBILITY_QA.md and REAL_CAPTURE_QA.md for scope and retained evidence.

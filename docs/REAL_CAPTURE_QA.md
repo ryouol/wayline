@@ -256,3 +256,21 @@ Private evidence is in `.lingbot-workspace/real-capture-qa/`: `source.json`,
 `corrected-live-result.json` and `corrected-tum-office-scene.glb`. Media and private
 receipts are ignored by Git; this document contains no authentication or share
 capability.
+
+## WebKit compatibility follow-up — 2026-09-11
+
+The exact verified 12,210,576-byte corrected GLB (SHA-256 `3556540de61cb0a99f8d1d54b128715739ecd3cc06593fb22fa515aae0e992b3`)
+was served from an isolated loopback fixture with the current frontend and the
+production CSP. macOS WebKit 26.5 at 390×844 with mobile/touch emulation rendered
+all 750,000 points and 30 frames. Replay naturally reached frame 30 at 10.0
+seconds; selecting frame 15 showed 375,000 points. Walk from here and Step forward
+changed the camera position, and Whole space restored all points and orbit mode.
+Document width stayed 390 pixels. No JavaScript, WebGL or application CSP errors
+occurred during those interactions. Whole-space and frame-15 screenshots were
+visually inspected and showed the same coherent globe/table/chairs arrangement.
+
+This adds a second browser-engine check of the existing real artifact. It is not
+new inference, a live share/authentication test, iOS Safari, physical touch or
+phone performance evidence. No GPU job or provider transfer was invoked. The
+Playwright screenshot-only CSP warning and its controlled diagnosis are recorded
+in [accessibility QA](ACCESSIBILITY_QA.md); production policy remains unchanged.

@@ -145,6 +145,8 @@ Changed: public copy, `static/{styles.css,theme.js,landing.js,viewer.js,timeline
 
 The follow-up [private studio audit](STUDIO_THEME_QA.md) records current theme/dialog contrast samples, the corrected management footer at 320/390px and short desktop sizes, and selection/confirmation behavior. Physical-device and complete accessibility acceptance remain open.
 
+The [actual account-scene check](GOOGLE_CAPTURE_QA.md) now verifies saved-output viewer/replay/walk and local sharing, with an explicit visual-quality failure for the assembled geometry. It does not substitute for owned-phone or second-account acceptance. The active-thumbnail and plain-language shared-rights follow-up fixes two observed UI issues; mobile walk-control placement remains a usability limitation. [Source notice QA](SOURCE_NOTICE_QA.md) records the identified license texts now packaged in the distributions without claiming complete source or hosted-use clearance.
+
 ## TODOs requiring operator input
 
 1. `lingbot_map/workspace/pages.py`: approved privacy policy, controller/subprocessors, actual retention, rights-request process and privacy contact.

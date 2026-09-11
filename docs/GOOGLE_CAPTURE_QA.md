@@ -133,3 +133,48 @@ reservations were preserved. Analytics remains disabled. This is production
 source/state verification, separate from the local browser evidence above.
 Modal remains at the verified `5e1d370` model/notice build; the frontend-only
 follow-up required no new Modal deployment or GPU job.
+
+
+## Bounded capture-preparation investigation
+
+A subsequent source and saved-artifact inspection used no inference, original
+video retrieval or provider mutation. It found no new coordinate inversion,
+per-frame scale normalization or cache-eviction defect explaining the separated
+frame clouds. The original depth/camera convention and previous pose correction
+remain consistent; this is not a reconstruction-quality pass.
+
+The recorded upload is portrait, 720×1280, while all 43 GLB image sizes are
+518×518 and its embedded thumbnails are square. The active `demo.load_images`
+uses canonical crop mode. Applying `load_fn.py`'s resize arithmetic to those
+recorded dimensions gives 518×924 before a centered 518-pixel-high crop: about
+56.06% of the resized image height remains. This is a source-derived calculation,
+not a new decode of the original video or proof that cropping caused the geometry
+failure. The [upstream preprocessing implementation](https://github.com/Robbyant/lingbot-map/blob/main/lingbot_map/utils/load_fn.py)
+also documents width-based resizing and centered height cropping.
+
+The Create scene explanation now tells users that portrait clips may be cropped
+at the top and bottom and to keep the desired area near the center. It preserves
+the full local video preview and the model's existing preprocessing. Local
+390×844 and 320×568 browser checks show the full instruction above the picker
+without horizontal overflow; the smaller dialog scrolls for lower controls.
+The no-worker fixture explicitly disabled reconstruction and used an isolated
+operator identity, so this is not a Google upload, physical-phone or GPU test.
+Screenshots and its DOM receipt are private under
+`.lingbot-workspace/capture-framing-qa/`; the tab, viewport override, server,
+credentials and temporary database were cleaned up.
+
+The numerical investigation also found that every frame's saved cloud maps to
+exactly the same 17,441 pixel indices, equal to evenly spaced indices across the
+518×518 flattened image. That retains approximately 6.50% of pixels and produces
+regular sampling gaps; it cannot explain separation between frame clouds. Raw
+confidence/depth predictions are not retained in this GLB, so the effectiveness
+of confidence filtering and counterfactual output under different settings cannot
+be established from it. Uniform point counts do not establish uniform quality.
+The active model disables the optional point head and per-frame prediction
+normalization; 43 frames do not reach its configured cache-eviction threshold.
+
+No model, sampling, inference, allowance or storage settings changed. The last
+GPU admission remains reserved for acceptance. Capture guidance clarifies a
+known limitation; reliable reconstruction of an owned capture is still open.
+This section records source/local evidence; provider deployment is verified
+separately by an exact-commit release receipt.

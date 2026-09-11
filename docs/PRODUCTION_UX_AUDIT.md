@@ -59,7 +59,7 @@ Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,servic
 | Requested item | Status / implementation |
 |---|---|
 | Custom 404 and 500 | ✅ HTML recovery pages and safe JSON API errors, including induced-error tests. |
-| Above-fold CTA | ✅ Playground entry and upload-first studio; operator login is secondary. Desktop/narrow viewport inspected; real Google entry awaits configuration. |
+| Above-fold CTA | ✅ Playground entry and upload-first studio; operator login is secondary. Desktop/narrow viewport inspected; owner Google signup and returning login verified on Render. |
 | Per-page title and description | ✅ Home/share/support/error metadata. |
 | OG/Twitter tags and fallback | ✅ Generic 1200×630 Wayline image and privacy-safe tags. ⚠️ Final public origin required. |
 | Full favicon set | ✅ Original W mark, ICO, 16/32 PNG, Apple, 192/512 icons and manifest; raster assets generated/inspected earlier. |
@@ -82,7 +82,7 @@ Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webma
 | Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. |
 | Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
 | Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ✅ Live Render diagnostic and owner Google signup/returning-login/logout passed (`RENDER_QA.md`). ⚠️ Second-Google-account and owned-capture flows remain pending. |
-| Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. ⚠️ Real Google callback/domain awaiting setup. |
+| Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. Google callback verified on the Render hostname. ⚠️ A custom domain, if selected, needs its own callback and metadata verification. |
 | Clickable logo | ✅ Home link across product/support/shared pages. |
 | Placeholder text/unused navigation | ✅ Fake product copy removed; explicit operator TODO disclosures retained. Research settings remain secondary. |
 | Dynamic copyright | ✅ Current year rendered by shared site script. |

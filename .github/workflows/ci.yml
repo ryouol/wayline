@@ -75,13 +75,19 @@ jobs:
           node --check lingbot_map/workspace/static/viewer.js
           node --check lingbot_map/workspace/static/share.js
           node --check lingbot_map/workspace/static/timeline.js
+          node --check lingbot_map/workspace/static/theme.js
+          node --check lingbot_map/workspace/static/landing.js
           node tests/session-events.test.js
           node tests/inventory-selection.test.js
           node tests/capture-onboarding.test.js
           node tests/viewer-lifecycle.test.js
+          node tests/viewer-fit.test.js
           node tests/viewer-trace.test.js
           node tests/timeline.test.js
-          bash -n download_weights.sh demo_render/process_videos.sh
+          node tests/landing.test.js
+          node tests/theme.test.js
+          node tests/share.test.js
+          bash -n download_weights.sh demo_render/process_videos.sh scripts/export_web_assets.sh
           python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
           python - <<'PY'
           import pathlib, zipfile
@@ -95,10 +101,33 @@ jobs:
               "lingbot_map/workspace/static/viewer.js",
               "lingbot_map/workspace/static/timeline.js",
               "lingbot_map/workspace/static/styles.css",
+              "lingbot_map/workspace/static/theme.js",
+              "lingbot_map/workspace/static/landing.js",
+              "lingbot_map/workspace/static/landing-scene.glb",
+              "lingbot_map/workspace/static/landing-poster.jpg",
+              "lingbot_map/workspace/static/landing-poster-dark.jpg",
+              "lingbot_map/workspace/static/studio-preview.jpg",
+              "lingbot_map/workspace/static/studio-preview-dark.jpg",
+              "lingbot_map/workspace/static/brand-mark.png",
+              "lingbot_map/workspace/static/brand-mark.webp",
+              "lingbot_map/workspace/static/favicon.ico",
+              "lingbot_map/workspace/static/favicon-16.png",
+              "lingbot_map/workspace/static/favicon-32.png",
+              "lingbot_map/workspace/static/apple-touch-icon.png",
+              "lingbot_map/workspace/static/icon-192.png",
+              "lingbot_map/workspace/static/icon-512.png",
+              "lingbot_map/workspace/static/ASSET-NOTICES.txt",
+              "lingbot_map/workspace/static/share.html",
+              "lingbot_map/workspace/static/share.js",
+              "lingbot_map/workspace/static/icons/LICENSE.txt",
           }
           missing = required - names
           if missing:
               raise SystemExit(f"wheel is missing packaged UI files: {sorted(missing)}")
+          with zipfile.ZipFile(wheel) as archive:
+              for source in pathlib.Path("lingbot_map/workspace/static").rglob("*"):
+                  if source.is_file() and archive.read(source.as_posix()) != source.read_bytes():
+                      raise SystemExit(f"wheel static asset differs from source: {source}")
           for suffix in ("LICENSE.txt", "SAMPLE_LICENSE.md", "THIRD_PARTY_NOTICES.md"):
               if not any(name.endswith(suffix) for name in names):
                   raise SystemExit(f"wheel is missing {suffix}")

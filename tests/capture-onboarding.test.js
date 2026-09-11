@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/app.js"), "utf8");
+const markup = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/index.html"), "utf8");
+const documentOrder = new Map([...markup.matchAll(/\bid="([^"]+)"/g)].map((match, index) => [match[1], index]));
 const user = { tenantName: "Private space", displayName: "Visitor", accountType: "google" };
 const allowance = (state) => ({ state, message: `Allowance: ${state}` });
 const account = (state) => ({ user, csrfToken: "csrf", reconstructionAllowance: allowance(state) });
@@ -19,24 +21,65 @@ const deferred = () => {
 };
 
 function harness(search = "") {
-  const nodes = new Map(), timers = new Map(), windowEvents = new Map();
+  const nodes = new Map(), timers = new Map(), windowEvents = new Map(), documentEvents = new Map();
   const videos = [], createdUrls = [], revokedUrls = [], requests = [];
+  const historyEntries = [], scrolls = [];
   let timerId = 0;
   function element() {
     const classes = new Set(), attributes = new Map(), events = new Map();
+    const listeners = new Map();
     let value = "";
     return {
       hidden: false, disabled: false, textContent: "", files: [], dataset: {}, children: [], events,
+      open: false, returnValue: "", pauseCount: 0, focusCount: 0,
       get value() { return value; },
       set value(next) { value = next; if (next === "") this.files = []; },
+      get src() { return attributes.get("src") || ""; },
+      set src(next) { attributes.set("src", next); },
+      get href() { return attributes.get("href") || ""; },
+      set href(next) { attributes.set("href", next); },
       classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
       setAttribute: (name, next) => attributes.set(name, next),
       removeAttribute: (name) => attributes.delete(name),
       getAttribute: (name) => attributes.get(name),
-      addEventListener: (name, callback) => events.set(name, callback),
-      append(...children) { this.children.push(...children); },
-      replaceChildren(...children) { this.children = children; },
-      querySelectorAll: () => [], focus() {}, load() {}, close() {},
+      hasAttribute(name) { return attributes.has(name) || (name.startsWith("data-") &&
+        Object.hasOwn(this.dataset, name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()))); },
+      closest(selector) { return selector.split(",").some((part) => this.hasAttribute(part.trim().slice(1, -1))) ? this : null; },
+      addEventListener(name, callback, options = {}) {
+        if (!listeners.has(name)) {
+          listeners.set(name, []);
+          events.set(name, (event = {}) => {
+            let result;
+            for (const listener of [...listeners.get(name)]) {
+              if (listener.once) listeners.get(name).splice(listeners.get(name).indexOf(listener), 1);
+              result = listener.callback(event);
+            }
+            return result;
+          });
+        }
+        listeners.get(name).push({ callback, once: options.once });
+      },
+      append(...children) {
+        for (const child of children) {
+          if (child.parentNode) child.parentNode.children.splice(child.parentNode.children.indexOf(child), 1);
+          child.parentNode = this;
+          this.children.push(child);
+        }
+      },
+      replaceChildren(...children) {
+        for (const child of this.children) child.parentNode = null;
+        this.children = [];
+        this.append(...children);
+      },
+      querySelectorAll: () => [], focus() { this.focusCount++; }, load() {},
+      pause() { this.pauseCount++; },
+      showModal() { assert.equal(this.open, false, "do not reopen an open native dialog"); this.open = true; },
+      close(returnValue) {
+        if (!this.open) return;
+        this.open = false;
+        if (returnValue !== undefined) this.returnValue = returnValue;
+        queueMicrotask(() => events.get("close")?.());
+      },
     };
   }
   const node = (id) => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
@@ -46,16 +89,29 @@ function harness(search = "") {
     static createObjectURL(file) { const url = `blob:test-${createdUrls.length}`; createdUrls.push({ file, url }); return url; }
     static revokeObjectURL(url) { revokedUrls.push(url); }
   }
-  const location = { search, origin: "https://example.test", reload() {} };
+  const location = new URL(`https://example.test/${search}`);
+  location.reload = () => {};
+  const history = Object.fromEntries(["pushState", "replaceState"].map((method) => [method,
+    (_state, _unused, next) => {
+      location.href = new URL(next, location).href;
+      historyEntries.push({ method, url: location.href });
+    }]));
   const context = vm.createContext({
     URL: TestURL, URLSearchParams, Headers, AbortController, DOMException, Date,
-    crypto: { randomUUID: () => "request-id" }, location, setTimeout, clearTimeout,
+    crypto: { randomUUID: () => "request-id" }, location, history, setTimeout, clearTimeout,
     localStorage: { setItem() {}, removeItem() {} },
     FormData: class { append() {} },
     window: { location, setTimeout, clearTimeout, addEventListener: (name, callback) => windowEvents.set(name, callback),
+      scrollTo: (options) => scrolls.push(options),
       SceneTimeline: class { attach() {} stop() {} wholeSpace() {} },
       WorkspaceSessionEvents: { dispatch() {} } },
-    document: { getElementById: node, body: element(), addEventListener() {},
+    document: { getElementById: node, body: element(), addEventListener: (name, callback) => documentEvents.set(name, callback),
+      querySelectorAll(selector) {
+        assert.equal(selector, "dialog[open]");
+        return [...nodes].filter(([id, target]) => id.endsWith("Dialog") && target.open)
+          .sort(([left], [right]) => documentOrder.get(left) - documentOrder.get(right))
+          .map(([, target]) => target);
+      },
       querySelector: node, createElement(tag) { const created = element(); if (tag === "video") videos.push(created); return created; } },
     fetch: async (path, options = {}) => {
       requests.push({ path, method: options.method || "GET", options });
@@ -71,6 +127,7 @@ function harness(search = "") {
   });
   vm.runInContext(`${source.slice(0, source.lastIndexOf("\nloadPublicConfig();"))}\nglobalThis.appState = state;`, context);
   // Keep real account, form, polling, and inventory behavior; scene rendering has its own suite.
+  const renderRealJobDetail = context.renderJobDetail;
   context.renderJobDetail = async () => {};
   const state = context.appState;
   state.config = { ...config };
@@ -85,7 +142,13 @@ function harness(search = "") {
     return videos.at(-1);
   }
   const submit = () => node("researchForm").events.get("submit")({ preventDefault() {} });
-  return { context, state, node, select, submit, videos, createdUrls, revokedUrls, timers, requests, windowEvents };
+  const click = (dataset) => {
+    const target = element();
+    Object.assign(target.dataset, dataset);
+    return documentEvents.get("click")({ target, preventDefault() {} });
+  };
+  return { context, state, node, select, submit, click, videos, createdUrls, revokedUrls, timers,
+    requests, windowEvents, historyEntries, scrolls, renderRealJobDetail };
 }
 
 async function main() {
@@ -233,18 +296,19 @@ async function main() {
     h.context.respond = async () => ({ ...config, newAccountsAvailable: false });
     await h.context.loadPublicConfig();
     assert.equal(h.node("googleLogin").hidden, false, "returning Google accounts can still sign in");
-    assert.equal(h.node("googleLogin").classList.contains("secondary"), true);
-    assert.equal(h.node("trialButton").classList.contains("primary"), true);
-    assert.match(h.node("googleLoginLabel").textContent, /Returning/);
-    assert.match(h.node("onboardingStatus").textContent, /currently full/);
+    assert.equal(h.context.location.hash, "#signin", "callback failures route to returning sign-in");
+    assert.equal(h.context.location.search, "", "callback feedback is consumed from the URL");
+    assert.equal(h.node("trialButton").hidden, true, "full signup never promotes the synthetic playground");
+    assert.equal(h.node("googleLoginLabel").textContent, "Continue with Google");
+    assert.match(h.node("onboardingStatus").textContent, /Sign in securely/);
     assert.equal(h.node("loginView").hidden, true);
     assert.equal(h.node("signinNotice").hidden, false, "capacity notice survives restoring an existing trial session");
     assert.match(h.node("signinNotice").textContent, /currently full/);
     assert.match(h.node("captureLimits").textContent, /30 seconds.*10.0 MiB/);
     h.context.respond = async () => ({ ...config });
     await h.context.loadPublicConfig();
-    assert.equal(h.node("googleLogin").classList.contains("primary"), true);
-    assert.equal(h.node("trialButton").classList.contains("secondary"), true);
+    assert.equal(h.node("googleLogin").hidden, false);
+    assert.equal(h.node("trialButton").hidden, true, "open signup also keeps the sample CTA hidden");
     const unknown = harness("?signin=toString");
     await unknown.context.loadPublicConfig();
     assert.equal(unknown.node("signinNotice").hidden, true);
@@ -437,6 +501,330 @@ async function main() {
     assert.equal(checks, 2);
     assert.equal(h.state.engine.available, false, "older entry response cannot overwrite newer capacity");
     assert.equal(h.node("video").disabled, true);
+  }
+  {
+    const h = harness();
+    h.context.showLogin();
+    assert.equal(h.node("loginView").hidden, false, "first arrival shows the public landing");
+    assert.equal(h.node("accountView").hidden, true);
+    h.click({ accountEntry: "signup" });
+    assert.equal(h.context.location.hash, "#signup");
+    assert.equal(h.node("loginView").hidden, true);
+    assert.equal(h.node("accountView").hidden, false);
+    assert.equal(h.node("appView").hidden, true);
+    assert.equal(h.node("googleLogin").hidden, false);
+    assert.equal(h.node("trialButton").hidden, true);
+    assert.match(h.node("accountTitle").textContent, /Your own space/);
+    assert.equal(h.node("accountTitle").focusCount, 1);
+    assert.equal(h.node("skipLink").href, "#accountTitle");
+    assert.equal(h.requests.length, 0, "Get started opens the account step before contacting Google");
+    assert.equal(h.context.location.pathname, "/");
+
+    h.click({ accountEntry: "login" });
+    assert.equal(h.context.location.hash, "#signin");
+    assert.equal(h.node("accountTitle").textContent, "Welcome back.");
+    assert.equal(h.node("accountSwitch").hidden, true);
+    assert.equal(h.requests.length, 0, "returning sign-in navigation also waits for explicit Google continuation");
+    h.click({ publicHome: "" });
+    assert.equal(h.context.location.hash, "");
+    assert.equal(h.node("loginView").hidden, false);
+    assert.equal(h.node("accountView").hidden, true);
+    assert.equal(h.node("skipLink").href, "#loginTitle");
+    assert.equal(h.node("loginTitle").focusCount, 1);
+
+    h.context.location.hash = "#signup";
+    h.windowEvents.get("popstate")();
+    assert.equal(h.node("accountView").hidden, false, "browser back/forward restores the account route");
+    h.context.location.hash = "#how-it-works";
+    h.windowEvents.get("hashchange")();
+    assert.equal(h.node("loginView").hidden, false, "landing section anchors do not enter authentication");
+    assert.equal(h.node("accountView").hidden, true);
+  }
+  {
+    const h = harness();
+    h.context.showLogin();
+    h.state.config = { ...config, newAccountsAvailable: false };
+    h.click({ accountEntry: "signup" });
+    assert.match(h.node("accountTitle").textContent, /preview is full/);
+    assert.equal(h.node("googleLogin").hidden, true, "full capacity does not offer a new-account action");
+    assert.equal(h.node("accountSwitch").hidden, false, "existing accounts retain a visible sign-in path");
+    assert.equal(h.node("trialButton").hidden, true, "full capacity cannot turn signup into a sample promotion");
+    h.click({ accountEntry: "login" });
+    assert.equal(h.node("googleLogin").hidden, false);
+    assert.equal(h.node("accountTitle").textContent, "Welcome back.");
+    h.state.config = { ...config, googleSignIn: false };
+    h.context.renderSignInOptions();
+    assert.equal(h.node("googleLogin").hidden, true);
+    assert.equal(h.node("trialButton").hidden, true, "disabled Google sign-in also does not advertise the sample");
+  }
+  for (const [surface, targetId] of [
+    ["signup", "accountTitle"], ["login", "accountTitle"],
+    ["landing", "loginTitle"], ["workspace", "workspaceMain"],
+  ]) {
+    const h = harness();
+    if (surface !== "workspace") h.context.showLogin();
+    if (surface === "signup" || surface === "login") h.click({ accountEntry: surface });
+    const route = h.context.location.hash;
+    const focusCount = h.node(targetId).focusCount;
+    let prevented = false;
+    h.node("skipLink").events.get("click")({ preventDefault() { prevented = true; } });
+    // The anchor's normal default would change the hash and invoke the public router.
+    if (!prevented) {
+      h.context.location.hash = h.node("skipLink").href;
+      h.windowEvents.get("hashchange")();
+    }
+    assert.equal(prevented, true, `${surface} skip navigation prevents a route-changing fragment jump`);
+    assert.equal(h.context.location.hash, route);
+    assert.equal(h.node(targetId).focusCount, focusCount + 1, `${surface} skip navigation focuses its visible main content`);
+    assert.equal(h.node("accountView").hidden, targetId !== "accountTitle");
+    assert.equal(h.node("appView").hidden, surface !== "workspace");
+    assert.equal(h.node("loginView").hidden, surface !== "landing");
+  }
+  for (const signin of ["cancelled", "capacity", "failed", "expired"]) {
+    const h = harness(`?signin=${signin}`);
+    h.context.showLogin();
+    const configReady = deferred();
+    h.context.respond = () => configReady.promise;
+    const loading = h.context.loadPublicConfig();
+    // Startup's account request may finish while the independent config fetch is pending.
+    h.context.showLogin();
+    assert.equal(h.context.location.hash, "#signin");
+    assert.equal(h.node("accountView").hidden, false);
+    assert.equal(h.node("signinNotice").hidden, false);
+    configReady.resolve({ ...config });
+    await loading;
+    assert.equal(h.node("googleLogin").hidden, false);
+    assert.equal(h.node("trialButton").hidden, true);
+  }
+  {
+    const h = harness();
+    h.context.openCreateScene({ refresh: false });
+    const video = h.select();
+    video.duration = 12;
+    video.onloadedmetadata();
+    const previewUrl = h.state.capturePreviewUrl;
+    assert.equal(h.node("capturePreview").src, previewUrl);
+    assert.equal(h.node("capturePreviewPanel").hidden, false);
+    assert.match(h.node("capturePreviewMeta").textContent, /room.mp4.*12.0 seconds/);
+    assert.equal(h.revokedUrls.includes(previewUrl), false, "the visible preview keeps its object URL");
+    const pauses = h.node("capturePreview").pauseCount;
+    h.click({ dialogClose: "createDialog" });
+    await Promise.resolve();
+    assert.equal(h.node("createDialog").open, false);
+    assert.equal(h.node("capturePreview").pauseCount, pauses + 1, "closing a capture pauses local playback");
+    h.context.openCreateScene({ refresh: false });
+    assert.equal(h.node("capturePreview").src, previewUrl, "reopening preserves the selected capture");
+    h.select({ name: "next.mp4", size: 2048 });
+    assert.equal(h.revokedUrls.filter((url) => url === previewUrl).length, 1, "replacement revokes the prior preview once");
+    assert.equal(h.node("capturePreviewPanel").hidden, true);
+    h.windowEvents.get("pagehide")();
+    assert.equal(h.state.capturePreviewUrl, null);
+    assert.equal(h.state.captureCheck, null);
+    assert.equal(h.node("capturePreview").src, "");
+    assert.deepEqual([...h.revokedUrls].sort(), h.createdUrls.map(({ url }) => url).sort(),
+      "page exit releases both active metadata and preview URLs without duplicate revocation");
+    assert.equal(h.timers.size, 0);
+  }
+  {
+    const h = harness();
+    h.context.openCreateScene({ refresh: false });
+    h.node("managementDialog").showModal();
+    h.state.jobs = [{ id: "private-job", displayName: "Private customer room", state: "ready" }];
+    h.context.renderJobs();
+    assert.equal(h.node("managementJobList").children.length, 1);
+    const confirmation = h.context.confirmAction("Delete scene?", "Private customer room", "Delete");
+    assert.equal(h.node("confirmDialog").open, true);
+    assert.equal(await h.context.confirmAction("Duplicate", "Do not replace", "Delete"), false);
+    assert.equal(h.node("confirmMessage").textContent, "Private customer room");
+    h.context.showLogin();
+    assert.equal(await confirmation, false, "logout cancels a pending confirmation");
+    for (const id of ["createDialog", "managementDialog", "confirmDialog"]) assert.equal(h.node(id).open, false);
+    assert.equal(h.node("managementJobList").children.length, 0, "reset removes previous-account names from storage management");
+    assert.equal(h.node("emptyManagedJobs").hidden, false);
+    h.context.showApp(user, "csrf", allowance("available"));
+    const accepted = h.context.confirmAction("Delete scene?", "Current account", "Delete");
+    h.node("confirmAccept").events.get("click")();
+    assert.equal(await accepted, true, "a fresh confirmation can complete after reset");
+    const signedOut = h.context.confirmAction("Delete scene?", "Current account", "Delete");
+    h.node("confirmAccept").events.get("click")();
+    h.context.showLogin();
+    assert.equal(await signedOut, false, "a close event delivered after logout cannot authorize an old mutation");
+  }
+  {
+    const h = harness();
+    const file = { name: "retained.mp4", size: 2048 };
+    h.select(file).onerror();
+    const oldPreview = h.state.capturePreviewUrl;
+    const decoders = h.videos.length;
+    h.windowEvents.get("pagehide")();
+    assert.equal(h.node("video").files[0], file, "the browser retains the selected File in its page cache");
+    assert.equal(h.state.captureCheck, null);
+    assert.equal(h.state.capturePreviewUrl, null);
+    assert.equal(h.revokedUrls.filter((url) => url === oldPreview).length, 1);
+    h.windowEvents.get("pageshow")({ persisted: false });
+    assert.equal(h.videos.length, decoders, "ordinary pageshow does not duplicate capture validation");
+    h.windowEvents.get("pageshow")({ persisted: true });
+    assert.equal(h.videos.length, decoders + 1, "returning from the page cache revalidates the retained File");
+    assert.equal(h.state.captureCheck.status, "checking");
+    assert.equal(h.node("researchButton").disabled, true);
+    const restored = h.videos.at(-1);
+    restored.duration = 8;
+    restored.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, "valid");
+    assert.equal(h.node("researchButton").disabled, false);
+    assert.notEqual(h.state.capturePreviewUrl, oldPreview);
+    assert.equal(h.node("capturePreview").src, h.state.capturePreviewUrl);
+    assert.equal(h.node("capturePreviewPanel").hidden, false);
+    h.state.uploading = true;
+    h.windowEvents.get("pageshow")({ persisted: true });
+    assert.equal(h.videos.length, decoders + 1, "a submission retains ownership of its capture snapshot");
+    h.context.showLogin();
+    h.windowEvents.get("pageshow")({ persisted: true });
+    assert.equal(h.videos.length, decoders + 1, "returning after logout cannot restore a private selection");
+  }
+  {
+    const h = harness(), queued = deferred();
+    h.context.openCreateScene({ refresh: false });
+    h.select().onerror();
+    h.context.respond = async (path) => {
+      if (path === "/api/jobs/sample") return queued.promise;
+      if (path.startsWith("/api/jobs?")) return { jobs: [{
+        id: "sample-job", displayName: "Synthetic studio", engineId: "synthetic-sample-v1", state: "queued",
+      }], nextCursor: null };
+      throw new Error(path);
+    };
+    const sample = h.node("sampleButton").events.get("click")();
+    assert.equal(h.state.uploading, true);
+    assert.equal(h.node("sampleButton").disabled, true);
+    assert.equal(h.node("video").disabled, true);
+    assert.equal(h.node("researchButton").disabled, true);
+    await h.submit();
+    await h.node("sampleButton").events.get("click")();
+    assert.deepEqual(h.requests.map(({ path }) => path), ["/api/jobs/sample"],
+      "a pending sample excludes both a second sample and a video submission");
+    h.click({ dialogClose: "createDialog" });
+    assert.equal(h.node("createDialog").open, true, "the close button cannot hide a pending sample submission");
+    let cancelled = false;
+    h.node("createDialog").events.get("cancel")({ preventDefault() { cancelled = true; } });
+    assert.equal(cancelled, true, "Escape also waits for sample submission to finish");
+    assert.match(h.node("toast").textContent, /being submitted/);
+    assert.equal(h.node("toast").parentNode, h.node("createDialog"), "submission feedback is inside the native top layer");
+    queued.resolve({ id: "sample-job" });
+    await sample;
+    assert.equal(h.node("createDialog").open, false);
+    assert.equal(h.state.uploading, false);
+    assert.equal(h.node("sampleButton").disabled, false);
+    assert.equal(h.node("toast").parentNode, h.context.document.body, "completion feedback returns to the page after the dialog closes");
+    assert.equal(h.node("toast").classList.contains("dialog-toast"), false);
+  }
+  {
+    const h = harness(), checked = deferred();
+    h.select().onerror();
+    h.context.respond = () => checked.promise;
+    const upload = h.submit();
+    assert.equal(h.node("sampleButton").disabled, true, "video submission also disables synthetic creation");
+    await h.node("sampleButton").events.get("click")();
+    assert.equal(h.requests.some(({ path }) => path === "/api/jobs/sample"), false);
+    checked.resolve(account("used"));
+    await upload;
+    assert.equal(h.node("sampleButton").disabled, false, "a stopped video submission releases the sample action");
+  }
+  {
+    const h = harness();
+    const toast = h.node("toast");
+    h.node("managementDialog").showModal();
+    h.context.toast("Storage refreshed");
+    assert.equal(toast.parentNode, h.node("managementDialog"));
+    assert.equal(toast.classList.contains("dialog-toast"), true);
+    h.node("confirmDialog").showModal();
+    h.context.toast("Confirmation feedback");
+    assert.equal(toast.parentNode, h.node("confirmDialog"), "feedback moves to the later open dialog");
+    assert.equal(h.node("managementDialog").children.includes(toast), false, "moving feedback leaves no duplicate in the previous dialog");
+    h.node("confirmDialog").close();
+    h.context.toast("Storage feedback");
+    assert.equal(toast.parentNode, h.node("managementDialog"));
+    h.node("managementDialog").close();
+    h.context.toast("Workspace feedback");
+    assert.equal(toast.parentNode, h.context.document.body);
+    assert.equal(toast.classList.contains("dialog-toast"), false);
+    assert.equal(h.context.document.body.children.filter((child) => child === toast).length, 1);
+    assert.equal([...h.timers.values()].filter(({ delay }) => delay === 4000).length, 1,
+      "moving the existing toast retains only the latest dismissal timer");
+  }
+  {
+    const h = harness();
+    const job = (id) => ({ id, displayName: id, state: "ready", engineId: "synthetic-sample-v1" });
+    const newest = job("newest"), current = job("current"), removed = job("removed");
+    h.state.jobs = [newest, current, removed];
+    h.state.selectedId = current.id;
+    h.state.selectedJobs.add(removed.id);
+    let destroyed = 0;
+    const viewer = { destroy() { destroyed++; } };
+    h.state.viewer = viewer;
+    h.context.respond = async (path, options) => {
+      if (path === "/api/jobs/removed" && options.method === "DELETE") return { state: "deleting" };
+      if (path.startsWith("/api/jobs?")) return { jobs: [newest, current], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/shares?")) return { shares: [], nextCursor: null };
+      throw new Error(path);
+    };
+    const deletion = h.context.deleteJob(removed.id);
+    h.node("confirmAccept").events.get("click")();
+    await deletion;
+    assert.equal(h.state.selectedId, current.id, "deleting another scene does not jump to the newest scene");
+    assert.equal(h.state.viewer, viewer);
+    assert.equal(destroyed, 0, "an unrelated deletion does not dispose the active viewport");
+    assert.equal(h.state.jobs.some(({ id }) => id === removed.id), false, "an accepted deletion is removed even while preserving older loaded pages");
+    assert.equal(h.state.selectedJobs.has(removed.id), false);
+    assert.equal(h.requests.filter(({ method }) => method === "DELETE").length, 1);
+  }
+  {
+    const h = harness(), loaded = [], destroyed = [];
+    h.context.window.PointCloudViewer = class {
+      async load(url) { loaded.push(url); }
+      destroy() { destroyed.push(this); }
+    };
+    const artifact = { id: "artifact-a", kind: "scene", filename: "a.glb", sizeBytes: 1024,
+      downloadUrl: "/api/artifacts/artifact-a/download", viewUrl: "/api/artifacts/artifact-a/content",
+      licenseId: "CC0-1.0", sha256: "a".repeat(64), metadata: { pointCount: 100 } };
+    const job = { id: "ready-a", displayName: "Scene A", engineId: "synthetic-sample-v1", state: "ready",
+      stage: "ready", progress: 1, provenance: {}, usedUnits: 0, reservedUnits: 0, artifacts: [artifact] };
+    h.context.respond = async (path) => {
+      if (path === "/api/jobs/ready-a") return job;
+      if (path === "/api/jobs/processing-b") return { ...job, id: "processing-b", displayName: "Scene B",
+        state: "running", stage: "generating", progress: 0.25, artifacts: [] };
+      if (path === "/api/me") return account("available");
+      throw new Error(path);
+    };
+    h.state.selectedId = job.id;
+    await h.renderRealJobDetail();
+    assert.equal(h.node("shareButton").hidden, false);
+    assert.equal(h.node("shareButton").dataset.artifactId, artifact.id);
+    assert.equal(h.node("downloadLink").href, artifact.downloadUrl);
+    assert.deepEqual(loaded, [artifact.viewUrl], "the ready artifact is actually loaded through the detail renderer");
+
+    h.state.selectedId = "processing-b";
+    await h.renderRealJobDetail();
+    assert.equal(h.node("shareButton").hidden, true);
+    assert.equal(h.node("shareButton").dataset.artifactId, undefined);
+    assert.equal(h.node("downloadLink").hidden, true);
+    assert.equal(h.node("downloadLink").href, "");
+    assert.equal(h.state.viewer, null);
+    assert.equal(destroyed.length, 1);
+    await h.windowEvents.get("focus")();
+    assert.equal(h.node("shareButton").hidden, true, "account refresh cannot resurrect Scene A's share action while Scene B has no artifact");
+    assert.equal(h.node("shareButton").dataset.artifactId, undefined);
+    await h.node("shareButton").events.get("click")();
+    assert.equal(h.requests.some(({ path }) => path.endsWith("/shares")), false,
+      "even a programmatic stale click cannot create a share for the previous scene");
+
+    h.state.selectedId = job.id;
+    await h.renderRealJobDetail();
+    h.context.clearDetail();
+    h.context.showApp(user, "csrf", allowance("available"));
+    assert.equal(h.node("shareButton").hidden, true, "returning to the library also clears the artifact-backed action");
+    assert.equal(h.node("shareButton").dataset.artifactId, undefined);
+    assert.equal(h.node("downloadLink").href, "");
   }
   console.log("Capture allowance, onboarding, metadata, and session behavior passed");
 }

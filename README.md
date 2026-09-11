@@ -6,14 +6,19 @@ point cloud, replay the captured camera path frame by frame, and download or
 share the scene.
 
 **Current verification boundary:** [the Render preview](https://wayline-9ten.onrender.com)
-is live. Visitors can use isolated synthetic playgrounds. The private Modal runner
-uses the verified original checkpoint; a generated-video GPU diagnostic passed
-upload/download/share and browser replay/walking checks. Google signup, returning
-login and logout passed for the owner; the account ceiling is currently one while
-acceptance continues. The owner's free-video allowance is unused.
+is live. The Gallery + Instrument redesign gives visitors a visual landing page
+and **Get started → Google signup**, with light, dark and system appearance.
+The public scene is an attributed, precomputed TUM office reconstruction;
+viewing it does not invoke a GPU. There is no public sample-entry CTA.
+The private Modal runner uses the verified original checkpoint; a real benchmark
+capture passed the corrected camera-geometry path, download and browser replay.
+Google signup, returning login and logout passed for the owner; the current
+two-account ceiling opens one additional pilot slot while acceptance continues.
+The owner's free-video allowance is unused.
 An encrypted export of the deployed database, objects and secrets passed an
-isolated Linux restore. Real-capture quality, physical mobile testing, automated
-backup retention and public-launch rights/policies remain open. See
+isolated Linux restore. Owned-capture quality, second-account acceptance, physical
+mobile testing, successful automated backup readback and public-launch
+rights/policies remain open. See [design QA](design-qa.md),
 [live verification](docs/RENDER_QA.md) and [recovery evidence](docs/RECOVERY_QA.md).
 
 Original LingBot model code, checkpoint attribution, package identifiers and
@@ -30,11 +35,12 @@ uv sync --frozen --extra dev
 uv run wayline --dev
 ```
 
-Open http://127.0.0.1:7860 and choose **Explore the playground**. Each visitor
-receives a separate temporary workspace with the CC0 synthetic sample, no GPU
-access and no upload permission. Playground data expires after one hour.
-The development token printed on first startup is an operator login, available
-under **Operator access**, and is not public onboarding.
+Open http://127.0.0.1:7860 to see the landing page. **Get started** opens signup;
+Google requires configured OAuth credentials. For local use, open **Sign in →
+Local operator access** and use the development token printed on first startup.
+The operator can create the CC0 synthetic sample from the creation dialog without
+a GPU. Operator access is not public onboarding. The bounded isolated trial API
+is retained for existing integrations, but no public landing action enters it.
 
 ## Architecture
 

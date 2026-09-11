@@ -305,3 +305,77 @@ computed styles and screenshots cover both signup states in WebKit and Chromium.
 The verified real scene also passed WebKit replay, frame selection, walking and
 reset. A screenshot-tool CSP injection was isolated without changing app CSP.
 See ACCESSIBILITY_QA.md and REAL_CAPTURE_QA.md for scope and retained evidence.
+
+## Gallery + Instrument redesign — 2026-09-11
+
+93. **Offline presentation writer repeats GLB serialization — Deferred.** Simplify reuse, P3. [scripts/prepare_landing_scene.py:18](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/scripts/prepare_landing_scene.py:18). The reviewer suggested extending `scene_export.encode_point_glb` to preserve presentation metadata. This pinned one-source asset preparation command deliberately retains the original trace and attribution. Changing the production exporter API solely for this offline presentation asset is not worthwhile in this release. The duplication and follow-up remain explicit.
+
+94. **Feedback was behind the native modal layer — Fixed.** Simplify quality, P2. [lingbot_map/workspace/static/app.js:351](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:351). The existing feedback element is moved into the active dialog, or back to the document when no dialog is open. It remains visible for validation, copy and in-progress close errors; the behavioral regression checks the actual parent.
+
+95. **Cached-page restoration left a retained capture invalid — Fixed.** Simplify quality, P2. [lingbot_map/workspace/static/app.js:1163](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:1163). Page-hide cleanup still releases media URLs and callbacks. A persisted pageshow now revalidates the retained file unless a submission is active, restoring its preview and eligibility. Regression covers the browser lifecycle.
+
+96. **Sample creation could overlap video submission — Fixed.** Simplify quality, P2. [lingbot_map/workspace/static/app.js:893](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:893). Both actions share the submission lock and epoch-safe cleanup. The dialog cannot close during submission; the UI explains why. Both overlap directions are tested.
+
+97. **Deleting an unrelated scene changed the open scene — Fixed.** Simplify quality, P2. [lingbot_map/workspace/static/app.js:1004](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:1004). Single-scene deletion preserves the currently selected scene unless that is the deleted item. This prevents an inventory cleanup action from unexpectedly replacing the viewport.
+
+98. **Landing repeatedly drew unchanged scroll positions — Fixed.** Simplify efficiency, P2. [lingbot_map/workspace/static/landing.js:39](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/landing.js:39). The renderer remembers its last progress and skips identical camera updates. Resize explicitly invalidates that value. The regression proves both the no-op boundary and resize redraw.
+
+99. **A large raster replaced the required favicon set — Fixed.** Simplify efficiency and full-brief audit, P2. [lingbot_map/workspace/pages.py:48](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/pages.py:48). The original efficiency review found a 650 KB favicon, temporarily reduced to 157 KB. The requirement audit correctly identified the missing explicit format set. Offline exports now provide 16/32 PNG, a two-resolution ICO, 180px Apple and 192/512 manifest icons from the approved mark. The visible brand uses a 1,194-byte WebP; favicon PNGs are 348/634 bytes. Metadata, packaged files and actual icon appearance were checked.
+
+100. **An acknowledged deletion could leave a ghost inventory row — Fixed.** Breaking-change and model-context reviewers independently reported the same P2. [lingbot_map/workspace/static/app.js:1004](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:1004). The deleted row and selection are removed locally before the preserve-loaded refresh, preventing merge logic from retaining it. Regression covers deletion with previously loaded inventory.
+
+101. **Share could target a previously viewed artifact — Fixed.** Breaking-change review, P2. [lingbot_map/workspace/static/app.js:689](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:689). Empty/non-ready detail and full detail reset remove the old artifact identifier and download URL. A later focus/allowance refresh cannot re-enable sharing for another scene. The delayed-refresh regression covers the trigger.
+
+102. **Account skip link replaced the signup route — Fixed.** Breaking-change review, P2. [lingbot_map/workspace/static/app.js:1154](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:1154). The handler focuses the visible main heading without changing the fragment. Browser keyboard QA confirms focus on `accountTitle` while the URL stays `#signup`; both public account routes have regression coverage.
+
+103. **The redesign exceeds review-size guidance — Staged review recorded; aggregate concern open.** Change-size review, P2. [lingbot_map/workspace/static/styles.css:1](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:1). The reviewed redesign was approximately 3,038 changed text lines before this report, plus binary assets. The user explicitly approved a broad redesign. The additive three-file scene-name API is committed first; the coupled UI is reviewed in the stages below. Neither stages nor commits shrink the existing draft PR, whose previous size findings 19, 66 and 83 remain open. No merge is performed.
+
+104. **Delete looked like a close-window X — Fixed.** Design review, P2. [lingbot_map/workspace/static/index.html:111](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/index.html:111). The action now visibly says Delete, retains its accessible name and opens the existing explicit confirmation flow.
+
+105. **Portrait initial view clipped the real scene — Fixed.** Browser/design follow-up, P2. [lingbot_map/workspace/static/viewer.js:394](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/viewer.js:394). Initial/reset orbit fits rotated bounds against the actual canvas aspect and projection. Resize adjusts untouched views but preserves manual orbit, zoom, camera and walk state. A projection-based test and a fresh 390 × 844 browser view of the 750,000-point reference verify the result.
+
+106. **Shared service failure could look like expiry, and WebGL failure removed download — Fixed.** Shared-view review, P2. [lingbot_map/workspace/static/share.js:50](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/share.js:50). Authentication/expiry statuses close the share, server failure gets a retry message, and valid metadata allows download even if preview creation/parsing fails. Expiry aborts in-flight downloads and releases object URLs. Status/fallback/cancellation regressions pass.
+
+107. **Shared skip link replaced its capability fragment — Fixed.** Accessibility follow-up, P2. [lingbot_map/workspace/static/share.js:32](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/share.js:32). The handler focuses the shared title without hash navigation. Both the behavioral suite and actual keyboard/download flow preserve the active share.
+
+108. **Small differences from the illustrative mockup remain — Accepted P3 design differences.** Final design review. [lingbot_map/workspace/static/index.html:35](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/index.html:35). The real hero is sparse and omits the decorative source-frame fan. The studio has two functional header rows, looser scene framing and secondary details below the main experience. The final reviewer found no P0/P1/P2 visual issue. We retain truthful actual imagery and functional controls rather than invent product capabilities.
+
+### Recorded review stages
+
+1. **Scene naming API:** `app.py`, `database.py`, `test_job_display_names.py`.
+   Tenant-scoped source-name join, additive display field and ownership/pagination
+   cases; approximately 140 changed lines. Reviewed separately before UI adoption.
+2. **Presentation and conversion:** `index.html`, `styles.css`, `pages.py`,
+   `theme.js`, `site.js`, brand/icons and light/dark assets. Compared against the
+   approved source and actual desktop/mobile captures; theme/capacity cases pass.
+3. **Authenticated interactions:** `app.js` and onboarding/inventory regressions.
+   Signup routing, capture preview, dialogs, selection, safe teardown and sharing
+   reviewed with real HTTP local fixture progression plus delayed-response tests.
+4. **Viewer, landing and sharing:** `viewer.js`, `timeline.js`, `landing.js`,
+   `share.js` and their suites. Includes portrait projection, cancellation,
+   lost-canvas replacement, accessibility, prefetched share response and motion.
+5. **Packaging and evidence:** asset preparation, notices, wheel/CI manifest and
+   this report. Clean wheel and constrained production container verified.
+
+All three simplify passes and four xhigh code-review skill passes completed.
+Testing found no additional issues; the model-context skill itself was N/A, and
+its useful duplicate compatibility finding is retained as 100. The final follow-up
+review found no actionable regression and reran all ten Node suites. The full
+local suite passed 229 Python tests, strict Ruff/format and mypy. Docker smoke
+passed under 512 MiB / 0.5 CPU with a 204.6 MiB peak. See `design-qa.md` for exact
+browser evidence and limitations. The PR owner's existing `code-reviewed` label
+is retained; no GitHub review comments or dependency merges were made.
+
+### Full-brief completion audit and final follow-up
+
+109. **Sticky mobile conversion and creation were missing — Fixed.** Full-brief audit, P2. [lingbot_map/workspace/static/styles.css:356](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:356). The existing public navigation now stays visible on mobile with Get started. The existing workspace scene bar keeps New scene available while scrolling. CUA measured both bars at top=0 after actual page scroll; no floating overlay was added. The public wordmark becomes the approved compact mark below 560px so all actions fit.
+
+110. **Several controls fell below the requested 44px target — Fixed.** Full-brief audit, P2. [lingbot_map/workspace/static/styles.css:81](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:81). Theme, refresh, mode, playback, slider, selection, storage and artifact controls now meet 44px minimum hitboxes. Actual in-app-browser measurements at 390px found no undersized visible workspace buttons, action links or range inputs. Public Sign in, appearance and both signup actions measured 44px high.
+
+111. **New large imagery lacked responsive delivery variants — Fixed.** Full-brief audit, P2. [lingbot_map/workspace/static/index.html:35](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/index.html:35). The actual light/dark captures now have 640px, 960px and full-width WebP exports with sizes/srcset. Native lazy loading avoids loading hidden account/theme imagery eagerly. Actual 390px browser currentSrc selected the 640px hero and studio variants. Both srcset and ordinary URLs receive content fingerprints; CI compares every packaged static file with source bytes.
+
+112. **The production checklist overstated the redesigned implementation — Corrected.** Full-brief audit, P2. [docs/PRODUCTION_UX_AUDIT.md:1](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/PRODUCTION_UX_AUDIT.md:1). The earlier playground, lime palette, absent-hero rationale and temporarily deleted favicon/sticky/touch-target claims are replaced with current implementation and scoped evidence. All six phases retain explicit unresolved operator/provider/device requirements instead of a blanket completion claim.
+
+113. **Selecting a scene could hide its actions behind the new sticky bar — Fixed.** Final breaking-change review, P2. [lingbot_map/workspace/static/app.js:639](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:639). Small-screen selection now scrolls the containing workspace to its start, keeping the scene bar in normal layout above title and actions. It no longer aligns the details underneath the sticky layer.
+
+114. **Account artwork advertised a full-width image slot — Fixed.** Final efficiency review, P3. [lingbot_map/workspace/static/index.html:85](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/index.html:85). Account imagery now declares its actual responsive column, padding and maximum 618px desktop/420px mobile width. A 1440px 1× display can select the 31 KB 640px light variant instead of the 115 KB full-width variant. The export and fingerprinting follow-up found no other issues.

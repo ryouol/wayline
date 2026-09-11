@@ -8,6 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
+  capturePreviewUrl: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -186,7 +187,9 @@ function clearDetail() {
   byId("emptyDetail").hidden = false;
   byId("viewerSection").hidden = true;
   byId("downloadLink").removeAttribute("href");
-  byId("shareButton").removeAttribute("data-artifact-id");
+  byId("downloadLink").hidden = true;
+  byId("shareButton").hidden = true;
+  delete byId("shareButton").dataset.artifactId;
   byId("artifactFacts").replaceChildren();
   byId("provenanceList").replaceChildren();
   byId("detailEngine").textContent = "Engine";
@@ -210,6 +213,7 @@ function clearDetail() {
 function secureReset() {
   state.epoch += 1;
   cancelCaptureCheck();
+  releaseCapturePreview();
   state.reconstructionAllowance = null;
   state.accountRefresh = null;
   state.uploading = false;
@@ -237,6 +241,8 @@ function secureReset() {
   byId("toast").hidden = true;
   byId("toast").textContent = "";
   byId("jobList").replaceChildren();
+  byId("managementJobList").replaceChildren();
+  byId("emptyManagedJobs").hidden = false;
   byId("assetList").replaceChildren();
   byId("shareList").replaceChildren();
   byId("workspaceName").textContent = "Workspace";
@@ -250,11 +256,12 @@ function secureReset() {
   byId("captureMessage").textContent = "";
   byId("video").removeAttribute("aria-invalid");
   byId("shareUrl").value = "";
-  if (byId("shareDialog").open) byId("shareDialog").close();
+  document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
   byId("emptyJobs").hidden = false;
   byId("emptyAssets").hidden = false;
   byId("emptyShares").hidden = false;
   byId("loadMoreJobs").hidden = true;
+  byId("loadMoreManagedJobs").hidden = true;
   byId("loadMoreAssets").hidden = true;
   byId("loadMoreShares").hidden = true;
   updateSelectionSummary();
@@ -263,11 +270,56 @@ function secureReset() {
 
 function showLogin() {
   secureReset();
-  byId("loginView").hidden = false;
   byId("appView").hidden = true;
   byId("mobileWorkspaceCta").hidden = true;
-  byId("skipLink").href = "#loginTitle";
-  byId("trialButton").focus();
+  renderPublicRoute();
+}
+
+function renderPublicRoute({ focus = false } = {}) {
+  const route = location.hash;
+  const account = route === "#signup" || route === "#signin";
+  byId("loginView").hidden = account;
+  byId("accountView").hidden = !account;
+  document.body.dataset.surface = account ? "account" : "landing";
+  byId("skipLink").href = account ? "#accountTitle" : "#loginTitle";
+  renderSignInOptions();
+  if (focus) {
+    byId(account ? "accountTitle" : "loginTitle").focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+}
+
+function openAccount(mode) {
+  if (!byId("appView").hidden) { openCreateScene(); return; }
+  history.pushState(null, "", mode === "login" ? "#signin" : "#signup");
+  renderPublicRoute({ focus: true });
+}
+
+function renderSignInOptions() {
+  const returning = location.hash === "#signin";
+  const config = state.config;
+  const full = Boolean(config?.googleSignIn && !config.newAccountsAvailable);
+  byId("accountTitle").textContent = returning ? "Welcome back." : full ? "The preview is full right now." : "Your own space starts here.";
+  byId("accountDescription").textContent = returning ? "Your spaces are right where you left them."
+    : full ? "We’re keeping the preview small while we improve reconstruction."
+      : "One video to start. A new way to see it.";
+  byId("accountSwitch").hidden = returning;
+  byId("googleLogin").hidden = !config?.googleSignIn || (full && !returning);
+  byId("googleLoginLabel").textContent = "Continue with Google";
+  byId("trialButton").hidden = true;
+  if (!config) return;
+  byId("onboardingStatus").textContent = !config.googleSignIn
+    ? "Google sign-in is not available on this installation yet."
+    : full && !returning ? "Already have an account? Sign in below to open your spaces."
+      : returning ? "Sign in securely with your Google account." : "A private workspace. One video to start. No card needed.";
+}
+
+function openCreateScene({ refresh = true } = {}) {
+  if (byId("appView").hidden) { openAccount("signup"); return; }
+  const dialog = byId("createDialog");
+  if (!dialog.open) dialog.showModal();
+  renderReconstructionStatus();
+  if (refresh) refreshAccount({ fresh: true }).catch(report);
 }
 
 function showApp(user, csrfToken, allowance = null) {
@@ -277,11 +329,13 @@ function showApp(user, csrfToken, allowance = null) {
   state.csrf = csrfToken || "";
   state.accountType = user.accountType || "operator";
   state.reconstructionAllowance = allowance;
-  byId("shareButton").hidden = state.accountType === "trial";
+  byId("shareButton").hidden = state.accountType === "trial" || !byId("shareButton").dataset.artifactId;
   renderAccountActions();
   byId("loginView").hidden = true;
+  byId("accountView").hidden = true;
   byId("appView").hidden = false;
-  byId("mobileWorkspaceCta").hidden = false;
+  byId("mobileWorkspaceCta").hidden = true;
+  document.body.dataset.surface = "workspace";
   byId("skipLink").href = "#workspaceMain";
   byId("workspaceName").textContent = `${user.tenantName} · ${user.displayName}`;
 }
@@ -296,6 +350,9 @@ function renderAccountActions() {
 
 function toast(message) {
   const node = byId("toast");
+  const dialog = Array.from(document.querySelectorAll("dialog[open]")).at(-1);
+  (dialog || document.body).append(node);
+  node.classList.toggle("dialog-toast", Boolean(dialog));
   if (state.toastTimer) clearTimeout(state.toastTimer);
   node.textContent = message;
   node.hidden = false;
@@ -327,26 +384,20 @@ function renderJobs() {
   state.jobsRenderKey = key;
   list.replaceChildren();
   byId("emptyJobs").hidden = state.jobs.length > 0;
+  byId("emptyTitle").textContent = state.jobs.length ? "Your spaces." : "Create your first scene.";
+  byId("emptyDescription").textContent = state.jobs.length
+    ? "Open a scene from your library, or start with a new capture."
+    : "A short walkthrough becomes a space you can look around and return to.";
   state.jobs.forEach((job) => {
     const item = document.createElement("li");
     item.className = "job-row";
-    const selector = document.createElement("input");
-    selector.type = "checkbox";
-    selector.className = "record-selector";
-    selector.checked = state.selectedJobs.has(job.id);
-    selector.disabled = !terminalStates.has(job.state);
-    selector.setAttribute("aria-label", `Select ${job.engineId} scene created ${formatDate(job.createdAt)}`);
-    selector.addEventListener("change", () => {
-      if (selector.checked) state.selectedJobs.add(job.id); else state.selectedJobs.delete(job.id);
-      updateSelectionSummary();
-    });
     const button = document.createElement("button");
     button.type = "button";
     button.className = "job-button";
     button.setAttribute("aria-current", String(job.id === state.selectedId));
     const name = document.createElement("span");
     name.className = "job-name";
-    name.textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Captured space";
+    name.textContent = job.displayName;
     const jobState = document.createElement("span");
     jobState.className = "job-state";
     jobState.textContent = job.state;
@@ -355,12 +406,29 @@ function renderJobs() {
     timestamp.textContent = formatDate(job.createdAt);
     button.append(name, jobState, timestamp);
     button.addEventListener("click", () => selectJob(job.id).catch(report));
-    const target = document.createElement("label");
-    target.className = "selector-target";
-    target.append(selector);
-    item.append(target, button);
+    item.append(button);
     list.append(item);
   });
+  renderManagedJobs();
+}
+
+function renderManagedJobs() {
+  const list = byId("managementJobList");
+  list.replaceChildren();
+  const jobs = state.jobs.filter((job) => terminalStates.has(job.state));
+  byId("emptyManagedJobs").hidden = jobs.length > 0;
+  jobs.forEach((job) => list.append(inventoryRow({
+    id: job.id,
+    name: job.displayName,
+    meta: `${job.state} · ${formatDate(job.createdAt)}`,
+    selected: state.selectedJobs.has(job.id),
+    actionLabel: "Delete",
+    onSelect: (checked) => {
+      if (checked) state.selectedJobs.add(job.id); else state.selectedJobs.delete(job.id);
+      updateSelectionSummary();
+    },
+    onAction: () => deleteJob(job.id),
+  })));
 }
 
 async function loadJobs({ selectNewest = false, append = false, preserveLoaded = false } = {}) {
@@ -383,6 +451,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   }
   state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
   byId("loadMoreJobs").hidden = !state.jobCursor;
+  byId("loadMoreManagedJobs").hidden = !state.jobCursor;
   if (selectNewest && state.jobs.length) state.selectedId = state.jobs[0].id;
   if (state.selectedId && !state.jobs.some((job) => job.id === state.selectedId)) state.selectedId = null;
   const jobIds = new Set(state.jobs.map((job) => job.id));
@@ -535,7 +604,7 @@ async function deleteAsset(asset) {
     toast(asset.deleteBlockedReason);
     return;
   }
-  if (!window.confirm(`Delete retained upload “${asset.name}”?`)) return;
+  if (!await confirmAction("Delete this upload?", `“${asset.name}” will be permanently removed.`, "Delete upload")) return;
   try {
     await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true });
     state.selectedAssets.delete(asset.id);
@@ -545,7 +614,7 @@ async function deleteAsset(asset) {
 }
 
 async function revokeShare(share) {
-  if (!window.confirm(`Revoke the share for “${share.filename}”?`)) return;
+  if (!await confirmAction("Revoke this link?", `The link to “${share.filename}” will stop working immediately.`, "Revoke link")) return;
   try {
     await api(`/api/shares/${encodeURIComponent(share.id)}`, { method: "DELETE", idempotent: true });
     state.selectedShares.delete(share.id);
@@ -567,7 +636,7 @@ async function selectJob(jobId) {
   renderJobs();
   await renderJobDetail();
   byId("detailTitle").focus({ preventScroll: true });
-  if (window.matchMedia("(max-width: 860px)").matches) byId("jobDetail").scrollIntoView({ block: "start" });
+  if (window.matchMedia("(max-width: 860px)").matches) byId("workspaceMain").scrollIntoView({ block: "start" });
 }
 
 function updateStages(job) {
@@ -587,11 +656,12 @@ async function renderJobDetail() {
   if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;
-  byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample engine" : "RECONSTRUCTED WITH LINGBOT-MAP";
-  byId("detailTitle").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic studio" : "Captured space";
-  byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)} · attempt ${job.attempt}`;
+  byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample" : "Research reconstruction";
+  byId("detailTitle").textContent = job.displayName;
+  byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)}`;
   const percent = Math.round(job.progress * 100);
   document.querySelector(".progress-section").classList.toggle("is-ready", job.state === "ready");
+  byId("progressSection").hidden = job.state === "ready";
   byId("progressPercent").textContent = `${percent}%`;
   byId("progressBar").value = percent;
   byId("progressBar").textContent = `${percent}%`;
@@ -599,7 +669,7 @@ async function renderJobDetail() {
   updateStages(job);
   byId("cancelButton").hidden = terminalStates.has(job.state);
   byId("deleteButton").hidden = !terminalStates.has(job.state);
-  byId("jobMessage").textContent = job.error?.message || (job.state === "cancelled" ? "This job was cancelled and its reservation was released." : job.state === "ready" ? "Scene ready. Review the point cloud, then download or create an expiring share." : "");
+  byId("jobMessage").textContent = job.error?.message || (job.state === "cancelled" ? "Scene creation was cancelled." : "");
   byId("jobMessage").classList.toggle("success-message", job.state === "ready");
 
   const provenance = byId("provenanceList");
@@ -613,6 +683,12 @@ async function renderJobDetail() {
 
   const scene = job.artifacts?.find((artifact) => artifact.kind === "scene");
   byId("viewerSection").hidden = !scene;
+  byId("downloadLink").hidden = !scene;
+  byId("shareButton").hidden = !scene || state.accountType === "trial";
+  if (!scene) {
+    delete byId("shareButton").dataset.artifactId;
+    byId("downloadLink").removeAttribute("href");
+  }
   if (scene) {
     byId("downloadLink").href = scene.downloadUrl;
     byId("downloadLink").setAttribute("download", scene.filename);
@@ -655,6 +731,7 @@ function renderReconstructionStatus() {
   const enabled = allowed && Boolean(state.engine?.available);
   const canChoose = enabled && Boolean(state.config) && !state.uploading;
   byId("video").disabled = !canChoose;
+  byId("sampleButton").disabled = state.uploading;
   byId("sampleFps").disabled = !canChoose;
   byId("frameLimit").disabled = !canChoose;
   byId("capturePicker").classList.toggle("unavailable", !canChoose);
@@ -682,8 +759,30 @@ function cancelCaptureCheck() {
   state.captureCheck = null;
 }
 
+function releaseCapturePreview() {
+  const preview = byId("capturePreview");
+  preview.pause();
+  preview.removeAttribute("src");
+  preview.load();
+  if (state.capturePreviewUrl) URL.revokeObjectURL(state.capturePreviewUrl);
+  state.capturePreviewUrl = null;
+  byId("capturePreviewPanel").hidden = true;
+  byId("capturePreviewMeta").textContent = "";
+}
+
+function showCapturePreview(file, duration) {
+  releaseCapturePreview();
+  try {
+    state.capturePreviewUrl = URL.createObjectURL(file);
+    byId("capturePreview").src = state.capturePreviewUrl;
+    byId("capturePreviewMeta").textContent = `${file.name} · ${formatBytes(file.size)}${duration ? ` · ${duration.toFixed(1)} seconds` : ""}`;
+    byId("capturePreviewPanel").hidden = false;
+  } catch (_) { /* server validation remains available when local playback is unsupported */ }
+}
+
 function validateSelectedCapture() {
   cancelCaptureCheck();
+  releaseCapturePreview();
   const file = byId("video").files[0];
   byId("selectedFilename").textContent = file ? file.name : "Choose a video";
   byId("video").removeAttribute("aria-invalid");
@@ -724,9 +823,11 @@ function validateSelectedCapture() {
         display("invalid", `Choose a clip up to ${state.config.maxVideoSeconds} seconds. This clip is ${Math.ceil(duration)} seconds.`);
       } else {
         display("valid", `${formatBytes(file.size)} · ${duration.toFixed(1)} seconds · ready to upload`);
+        showCapturePreview(file, duration);
       }
     } else {
       display("fallback", `${formatBytes(file.size)} · clip length will be checked after upload`);
+      showCapturePreview(file, null);
     }
   };
   check.cancel = () => finish(null, true);
@@ -744,6 +845,7 @@ async function initialize() {
   try {
     await refreshAccount();
     await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
+    if (state.accountType === "google" && !state.jobs.length) openCreateScene({ refresh: false });
   } catch (_) {
     showLogin();
   }
@@ -763,8 +865,8 @@ byId("loginForm").addEventListener("submit", async (event) => {
     showApp(result.user, result.csrfToken);
     broadcastSession("session-changed");
     await Promise.all([refreshAccount(), loadJobs({ selectNewest: true }), loadInventory()]);
-    byId("workspaceMain").focus();
-    toast("Signed in. Create a synthetic scene or open a recent scene.");
+    byId("workspaceMain").focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "instant" });
   } catch (error) {
     byId("loginMessage").textContent = error.message;
     byId("token").setAttribute("aria-invalid", "true");
@@ -778,6 +880,7 @@ byId("logoutButton").addEventListener("click", async () => {
   try {
     await api("/api/session", { method: "DELETE" });
     broadcastSession("signed-out");
+    history.replaceState(null, "", location.pathname);
     showLogin();
   } catch (error) {
     if (!byId("appView").hidden) toast(`Sign out failed: ${error.message}`);
@@ -785,19 +888,25 @@ byId("logoutButton").addEventListener("click", async () => {
 });
 
 byId("sampleButton").addEventListener("click", async () => {
-  const button = byId("sampleButton");
-  button.disabled = true;
+  const button = byId("sampleButton"), epoch = state.epoch;
+  if (state.uploading || button.disabled) return;
+  state.uploading = true;
+  renderReconstructionStatus();
   button.textContent = "Creating scene…";
   try {
     const job = await api("/api/jobs/sample", { method: "POST", idempotent: true });
     state.selectedId = job.id;
     await loadJobs();
+    byId("createDialog").close();
     toast("Synthetic scene queued.");
   } catch (error) {
     toast(error.message);
   } finally {
-    button.disabled = false;
-    button.textContent = "Create synthetic scene ↗";
+    if (epoch === state.epoch) {
+      state.uploading = false;
+      button.textContent = "Create synthetic scene";
+      renderReconstructionStatus();
+    }
   }
 });
 
@@ -849,7 +958,13 @@ byId("researchForm").addEventListener("submit", async (event) => {
     asset = null;
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();
-    byId("researchMessage").textContent = "Reconstruction queued. Follow its progress in Scene review.";
+    byId("researchMessage").textContent = "Reconstruction queued.";
+    byId("createDialog").close();
+    byId("video").value = "";
+    byId("selectedFilename").textContent = "Choose a video";
+    cancelCaptureCheck();
+    releaseCapturePreview();
+    byId("detailTitle").focus({ preventScroll: true });
   } catch (error) {
     if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (asset) {
@@ -870,7 +985,8 @@ byId("researchForm").addEventListener("submit", async (event) => {
 });
 
 byId("refreshButton").addEventListener("click", () => Promise.all([loadJobs(), revalidateSession({ fresh: true })]).catch(report));
-byId("loadMoreJobs").addEventListener("click", () => loadJobs({ append: true }).catch(report));
+["loadMoreJobs", "loadMoreManagedJobs"].forEach((id) =>
+  byId(id).addEventListener("click", () => loadJobs({ append: true }).catch(report)));
 byId("loadMoreAssets").addEventListener("click", () => loadAssets({ append: true }).catch(report));
 byId("loadMoreShares").addEventListener("click", () => loadShares({ append: true }).catch(report));
 byId("refreshInventoryButton").addEventListener("click", () => loadInventory().catch(report));
@@ -881,16 +997,19 @@ byId("cancelButton").addEventListener("click", async () => {
     await loadJobs();
   } catch (error) { toast(error.message); }
 });
-byId("deleteButton").addEventListener("click", async () => {
-  if (!state.selectedId || !window.confirm("Delete this job, its source upload, artifacts, and shares? This cannot be undone.")) return;
+async function deleteJob(jobId) {
+  if (!jobId || !await confirmAction("Delete this scene?", "Its source video, artifacts, and share links will also be removed. This cannot be undone.", "Delete scene")) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { method: "DELETE", idempotent: true });
-    state.selectedId = null;
-    clearDetail();
-    await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
+    await api(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE", idempotent: true });
+    state.jobs = state.jobs.filter((job) => job.id !== jobId);
+    state.selectedJobs.delete(jobId);
+    const deletedSelection = state.selectedId === jobId;
+    if (deletedSelection) { state.selectedId = null; clearDetail(); }
+    await Promise.all([loadJobs({ selectNewest: deletedSelection, preserveLoaded: true }), loadInventory()]);
     toast("Deletion accepted. Stored objects are being removed.");
   } catch (error) { toast(error.message); }
-});
+}
+byId("deleteButton").addEventListener("click", () => deleteJob(state.selectedId));
 
 byId("shareButton").addEventListener("click", async () => {
   const artifactId = byId("shareButton").dataset.artifactId;
@@ -917,7 +1036,7 @@ byId("copyShare").addEventListener("click", async () => {
 });
 byId("bulkDeleteButton").addEventListener("click", async () => {
   const total = state.selectedJobs.size + state.selectedAssets.size + state.selectedShares.size;
-  if (!total || !window.confirm(`Clean up ${total} selected record${total === 1 ? "" : "s"}?`)) return;
+  if (!total || !await confirmAction("Remove selected items?", `${total} selected item${total === 1 ? "" : "s"} will be permanently removed, including linked files and shares.`, "Remove selected")) return;
   const button = byId("bulkDeleteButton");
   button.disabled = true;
   try {
@@ -964,19 +1083,20 @@ byId("trialButton").addEventListener("click", async () => {
     showApp(result.user, result.csrfToken); broadcastSession("session-changed");
     await Promise.all([refreshAccount(), loadJobs(), loadInventory()]);
     byId("sampleButton").click();
-    byId("workspaceMain").focus();
+    byId("workspaceMain").focus({ preventScroll: true });
   } catch (error) { byId("trialMessage").textContent = error.message; }
   finally { button.disabled = false; }
 });
 async function loadPublicConfig() {
   const messages = { cancelled: "Google sign-in was cancelled. You can try again.",
-    capacity: "New video accounts are currently full. You can explore the sample or sign in to an existing workspace.",
+    capacity: "New video accounts are currently full. Existing accounts can still sign in.",
     failed: "Google sign-in did not finish. Please try again.",
     expired: "Your sign-in expired. Please start again." };
   const signin = new URLSearchParams(location.search).get("signin");
   if (Object.hasOwn(messages, signin)) {
     byId("signinNotice").textContent = messages[signin];
     byId("signinNotice").hidden = false;
+    history.replaceState(null, "", `${location.pathname}#signin`);
   }
   try {
     const response = await fetch("/api/config");
@@ -985,19 +1105,63 @@ async function loadPublicConfig() {
     renderAccountActions();
     byId("captureLimits").textContent = `Up to ${state.config.maxVideoSeconds} seconds · ${formatBytes(state.config.maxUploadBytes)} maximum`;
     if (byId("video").files[0] && !state.uploading) validateSelectedCapture();
-    const signupOpen = state.config.googleSignIn && state.config.newAccountsAvailable;
-    byId("googleLogin").hidden = !state.config.googleSignIn;
-    byId("googleLoginLabel").textContent = signupOpen ? "Continue with Google" : "Returning Google sign-in";
-    byId("googleLogin").classList.toggle("primary", signupOpen);
-    byId("googleLogin").classList.toggle("secondary", !signupOpen);
-    byId("trialButton").hidden = !state.config.trialEnabled;
-    byId("trialButton").classList.toggle("secondary", signupOpen);
-    byId("trialButton").classList.toggle("primary", !signupOpen);
-    byId("onboardingStatus").textContent = state.config.googleSignIn
-      ? (signupOpen ? "A private workspace. One video to start. No card needed."
-        : "New video accounts are currently full. Explore the sample, or sign in to your existing workspace.")
-      : "Try the synthetic sample. Google sign-in is being connected.";
+    renderSignInOptions();
   } catch (error) { byId("onboardingStatus").textContent = error.message; }
 }
+
+function confirmAction(title, message, label) {
+  const dialog = byId("confirmDialog");
+  if (dialog.open) return Promise.resolve(false);
+  const epoch = state.epoch;
+  byId("confirmTitle").textContent = title;
+  byId("confirmMessage").textContent = message;
+  byId("confirmAccept").textContent = label;
+  dialog.returnValue = "";
+  dialog.showModal();
+  byId("confirmCancel").focus();
+  return new Promise((resolve) => dialog.addEventListener("close", () => {
+    resolve(dialog.returnValue === "confirm" && epoch === state.epoch);
+  }, { once: true }));
+}
+
+byId("confirmAccept").addEventListener("click", () => byId("confirmDialog").close("confirm"));
+byId("confirmCancel").addEventListener("click", () => byId("confirmDialog").close("cancel"));
+byId("createDialog").addEventListener("cancel", (event) => {
+  if (state.uploading) { event.preventDefault(); toast("Your scene is being submitted. Wait for it to finish before closing."); }
+});
+byId("createDialog").addEventListener("close", () => byId("capturePreview").pause());
+document.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-account-entry], [data-public-home], [data-workspace-home], [data-create-scene], [data-manage-workspace], [data-dialog-close]");
+  if (!target) return;
+  event.preventDefault();
+  if (target.hasAttribute("data-account-entry")) openAccount(target.dataset.accountEntry);
+  else if (target.hasAttribute("data-public-home")) {
+    history.pushState(null, "", location.pathname);
+    renderPublicRoute({ focus: true });
+  } else if (target.hasAttribute("data-workspace-home")) {
+    state.selectedId = null;
+    clearDetail();
+    renderJobs();
+    byId("workspaceMain").focus({ preventScroll: true });
+  } else if (target.hasAttribute("data-create-scene")) openCreateScene();
+  else if (target.hasAttribute("data-manage-workspace")) {
+    byId("managementDialog").showModal();
+    Promise.all([loadInventory(), loadJobs({ preserveLoaded: true })]).catch(report);
+  } else if (target.dataset.dialogClose === "createDialog" && state.uploading) {
+    toast("Your scene is being submitted. Wait for it to finish before closing.");
+  } else byId(target.dataset.dialogClose).close();
+});
+byId("skipLink").addEventListener("click", (event) => {
+  event.preventDefault();
+  const target = byId(!byId("appView").hidden ? "workspaceMain"
+    : !byId("accountView").hidden ? "accountTitle" : "loginTitle");
+  target.focus();
+});
+window.addEventListener("popstate", () => { if (byId("appView").hidden) renderPublicRoute({ focus: true }); });
+window.addEventListener("hashchange", () => { if (byId("appView").hidden) renderPublicRoute(); });
+window.addEventListener("pagehide", () => { releaseCapturePreview(); cancelCaptureCheck(); });
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && byId("video").files[0] && !state.uploading) validateSelectedCapture();
+});
 loadPublicConfig();
 initialize();

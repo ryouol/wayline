@@ -39,6 +39,9 @@ async function load(buffer, options) {
   assert.equal(request.url.includes("private-capability"),false);
   assert.equal(request.init.headers.Authorization,"Bearer private-capability");
   assert.equal(viewer.count,6);
+  const prefetched = await load(new ArrayBuffer(0), { prefetchedResponse: { ok: true, arrayBuffer: async () => glb() } });
+  assert.equal(prefetched.viewer.count, 6);
+  assert.equal(prefetched.request, undefined, "A capability response can be rendered without another fetch or a blob URL");
   const untraced = await load(glb(d => { delete d.extras; }));
   assert.deepEqual([...untraced.viewer.center], [...viewer.center], "Untraced glTF retains Y-up coordinates");
   const sample = await load(glb(d => { d.extras = {sampleVersion:"synthetic-studio-v1"}; }));
@@ -67,5 +70,11 @@ async function load(buffer, options) {
   await assert.rejects(load(glb(d=>{d.extras.wayline.frames[1].pointEnd=5;})),/does not cover/);
   await assert.rejects(load(glb(d=>{d.extras.wayline.coordinateSystem="z-up";})),/camera trace/);
   await assert.rejects(load(glb(d=>{d.extras.wayline.frames[0].intrinsics[0]=0;})),/source-frame/);
+  const landingBuffer = fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/landing-scene.glb"));
+  assert.ok(landingBuffer.length <= 1_500_000, "The public presentation stays within its transfer budget");
+  const { viewer: landing } = await load(landingBuffer.buffer.slice(landingBuffer.byteOffset, landingBuffer.byteOffset + landingBuffer.byteLength));
+  assert.equal(landing.count, 75_000);
+  assert.equal(landing.trace.frames.length, 30);
+  assert.equal(landing.trace.frames.at(-1).pointEnd, landing.count, "The reduced cloud still has a complete camera trace");
   console.log("viewer trace contract passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

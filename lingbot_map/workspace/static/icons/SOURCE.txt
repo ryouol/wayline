@@ -1,0 +1,3 @@
+Phosphor Icons 2.1.1, regular weight. MIT license. Unmodified source SVGs.
+https://github.com/phosphor-icons/core
+NPM integrity: sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==

@@ -153,14 +153,19 @@
   }
 
   class PointCloudViewer {
-    constructor(canvas, status) {
+    constructor(canvas, status, { interactive = true, pointSize = 2.4, showPath = true } = {}) {
       this.canvas = canvas;
       this.status = status;
+      this.interactive = interactive;
+      this.pointSize = Number.isFinite(pointSize) ? Math.max(1, Math.min(12, pointSize)) : 2.4;
+      this.showPath = showPath;
+      this.theme = canvas.ownerDocument.documentElement.dataset.theme === "dark" ? "dark" : "light";
       this.gl = canvas.getContext("webgl", { antialias: true, alpha: false });
       if (!this.gl) throw new Error("WebGL is unavailable in this browser.");
       this.yaw = -0.65;
       this.pitch = -0.38;
       this.distance = 3.2;
+      this.autoFit = true;
       this.count = 0;
       this.drag = null;
       this.loadSequence = 0;
@@ -168,7 +173,11 @@
       this.events = new AbortController();
       this.loadController = null;
       this.initializeGraphics();
-      this.bindControls();
+      if (interactive) this.bindControls();
+      window.addEventListener("wayline-theme-change", (event) => {
+        this.theme = event.detail?.theme === "dark" ? "dark" : "light";
+        this.draw();
+      }, { signal: this.events.signal });
       this.resizeObserver = new ResizeObserver(() => this.draw());
       this.resizeObserver.observe(canvas);
     }
@@ -299,19 +308,20 @@
         else if (key === "ArrowDown") this.pitch = Math.min(1.45, this.pitch + 0.1);
         else if (key === "+" || key === "=") this.distance = Math.max(0.05, this.distance * 0.9);
         else if (key === "-") this.distance = Math.min(8, this.distance * 1.1);
-        else if (key === "0") { this.yaw = -0.65; this.pitch = -0.38; this.distance = 3.2; }
+        else if (key === "0") { this.reset(); return; }
         else return;
         this.draw();
       }, { signal });
     }
 
-    async load(url, { headers = {} } = {}) {
+    async load(url, { headers = {}, prefetchedResponse = null } = {}) {
       if (this.destroyed) throw new Error("The viewer has been closed.");
       const sequence = ++this.loadSequence;
       if (this.loadController) this.loadController.abort();
       this.loadController = new AbortController();
       this.status.textContent = "Loading stored point cloud.";
-      const response = await fetch(url, {
+      // Shares inspect capability errors first, then pass the same response body.
+      const response = prefetchedResponse || await fetch(url, {
         credentials: "same-origin",
         headers,
         signal: this.loadController.signal,
@@ -342,6 +352,8 @@
       this.trace = parsed.trace || null;
       this.center = center;
       this.extent = extent;
+      this.bounds = [this.normalizePoint(minimum), this.normalizePoint(maximum)];
+      this.autoFit = true;
       this.cameraFrame = null;
       this.walking = false;
       const positions = new Float32Array(raw.length);
@@ -373,16 +385,49 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(path), gl.STATIC_DRAW);
       }
-      this.status.textContent = `${this.count.toLocaleString()} points loaded. Drag or use arrow keys to orbit.`;
+      this.status.textContent = `${this.count.toLocaleString()} points loaded.${this.interactive ? " Drag or use arrow keys to orbit." : ""}`;
       this.draw();
     }
 
     normalizePoint(point) { return point.map((value, axis) => (value-this.center[axis])/this.extent*2); }
 
+    fitOrbit(width = this.canvas.clientWidth, height = this.canvas.clientHeight) {
+      if (!this.bounds || !(width > 0 && height > 0)) return;
+      const aspect = width / height;
+      const focal = 2.41421356, margin = 0.88;
+      const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      let distance = 3.2;
+      // Fit the rotated box in the same perspective used by the orbit shader.
+      for (let corner = 0; corner < 8; corner += 1) {
+        const x = this.bounds[corner & 1][0];
+        const y = this.bounds[(corner >> 1) & 1][1];
+        const z = this.bounds[(corner >> 2) & 1][2];
+        const rotatedX = cy*x - sy*z, firstZ = sy*x + cy*z;
+        const rotatedY = cp*y - sp*firstZ, rotatedZ = sp*y + cp*firstZ;
+        distance = Math.max(distance, rotatedZ + Math.max(
+          Math.abs(rotatedX)*focal/(aspect*margin), Math.abs(rotatedY)*focal/margin));
+      }
+      this.distance = distance;
+    }
+
+    setOrbit(yaw, pitch, distance = this.distance) {
+      if (![yaw, pitch, distance].every(Number.isFinite)) return;
+      this.walking = false;
+      this.autoFit = false;
+      this.cameraFrame = null;
+      this.visibleCount = this.count;
+      this.yaw = yaw;
+      this.pitch = Math.max(-1.45, Math.min(1.45, pitch));
+      this.distance = Math.max(0.05, Math.min(8, distance));
+      this.draw();
+    }
+
     setFrame(index) {
       if (!this.trace || !Number.isInteger(index) || index < 0 || index >= this.trace.frames.length) return;
       this.cameraFrame = this.trace.frames[index];
       this.walking = false;
+      this.autoFit = false;
       this.visibleCount = this.cameraFrame.pointEnd;
       this.draw();
     }
@@ -391,6 +436,8 @@
       this.walking = false;
       this.cameraFrame = null; this.visibleCount = this.count;
       this.yaw = -0.65; this.pitch = -0.38; this.distance = 3.2;
+      this.autoFit = true;
+      this.fitOrbit();
       this.draw();
     }
 
@@ -402,6 +449,7 @@
     }
 
     orbit() {
+      this.autoFit = false;
       this.walking = false;
       this.cameraFrame = null;
       this.visibleCount = this.count;
@@ -415,6 +463,7 @@
       this.walkYaw = Math.atan2(frame.forward[0], -frame.forward[2]);
       this.walkPitch = Math.asin(Math.max(-1, Math.min(1, frame.forward[1])));
       this.walking = true;
+      this.autoFit = false;
       this.visibleCount = this.count;
       this.lookWalk(0, 0);
       this.canvas.dispatchEvent(new CustomEvent("viewmode", { detail: "WALK VIEW" }));
@@ -458,12 +507,14 @@
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const width = Math.max(1, Math.round(this.canvas.clientWidth * ratio));
       const height = Math.max(1, Math.round(this.canvas.clientHeight * ratio));
+      if (this.autoFit && !this.cameraFrame) this.fitOrbit(width, height);
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
       }
       gl.viewport(0, 0, width, height);
-      gl.clearColor(0.055, 0.067, 0.047, 1);
+      const dark = this.theme === "dark";
+      gl.clearColor(...(dark ? [16/255, 18/255, 22/255, 1] : [248/255, 249/255, 251/255, 1]));
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       if (!this.count) return;
       gl.enable(gl.DEPTH_TEST);
@@ -478,7 +529,7 @@
       gl.uniform1f(this.locations.pitch, this.pitch);
       gl.uniform1f(this.locations.distance, this.distance);
       gl.uniform1f(this.locations.aspect, width / height);
-      gl.uniform1f(this.locations.pointSize, Math.max(2, 2.4 * ratio));
+      gl.uniform1f(this.locations.pointSize, Math.max(1, this.pointSize * ratio));
       const frame = this.cameraFrame;
       gl.uniform1i(this.locations.camera, Boolean(frame));
       gl.uniform1i(this.locations.lines, false);
@@ -492,12 +543,12 @@
         gl.uniform4fv(this.locations.projection, calibration.projection);
       }
       gl.drawArrays(gl.POINTS, 0, this.visibleCount ?? this.count);
-      if (this.trace && !frame) {
+      if (this.trace && this.showPath !== false && !frame) {
         gl.uniform1i(this.locations.lines, true);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer);
         gl.vertexAttribPointer(this.locations.position, 3, gl.FLOAT, false, 0, 0);
         gl.disableVertexAttribArray(this.locations.color);
-        gl.vertexAttrib3f(this.locations.color, 0.85, 0.96, 0.52);
+        gl.vertexAttrib3f(this.locations.color, ...(dark ? [118/255, 167/255, 1] : [6/255, 101/255, 248/255]));
         gl.drawArrays(gl.LINE_STRIP, 0, this.trace.frames.length);
       }
     }

@@ -27,6 +27,7 @@ skyseg_batch.onnx
 # Run artifacts and caches
 outputs/
 *.glb
+!lingbot_map/workspace/static/landing-scene.glb
 webui/uploads/
 *_sky_masks/
 *.log

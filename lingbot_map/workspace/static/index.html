@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wayline — a new perspective</title>
+  <title>Wayline — step back into your video</title>
   <!-- PAGE_METADATA -->
-  <!-- TODO: provide LINGBOT_PUBLIC_BASE_URL for absolute social-preview URLs on the final deployment. -->
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -13,200 +13,140 @@
   <p class="signin-notice" id="signinNotice" role="status" hidden></p>
 
   <main class="login-shell" id="loginView">
-    <header class="landing-nav"><a class="wordmark" href="/"><img src="/static/icon.svg" alt="" width="32" height="32">wayline<span class="beta-badge">EARLY ACCESS</span></a><a href="#how-it-works" class="text-button">How it works ↗</a></header>
-    <section class="landing-hero">
+    <header class="landing-nav">
+      <a class="wordmark" href="/" aria-label="Wayline home"><img class="brand-mark" src="/static/brand-mark.webp" alt="" width="40" height="32"><span class="brand-name">wayline</span></a>
+      <nav class="landing-nav-actions" aria-label="Main navigation">
+        <a class="text-button how-link" href="#how-it-works">How it works</a>
+        <button class="text-button" type="button" data-account-entry="login">Sign in</button>
+        <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Appearance: Light"><img src="/static/icons/sun.svg" alt="" width="20" height="20"></button>
+        <button class="primary nav-start" type="button" data-account-entry="signup">Get started</button>
+      </nav>
+    </header>
+
+    <section class="landing-hero" aria-labelledby="loginTitle">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="live-dot"></span> FROM A MOMENT TO A PLACE</p>
-        <h1 id="loginTitle" tabindex="-1">Your video.<br>A new <em>perspective.</em></h1>
-        <p class="hero-description">Turn a walkthrough into a space you can explore. Retrace the camera. Pause on a detail. See the whole picture.</p>
-        <div class="welcome-actions">
-          <a class="primary google-button" id="googleLogin" href="/auth/google/start" hidden><span aria-hidden="true">G</span> <span id="googleLoginLabel">Continue with Google</span> <span aria-hidden="true">↗</span></a>
-          <button class="primary" id="trialButton" type="button">Explore the playground <span aria-hidden="true">↗</span></button>
+        <h1 id="loginTitle" tabindex="-1">Step back into<br><span>your video.</span></h1>
+        <p class="hero-description">Turn a short walkthrough into a 3D point cloud you can explore.</p>
+        <button class="primary hero-start" type="button" data-account-entry="signup">Get started</button>
+        <p class="hero-allowance" id="landingAllowance">One video to start. No card needed.</p>
+      </div>
+      <figure class="landing-scene" id="landingScene">
+        <div class="landing-scene-visual">
+          <img id="landingPoster" class="landing-poster theme-light-image" src="/static/landing-poster.webp" srcset="/static/landing-poster-640.webp 640w, /static/landing-poster-960.webp 960w, /static/landing-poster.webp 1288w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1519px) calc(100vw - 80px), 1440px" alt="An example office reconstruction shown as colored points, including a globe, desk, and chairs." width="1288" height="736" fetchpriority="high" loading="lazy">
+          <img class="landing-poster theme-dark-image" src="/static/landing-poster-dark.webp" srcset="/static/landing-poster-dark-640.webp 640w, /static/landing-poster-dark-960.webp 960w, /static/landing-poster-dark.webp 1288w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1519px) calc(100vw - 80px), 1440px" alt="An example office reconstruction shown as colored points, including a globe, desk, and chairs." width="1288" height="736" loading="lazy">
+          <canvas id="landingCanvas" aria-label="Example point-cloud reconstruction" aria-hidden="true" tabindex="-1"></canvas>
         </div>
-        <p class="supporting" id="onboardingStatus">Loading sign-in options…</p>
+        <figcaption class="scene-caption"><span>Example reconstruction · <a href="https://cvg.cit.tum.de/data/datasets/rgbd-dataset" target="_blank" rel="noopener noreferrer">TUM RGB-D</a></span><button class="text-button motion-toggle" id="motionToggle" type="button" aria-pressed="false">Pause motion</button></figcaption>
+      </figure>
+    </section>
+
+    <section class="landing-story" id="how-it-works" aria-labelledby="storyTitle">
+      <div class="story-copy">
+        <h2 id="storyTitle">A new view of the same moment.</h2>
+        <p>Retrace the camera. Look around the scene.<br>Share what you captured.</p>
+      </div>
+      <figure class="studio-preview">
+        <img class="theme-light-image" src="/static/studio-preview.webp" srcset="/static/studio-preview-640.webp 640w, /static/studio-preview-960.webp 960w, /static/studio-preview.webp 1440w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1519px) calc(100vw - 80px), 1360px" alt="The Wayline studio with a large point-cloud viewport and a strip of captured frames for replaying the camera path." width="1440" height="700" loading="lazy">
+        <img class="theme-dark-image" src="/static/studio-preview-dark.webp" srcset="/static/studio-preview-dark-640.webp 640w, /static/studio-preview-dark-960.webp 960w, /static/studio-preview-dark.webp 1440w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1519px) calc(100vw - 80px), 1360px" alt="The Wayline studio with a large point-cloud viewport and a strip of captured frames for replaying the camera path." width="1440" height="700" loading="lazy">
+        <figcaption>From your capture to a scene you can orbit, replay, download, and share.</figcaption>
+      </figure>
+    </section>
+
+    <section class="landing-finale" aria-labelledby="finaleTitle">
+      <h2 id="finaleTitle">Start with a short video.</h2>
+      <button class="primary hero-start" type="button" data-account-entry="signup">Get started</button>
+      <p>Your first space starts here.</p>
+      <p class="preview-note">Research preview. Reconstruction results may be incomplete.</p>
+    </section>
+  </main>
+
+  <main class="account-shell" id="accountView" hidden>
+    <header class="landing-nav">
+      <a class="wordmark" href="/" data-public-home aria-label="Wayline home"><img class="brand-mark" src="/static/brand-mark.webp" alt="" width="40" height="32">wayline</a>
+      <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Appearance: Light"><img src="/static/icons/sun.svg" alt="" width="20" height="20"></button>
+    </header>
+    <div class="account-layout">
+      <section class="account-form" aria-labelledby="accountTitle">
+        <p class="section-label">Your Wayline workspace</p>
+        <h1 id="accountTitle" tabindex="-1">Your own space<br>starts here.</h1>
+        <p class="account-description" id="accountDescription">One video to start. A new way to see it.</p>
+        <a class="secondary google-button wide" id="googleLogin" href="/auth/google/start" hidden><img src="/static/icons/google-logo.svg" alt="" width="20" height="20"><span id="googleLoginLabel">Continue with Google</span></a>
+        <p class="supporting" id="onboardingStatus" role="status">Loading sign-in options…</p>
         <p class="form-message" id="trialMessage" role="alert"></p>
+        <button class="secondary" id="trialButton" type="button" hidden>Open synthetic playground</button>
+        <p class="account-switch" id="accountSwitch">Already have an account? <button class="text-button" type="button" data-account-entry="login">Sign in</button></p>
+        <p class="account-legal">Research preview. Read the <a href="/terms">Terms</a> and <a href="/privacy">Privacy information</a> before uploading.</p>
         <details class="operator-login"><summary>Local operator access</summary>
           <form id="loginForm"><label for="token">Workspace token</label><div class="copy-row"><input id="token" name="token" type="password" autocomplete="current-password" minlength="16" maxlength="512" aria-describedby="loginMessage" required><button class="secondary" type="submit">Continue</button></div></form>
           <p class="form-message" id="loginMessage" role="alert"></p>
         </details>
-      </div>
-      <div class="hero-visual" aria-label="Illustration of a camera path through a space">
-        <div class="visual-top"><span class="live-dot"></span> A DIFFERENT WAY TO SEE <span>01 / 03</span></div>
-        <div class="spatial-art" aria-hidden="true"><div class="space-grid"></div><div class="space-frame frame-one"></div><div class="space-frame frame-two"></div><div class="space-frame frame-three"></div><div class="camera-ray"></div><span class="spatial-label">a path becomes a place</span></div>
-        <div class="visual-bottom"><span>CAPTURE → RECONSTRUCT → EXPLORE</span><span>+ X &nbsp; + Y &nbsp; + Z</span></div>
-      </div>
-    </section>
-    <section class="how-it-works" id="how-it-works" aria-label="How Wayline works">
-      <article><span>01</span><h2>Bring a perspective.</h2><p>Record a slow, steady walkthrough. Keep surfaces in view as you move.</p></article>
-      <article><span>02</span><h2>Follow the reconstruction.</h2><p>LingBot-Map estimates the scene and camera poses from your captured frames.</p></article>
-      <article><span>03</span><h2>Make space to explore.</h2><p>Orbit the scene, replay the camera path, or stop and take it all in.</p></article>
-    </section>
-    <p class="landing-note">Early research preview powered by LingBot-Map. The playground is a synthetic sample. Reconstruction availability depends on the connected GPU runner.</p>
+        <a class="text-button account-back" href="/" data-public-home>Back to Wayline</a>
+      </section>
+      <figure class="account-art"><img class="theme-light-image" src="/static/landing-poster.webp" srcset="/static/landing-poster-640.webp 640w, /static/landing-poster-960.webp 960w, /static/landing-poster.webp 1288w" sizes="(max-width: 468px) calc(100vw - 48px), (max-width: 760px) 420px, (max-width: 1050px) calc(55vw - 57.2px), (max-width: 1320px) calc(55vw - 108.9px), 618px" alt="A different perspective on an office, reconstructed as a 3D point cloud." width="1288" height="736" loading="lazy"><img class="theme-dark-image" src="/static/landing-poster-dark.webp" srcset="/static/landing-poster-dark-640.webp 640w, /static/landing-poster-dark-960.webp 960w, /static/landing-poster-dark.webp 1288w" sizes="(max-width: 468px) calc(100vw - 48px), (max-width: 760px) 420px, (max-width: 1050px) calc(55vw - 57.2px), (max-width: 1320px) calc(55vw - 108.9px), 618px" alt="A different perspective on an office, reconstructed as a 3D point cloud." width="1288" height="736" loading="lazy"><figcaption>A moment becomes a place.<span>Example reconstruction · TUM RGB-D</span></figcaption></figure>
+    </div>
   </main>
 
   <div id="appView" hidden>
     <header class="app-header">
-      <div>
-        <a class="wordmark" href="/"><img src="/static/icon.svg" alt="" width="30" height="30">wayline</a>
-        <p class="workspace-name" id="workspaceName">Workspace</p>
-      </div>
-      <div class="header-actions">
-        <span class="beta-badge">RESEARCH PREVIEW</span>
-        <a class="secondary" id="saveWorkspace" href="/auth/google/start" hidden>Sign in with Google</a>
-        <button class="text-button" id="logoutButton" type="button">Sign out</button>
-      </div>
+      <div class="workspace-brand"><a class="wordmark" href="/" data-workspace-home aria-label="Wayline workspace"><img class="brand-mark" src="/static/brand-mark.webp" alt="" width="34" height="28">wayline</a><p class="workspace-name" id="workspaceName">Workspace</p></div>
+      <div class="header-actions"><span class="preview-label">Research preview</span><a class="secondary" id="saveWorkspace" href="/auth/google/start" hidden>Sign in with Google</a><button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Appearance: Light"><img src="/static/icons/sun.svg" alt="" width="20" height="20"></button><button class="text-button" id="logoutButton" type="button">Sign out</button></div>
     </header>
 
     <main class="workspace" id="workspaceMain" tabindex="-1">
-      <aside class="source-column" aria-label="Create and browse jobs">
-        <section class="section-block upload-section" aria-labelledby="createTitle">
-          <p class="section-label">YOUR NEXT PERSPECTIVE</p>
-          <h1 id="createTitle">Create a space.</h1>
-          <p class="supporting">A steady walkthrough is all it takes to start.</p>
-          <form id="researchForm">
-            <label class="upload-drop" id="capturePicker" for="video"><span class="upload-icon" aria-hidden="true">↥</span><strong id="selectedFilename">Choose a video</strong><span>MP4 or MOV · start with a short clip</span><input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska" aria-describedby="captureLimits captureMessage researchReason" disabled required></label>
-            <p class="capture-limits supporting" id="captureLimits">Loading capture limits…</p>
-            <p class="form-message capture-message" id="captureMessage" role="status"></p>
-            <details class="capture-settings"><summary>Capture settings</summary><div class="form-row"><div><label for="sampleFps">Frames / second</label><input id="sampleFps" type="number" value="3" min="1" max="15" required></div><div><label for="frameLimit">Maximum frames</label><input id="frameLimit" type="number" value="120" min="30" max="120" required></div></div></details>
-            <button class="primary wide" id="researchButton" type="submit" disabled>Reconstruct space <span aria-hidden="true">↗</span></button>
-          </form>
-          <p class="form-message" id="researchMessage" role="status"></p>
-          <div class="runner-status" role="status"><span class="status-label" id="researchStatus">Checking</span><p class="supporting" id="researchReason">Checking the reconstruction service…</p></div>
-          <div class="sample-option"><span>Just looking around?</span><button class="text-button" id="sampleButton" type="button">Create synthetic scene ↗</button></div>
-        </section>
-
+      <aside class="source-column" aria-label="Your scenes">
         <section class="jobs-section" aria-labelledby="jobsTitle">
-          <div class="section-heading-row">
-            <div>
-              <p class="section-label">Workspace</p>
-              <h2 id="jobsTitle">Your spaces</h2>
-            </div>
-            <button class="text-button" id="refreshButton" type="button">Refresh</button>
-          </div>
+          <div class="section-heading-row"><h2 id="jobsTitle">Scenes</h2><button class="icon-button quiet-button" id="refreshButton" type="button" aria-label="Refresh scenes"><img src="/static/icons/arrow-counter-clockwise.svg" alt="" width="17" height="17"></button></div>
+          <button class="secondary wide new-scene-button" type="button" data-create-scene><img src="/static/icons/plus.svg" alt="" width="18" height="18">New scene</button>
           <ol class="job-list" id="jobList"></ol>
-          <p class="empty-state" id="emptyJobs">Your spaces will appear here. Try the sample to explore the viewer.</p>
+          <p class="empty-state" id="emptyJobs">Your scenes will appear here after you create one.</p>
           <button class="text-button load-more" id="loadMoreJobs" type="button" hidden>Load older scenes</button>
         </section>
-
-        <details class="management-section"><summary>Manage storage &amp; shares</summary><section aria-labelledby="managementTitle">
-          <div class="section-heading-row">
-            <div>
-              <p class="section-label">Retention</p>
-              <h2 id="managementTitle">Storage and shares</h2>
-            </div>
-            <button class="text-button danger" id="bulkDeleteButton" type="button" disabled>
-              Clean up selected
-            </button>
-          </div>
-          <p class="supporting">Select finished spaces, unused uploads, or links to remove.</p>
-          <p class="selection-summary" id="selectionSummary" aria-live="polite">Nothing selected</p>
-
-          <div class="inventory-group" aria-labelledby="assetsTitle">
-            <div class="inventory-heading">
-              <h3 id="assetsTitle">Uploads</h3>
-              <button class="text-button" id="refreshInventoryButton" type="button">Refresh</button>
-            </div>
-            <ul class="inventory-list" id="assetList"></ul>
-            <p class="empty-state" id="emptyAssets">No retained uploads.</p>
-            <button class="text-button load-more" id="loadMoreAssets" type="button" hidden>Load more uploads</button>
-          </div>
-
-          <div class="inventory-group" aria-labelledby="sharesTitle">
-            <div class="inventory-heading">
-              <h3 id="sharesTitle">Share links</h3>
-            </div>
-            <ul class="inventory-list" id="shareList"></ul>
-            <p class="empty-state" id="emptyShares">No share links.</p>
-            <button class="text-button load-more" id="loadMoreShares" type="button" hidden>Load more shares</button>
-          </div>
-        </section></details>
+        <div class="sidebar-bottom"><button class="text-button" type="button" data-manage-workspace><img src="/static/icons/list.svg" alt="" width="18" height="18">Storage &amp; shares</button><p>Private to your workspace.<br>Shared only when you create a link.</p></div>
       </aside>
 
-      <section class="detail-column" aria-live="polite">
-        <div class="empty-detail" id="emptyDetail">
-          <div class="empty-orbit" aria-hidden="true">↗</div><p class="section-label">A PLACE TO BEGIN</p><h2>A new point of view<br>starts here.</h2><p>Upload a walkthrough or open the synthetic sample.<br>Your space will take shape here.</p>
-        </div>
+      <section class="detail-column" aria-label="Scene workspace">
+        <div class="empty-detail" id="emptyDetail"><img class="brand-mark empty-mark" src="/static/brand-mark.webp" alt="" width="62" height="50"><p class="section-label">A place to begin</p><h1 id="emptyTitle">Create your first scene.</h1><p id="emptyDescription">A short walkthrough becomes a space<br>you can look around and return to.</p><button class="primary" type="button" data-create-scene>Choose a video<img src="/static/icons/upload.svg" alt="" width="18" height="18"></button><p class="empty-detail-note">Move slowly. Keep nearby surfaces in view.</p></div>
 
         <div id="jobDetail" hidden>
-          <div class="detail-header">
-            <div>
-              <p class="section-label" id="detailEngine">Engine</p>
-              <h2 id="detailTitle" tabindex="-1">Scene</h2>
-              <p class="detail-meta" id="detailMeta"></p>
-            </div>
-            <div class="detail-actions">
-              <button class="text-button danger" id="cancelButton" type="button" hidden>Cancel job</button>
-              <button class="text-button danger" id="deleteButton" type="button" hidden>Delete</button>
-            </div>
-          </div>
+          <div class="detail-header"><div class="detail-title-block"><p class="section-label" id="detailEngine">Engine</p><h2 id="detailTitle" tabindex="-1">Scene</h2><p class="detail-meta" id="detailMeta"></p></div><div class="detail-actions"><button class="text-button danger" id="cancelButton" type="button" hidden>Cancel</button><div class="artifact-actions"><button class="secondary" id="shareButton" type="button" hidden><img src="/static/icons/share.svg" alt="" width="17" height="17">Share</button><a class="secondary" id="downloadLink" hidden><img src="/static/icons/download.svg" alt="" width="17" height="17">Download GLB</a></div><button class="text-button danger" id="deleteButton" type="button" aria-label="Delete scene" hidden>Delete</button></div></div>
 
-          <section class="progress-section" aria-labelledby="progressTitle">
-            <div class="progress-heading">
-              <h3 id="progressTitle">Processing</h3>
-              <span id="progressPercent">0%</span>
-            </div>
-            <progress id="progressBar" aria-label="Scene processing progress" value="0" max="100">0%</progress>
-            <ol class="stage-list" id="stageList">
-              <li data-stage="queued">Queued</li>
-              <li data-stage="validating">Validated</li>
-              <li data-stage="generating">Generated</li>
-              <li data-stage="exporting">Exported</li>
-              <li data-stage="ready">Ready</li>
-            </ol>
-            <p class="form-message" id="jobMessage" role="status"></p>
-          </section>
+          <section class="progress-section" id="progressSection" aria-labelledby="progressTitle"><div class="progress-heading"><h3 id="progressTitle">Creating your scene</h3><span id="progressPercent">0%</span></div><progress id="progressBar" aria-label="Scene processing progress" value="0" max="100">0%</progress><ol class="stage-list" id="stageList"><li data-stage="queued">Queued</li><li data-stage="validating">Validating</li><li data-stage="generating">Reconstructing</li><li data-stage="exporting">Exporting</li><li data-stage="ready">Ready</li></ol><p class="form-message" id="jobMessage" role="status"></p></section>
 
           <section class="viewer-section" id="viewerSection" hidden aria-labelledby="viewerTitle">
-            <div class="viewer-heading">
-              <div>
-                <p class="section-label">EXPLORE YOUR SPACE</p>
-                <h3 id="viewerTitle">A different perspective</h3>
-              </div>
-              <p class="viewer-help">Drag to orbit · scroll to zoom · arrow keys supported</p>
+            <h3 class="sr-only" id="viewerTitle">Explore your scene</h3>
+            <div class="viewport-wrap">
+              <div class="viewer-modes" role="group" aria-label="View mode"><button type="button" data-view-mode="orbit" aria-pressed="true">Orbit</button><button type="button" data-view-mode="camera" aria-pressed="false" disabled>Camera</button><button type="button" data-view-mode="walk" aria-pressed="false" disabled>Walk</button></div>
+              <div class="viewport-badge"><span id="viewModeLabel">Orbit</span></div>
+              <canvas id="sceneCanvas" class="scene-canvas" tabindex="0" aria-label="Interactive 3D point-cloud viewer. Drag or use arrow keys to orbit; scroll or use plus and minus to zoom."></canvas>
+              <div class="viewport-tools" aria-label="Viewport controls"><button class="viewport-tool" id="zoomIn" type="button" aria-label="Zoom in"><img src="/static/icons/plus.svg" alt="" width="19" height="19"></button><button class="viewport-tool" id="zoomOut" type="button" aria-label="Zoom out"><img src="/static/icons/minus.svg" alt="" width="19" height="19"></button><button class="viewport-tool" id="resetView" type="button" aria-label="Reset view"><img src="/static/icons/arrow-counter-clockwise.svg" alt="" width="19" height="19"></button><button class="viewport-tool" id="fullScreen" type="button" aria-label="Full screen"><img src="/static/icons/arrows-out.svg" alt="" width="19" height="19"></button></div>
             </div>
-            <div class="viewport-wrap"><div class="viewport-badge"><span class="live-dot"></span> <span id="viewModeLabel">FREE ORBIT</span></div>
-            <canvas id="sceneCanvas" class="scene-canvas" tabindex="0" aria-label="Interactive 3D point-cloud viewer. Use arrow keys to orbit and plus or minus to zoom."></canvas><div class="viewport-tools"><button class="viewport-tool" id="zoomIn" type="button" aria-label="Zoom in">+</button><button class="viewport-tool" id="zoomOut" type="button" aria-label="Zoom out">−</button><button class="viewport-tool" id="resetView" type="button" aria-label="Reset view">⌂</button><button class="viewport-tool" id="fullScreen" type="button" aria-label="Full screen">⛶</button></div></div>
-            <div class="timeline" id="timeline" hidden><div class="timeline-top"><div><p class="section-label">RETRACE YOUR STEPS</p><span class="frame-counter" id="frameCounter">Frame 1</span></div><div class="playback-actions"><button class="secondary play-path" id="playPath" type="button">Play path</button><button class="secondary show-all" id="showAll" type="button">Whole space</button></div></div><label class="sr-only" for="frameScrubber">Source frame</label><input id="frameScrubber" type="range" min="0" max="0" value="0" step="1"><div class="filmstrip" id="filmstrip" aria-label="Source frames"></div></div>
-            <p class="viewer-status" id="viewerStatus" role="status">Waiting for a scene.</p>
-            <div class="artifact-actions">
-              <a class="secondary" id="downloadLink">Download GLB</a>
-              <button class="secondary" id="shareButton" type="button">Create expiring share</button>
-            </div>
-            <details class="scene-info"><summary>File details</summary><dl class="artifact-facts" id="artifactFacts"></dl></details>
+            <div class="timeline" id="timeline" hidden><div class="timeline-top"><div class="playback-actions"><button class="secondary play-path" id="playPath" type="button">Play path</button><button class="secondary show-all" id="showAll" type="button">Whole scene</button></div><span class="frame-counter" id="frameCounter">Frame 1</span></div><label class="sr-only" for="frameScrubber">Source frame</label><input id="frameScrubber" type="range" min="0" max="0" value="0" step="1"><div class="filmstrip" id="filmstrip" aria-label="Source frames"></div></div>
+            <div class="viewer-status-row"><p class="viewer-status" id="viewerStatus" role="status">Waiting for a scene.</p><p class="viewer-help">Drag to orbit · scroll to zoom</p></div>
+            <details class="scene-info" id="fileDetails"><summary>File details</summary><dl class="artifact-facts" id="artifactFacts"></dl></details>
           </section>
-
-          <details class="provenance-section"><summary>About this reconstruction</summary><section aria-labelledby="provenanceTitle">
-            <p class="section-label">Trust record</p>
-            <h3 id="provenanceTitle">Provenance and rights</h3>
-            <dl class="provenance-list" id="provenanceList"></dl>
-          </section></details>
+          <details class="provenance-section"><summary>About this reconstruction</summary><section aria-labelledby="provenanceTitle"><h3 id="provenanceTitle">Provenance and rights</h3><dl class="provenance-list" id="provenanceList"></dl></section></details>
         </div>
       </section>
     </main>
   </div>
 
+  <dialog class="create-dialog" id="createDialog" aria-labelledby="createDialogTitle"><div class="dialog-panel"><header class="dialog-heading"><div><p class="section-label">Your next perspective</p><h2 id="createDialogTitle">Create a scene.</h2></div><button class="icon-button" type="button" data-dialog-close="createDialog" aria-label="Close new scene"><img src="/static/icons/x.svg" alt="" width="20" height="20"></button></header><p class="supporting" id="createTitle">Choose a short walkthrough. Move slowly and keep nearby surfaces in view.</p><form id="researchForm"><label class="upload-drop" id="capturePicker" for="video"><img class="upload-icon" src="/static/icons/upload.svg" alt="" width="30" height="30"><strong id="selectedFilename">Choose a video</strong><span>MP4 or MOV · a short, steady walkthrough</span><input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska" aria-describedby="captureLimits captureMessage researchReason" disabled required></label><div class="capture-preview" id="capturePreviewPanel" hidden><video id="capturePreview" controls playsinline preload="metadata" aria-label="Your selected capture"></video><p class="supporting" id="capturePreviewMeta"></p></div><p class="capture-limits supporting" id="captureLimits">Loading capture limits…</p><p class="form-message capture-message" id="captureMessage" role="status"></p><details class="capture-settings"><summary>Capture settings</summary><div class="form-row"><div><label for="sampleFps">Frames per second</label><input id="sampleFps" type="number" value="3" min="1" max="15" required></div><div><label for="frameLimit">Maximum frames</label><input id="frameLimit" type="number" value="120" min="30" max="120" required></div></div></details><button class="primary wide" id="researchButton" type="submit" disabled>Create scene<img src="/static/icons/caret-right.svg" alt="" width="18" height="18"></button></form><p class="form-message" id="researchMessage" role="status"></p><div class="runner-status" role="status"><span class="status-label" id="researchStatus">Checking</span><p class="supporting" id="researchReason">Checking the reconstruction service…</p></div><details class="sample-option"><summary>Synthetic scene</summary><p class="supporting">Create a generated point-cloud sample in this workspace. It does not reconstruct your video.</p><button class="secondary" id="sampleButton" type="button">Create synthetic scene</button></details></div></dialog>
+
+  <dialog class="management-dialog" id="managementDialog" aria-labelledby="managementTitle"><div class="dialog-panel"><header class="dialog-heading"><div><p class="section-label">Your workspace</p><h2 id="managementTitle">Storage and shares</h2></div><button class="icon-button" type="button" data-dialog-close="managementDialog" aria-label="Close storage and shares"><img src="/static/icons/x.svg" alt="" width="20" height="20"></button></header><p class="supporting">Select finished scenes, unused uploads, or links to remove.</p><div class="inventory-group"><div class="inventory-heading"><h3>Finished scenes</h3></div><ul class="inventory-list" id="managementJobList"></ul><p class="empty-state" id="emptyManagedJobs">No finished scenes.</p><button class="text-button load-more" id="loadMoreManagedJobs" type="button" hidden>Load older scenes</button></div><div class="inventory-group" aria-labelledby="assetsTitle"><div class="inventory-heading"><h3 id="assetsTitle">Uploads</h3><button class="text-button" id="refreshInventoryButton" type="button">Refresh</button></div><ul class="inventory-list" id="assetList"></ul><p class="empty-state" id="emptyAssets">No retained uploads.</p><button class="text-button load-more" id="loadMoreAssets" type="button" hidden>Load more uploads</button></div><div class="inventory-group" aria-labelledby="sharesTitle"><div class="inventory-heading"><h3 id="sharesTitle">Share links</h3></div><ul class="inventory-list" id="shareList"></ul><p class="empty-state" id="emptyShares">No share links.</p><button class="text-button load-more" id="loadMoreShares" type="button" hidden>Load more shares</button></div><div class="management-actions"><p class="selection-summary" id="selectionSummary" aria-live="polite">Nothing selected</p><button class="secondary danger" id="bulkDeleteButton" type="button" disabled>Remove selected</button></div></div></dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <p class="request-status" id="requestStatus" role="status" hidden>Working…</p>
-  <a class="mobile-workspace-cta primary" id="mobileWorkspaceCta" href="#createTitle" hidden>Create a space ↗</a>
+  <button class="mobile-workspace-cta primary" id="mobileWorkspaceCta" type="button" data-create-scene hidden>New scene</button>
 
-  <dialog id="shareDialog" aria-labelledby="shareDialogTitle">
-    <form method="dialog" class="dialog-panel">
-      <p class="section-label">Permissioned link</p>
-      <h2 id="shareDialogTitle">Scene share created</h2>
-      <p>This link expires in 24 hours. Anyone with the link can view and download this artifact until then.</p>
-      <label for="shareUrl">Share URL</label>
-      <div class="copy-row">
-        <input id="shareUrl" readonly>
-        <button class="secondary" id="copyShare" type="button">Copy</button>
-      </div>
-      <button class="primary" value="close">Done</button>
-    </form>
-  </dialog>
+  <dialog id="shareDialog" aria-labelledby="shareDialogTitle"><form method="dialog" class="dialog-panel"><p class="section-label">An invitation to explore</p><h2 id="shareDialogTitle">Share your scene.</h2><p class="supporting">This link expires in 24 hours. Anyone with the link can view and download this scene until then.</p><label for="shareUrl">Share link</label><div class="copy-row"><input id="shareUrl" readonly><button class="secondary" id="copyShare" type="button">Copy</button></div><button class="primary wide" value="close">Done</button></form></dialog>
+
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage"><div class="dialog-panel"><h2 id="confirmTitle">Remove this item?</h2><p class="supporting" id="confirmMessage"></p><div class="confirm-actions"><button class="secondary" id="confirmCancel" type="button">Keep it</button><button class="primary" id="confirmAccept" type="button">Remove</button></div></div></dialog>
 
   <script src="/static/session-events.js"></script>
   <script src="/static/viewer.js"></script>
   <script src="/static/timeline.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/landing.js"></script>
   <script src="/static/site.js"></script>
 </body>
 </html>

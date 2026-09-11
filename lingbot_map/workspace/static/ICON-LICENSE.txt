@@ -1,3 +1,0 @@
-Original Wayline W mark and generated raster derivatives.
-Created for this application in 2026 and distributed under the repository Apache-2.0 license.
-No third-party icon geometry is used in the current brand assets.

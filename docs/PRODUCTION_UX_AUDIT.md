@@ -2,13 +2,27 @@
 
 Updated 2026-09-11 against the attached six-phase brief. Stack: Python/FastAPI, plain JavaScript and CSS, SQLite/private files, Render for the app and Modal for original LingBot GPU jobs. No React, Svelte, Supabase or Firebase.
 
+The current public journey is visual landing → Get started → Google signup →
+create scene. There is no public Explore sample CTA. The approved Gallery +
+Instrument direction uses a light default, dark/system choices, cobalt actions,
+an original two-plane W mark, a precomputed TUM reconstruction and actual studio
+captures. Full favicon exports, responsive WebP images, sticky mobile navigation
+and 44px controls preserve the production brief within this direction.
+
+This checklist describes the current implementation. [Design QA](../design-qa.md)
+records the redesign's local browser evidence; [the release receipt](DESIGN_RELEASE_QA.md)
+separately records packaging, CI and deployment status. Earlier security, OAuth,
+GPU and browser reports remain evidence only for their stated revisions and
+inputs. The redesign does not close the pending account, device, recovery or
+legal gates.
+
 ✅ implemented with local evidence; ⚠️ needs input or verification; ➖ N/A with rationale. A phase containing ⚠️ is not release-complete. Paths below are relative to the repository root. Final executable check counts are recorded in `REVIEW.md`.
 
 ## Phase 1 — Security
 
 | Item | Status / evidence |
 |---|---|
-| Exposed keys | ✅ Working-tree scan and a Gitleaks scan across locally available Git history found no credential matches. Exact comparison of five live credential values against 2,518 reachable blobs also found none; see `SECURITY_QA.md` for scope. Bootstrap, Google client secret and Modal credentials are server environment values. Runtime bearer/session/share secrets are private; tests use fake credentials. ⚠️ Provider credential scope, external/unreachable history and upstream log stores are not cleared by these scans. |
+| Exposed keys | ✅ The recorded 2026-09-10 working-tree/history scans found no credential matches; exact comparison of five live values against 2,518 reachable blobs also found none. [Security QA](SECURITY_QA.md) identifies the scanned revision and limits; this is not a fresh scan of later changes. Bootstrap, Google client secret and Modal credentials are server environment values. Runtime bearer/session/share secrets are private; tests use fake credentials. No exposed key required relocation in that scan. ⚠️ Current release scanning, provider credential scope, external/unreachable history and upstream logs require their own verification. |
 | Every endpoint authenticated/validated | ✅ Inventory below; intentionally public shells/config/auth entrypoints expose no private tenant data. Private operations use server-derived ownership and cookie CSRF. Tests cover anonymous access, cross-tenant isolation and malformed input. |
 | RLS | ➖ SQLite is accessible only to the server; no network/browser DB access or RLS switch exists. Tenant checks and transactions are tested. A future Postgres migration needs its own roles/RLS tests. |
 | Broken/bypassed auth | ✅ No unconditional auth bypass introduced. Trial and Google sessions are isolated identities. Research acknowledgement and provider enablement remain deliberate gates. |
@@ -52,19 +66,19 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 | GET/HEAD `/static/{path}` | Packaged static directory only. |
 | GET `/docs`, `/docs/oauth2-redirect`, `/openapi.json` | Development/test only; disabled in production. |
 
-Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine,request_limits}.py`, tests, Docker/Render configuration. Declared and observed request bytes are bounded before parser consumption; tests cover chunked rejection and partial multipart spool cleanup. Retained: source licensing notices and established auth/storage transaction boundaries. Skipped: cloud permission changes without credentials, invented commercial rights, shared-owner public signup. Deployed concurrency/timeout controls, OAuth callback/query and authorization-header redaction still require verification.
+Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,service,modal_engine,request_limits}.py`, tests, Docker/Render configuration. Declared and observed request bytes are bounded before parser consumption; tests cover chunked rejection and partial multipart spool cleanup. The redesign's additive job `displayName` uses an asset join constrained to the job's tenant; detail, pagination and cross-tenant tests cover it. Existing auth, quota and storage boundaries are retained. Skipped: invented commercial rights and shared-owner public signup. Provider scope, remaining deployed load/shutdown behavior, OAuth callback/query and authorization-header log redaction remain unverified. Phase 1 is not declared release-complete while these checks are open.
 
 ## Phase 2 — Make it real
 
 | Requested item | Status / implementation |
 |---|---|
 | Custom 404 and 500 | ✅ HTML recovery pages and safe JSON API errors, including induced-error tests. |
-| Above-fold CTA | ✅ Playground entry and upload-first studio; operator login is secondary. Desktop/narrow viewport inspected; owner Google signup and returning login verified on Render. |
+| Above-fold CTA | ✅ Landing Get started opens the Google account step; returning Sign in is separate. The studio exposes New scene and an empty-workspace Choose a video action. Desktop and mobile layouts were inspected in [design QA](../design-qa.md); local operator access and synthetic creation remain secondary. |
 | Per-page title and description | ✅ Home/share/support/error metadata. |
-| OG/Twitter tags and fallback | ✅ Generic 1200×630 Wayline image and privacy-safe tags. ⚠️ Final public origin required. |
-| Full favicon set | ✅ Original W mark, ICO, 16/32 PNG, Apple, 192/512 icons and manifest; raster assets generated/inspected earlier. |
+| OG/Twitter tags and fallback | ✅ Per-page privacy-safe tags use the actual 1440×700 studio JPEG as the default social image. `LINGBOT_PUBLIC_BASE_URL` supplies the existing Render HTTPS origin. A custom domain is optional and would require updating and verifying that configuration. |
+| Full favicon set | ✅ The approved W mark is exported as `favicon.ico` with 16/32 sizes, `favicon-16.png`, `favicon-32.png`, 180px `apple-touch-icon.png`, and 192/512 PNG manifest icons. Metadata and manifest reference those files; `scripts/export_web_assets.sh` regenerates delivery assets from retained sources. |
 | robots.txt and generated sitemap | ✅ Deliberate non-indexable workspace; no private URLs enumerated. |
-| Alt text | ✅ Source thumbnails have frame labels; canvas has accessible instructions; social alt supplied. |
+| Alt text | ✅ Hero/account/studio imagery has descriptive alt text; source thumbnails have frame labels. Decorative brand/control images use empty alt text with visible or accessible control names. Interactive canvases expose instructions; decorative landing motion stays out of keyboard/screen-reader navigation. Social image alt is supplied. |
 | Analytics | ⚠️ Consent-aware adapter exists but measurement ID and audited collector are missing; collection disabled. |
 | Privacy policy | ⚠️ Real route with explicit draft/TODO; approved operator policy missing. |
 | Terms | ⚠️ Real route with explicit draft/TODO; approved terms missing. |
@@ -72,49 +86,49 @@ Changed: `lingbot_map/workspace/{app,config,database,identity,auth_routes,servic
 | Thank-you page | ➖ OAuth/signup enters the studio; upload enters job progress. No lead/contact form warrants a separate page. Success/next-step states are present. |
 | Real contact information | ⚠️ Support email, phone policy and legal address unknown; no fake links or business details. |
 
-Changed: `pages.py`, `app.py`, `static/{index.html,share.html,site.js,site.webmanifest,icon.svg}`, raster assets, `ICON-LICENSE.txt`, `scripts/build_brand_assets.py`, page tests. Skipped: fabricated legal/contact/analytics data and tracking requests without consent/configuration.
+Changed: `lingbot_map/workspace/{pages,app}.py`, `static/{index.html,share.html,site.js,site.webmanifest}`, current favicon/brand/image exports and `ASSET-NOTICES.txt`, `scripts/export_web_assets.sh`, and page/asset tests. The old icon SVG, icon-license file and brand-generation script are superseded by the approved source artwork, current notices and export script. Skipped: fabricated legal/contact/analytics data and tracking requests without consent/configuration. Separate thank-you and indexable-content pages are N/A for the reasons above.
 
 ## Phase 3 — Forms, states and dead ends
 
 | Item | Status / implementation |
 |---|---|
-| Loading states | ✅ Busy state, upload/queue/progress/viewer feedback. API calls bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation bounded. |
-| Inline validation and errors | ✅ Native forms plus server validation; engine-specific unsupported options return 422. Capture metadata/size checks and authoritative one-video allowance now appear before upload; capacity callbacks return a visible notice. Real Chromium exercised accepted/oversized/overlong files at 390px without CSP errors. See `ONBOARDING_QA.md`. |
-| Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion, share/copy failures all communicate outcome. |
-| Working buttons | ✅ API/Node tests cover key actions. Fresh browser QA covered repeat creation, replay, walking/reset, share/download/expiry and logout cleanup; see `BROWSER_QA.md`. Actual Modal diagnostic download/share/replay and due cleanup after restart passed (`MODAL_QA.md`). ✅ Live Render diagnostic and owner Google signup/returning-login/logout passed (`RENDER_QA.md`). ⚠️ Second-Google-account and owned-capture flows remain pending. |
-| Internal/external/footer links | ✅ Local routes/static links checked; deliberate expired/revoked links show recovery. Google callback verified on the Render hostname. ⚠️ A custom domain, if selected, needs its own callback and metadata verification. |
-| Clickable logo | ✅ Home link across product/support/shared pages. |
-| Placeholder text/unused navigation | ✅ Fake product copy removed; explicit operator TODO disclosures retained. Research settings remain secondary. |
+| Loading states | ✅ Account configuration, capture metadata/upload, queue/progress, viewer and download actions communicate pending work. Local public-route changes focus their heading immediately. API calls are bounded; video upload receives a 15-minute total client window. GPU transfer/inference cancellation remains bounded. |
+| Inline validation and errors | ✅ Native forms plus server validation; unsupported engine options return 422. Capture metadata/size checks, authoritative one-video allowance and global capacity appear before upload. OAuth failures keep visible feedback on the account route. [Earlier onboarding QA](ONBOARDING_QA.md) covers accepted/oversized/overlong files; [design QA](../design-qa.md) covers the new creation dialog and decoded preview. |
+| Submission success/errors | ✅ Signup/login, uploads, jobs, cancellation/deletion and share/copy failures communicate outcomes. A queued video closes the creation dialog and selects progress; native confirmation protects deletion. Feedback is placed inside an open modal when needed. Valid shares retain download when WebGL fails; invalid/expired shares have a recovery state distinct from server failure. |
+| Working buttons | ✅ Current Node regressions cover routing, skip links, dialogs, capture cleanup, concurrent submission prevention, deletion selection and stale share actions. [Design QA](../design-qa.md) exercises the actual interface with a precomputed real-scene fixture and no new inference. [Earlier browser QA](BROWSER_QA.md), [Modal QA](MODAL_QA.md), [Render OAuth QA](RENDER_QA.md) and [real-capture QA](REAL_CAPTURE_QA.md) retain their distinct acceptance scopes. ⚠️ Second-Google-account and owned-phone-capture flows remain pending. |
+| Internal/external/footer links | ✅ Product/support/credit routes and packaged assets are linked; unavailable shares offer recovery. Google callback verification on the Render hostname is recorded in [Render QA](RENDER_QA.md). The landing links its public TUM source and the footer links current asset notices. ⚠️ A custom domain, if selected, needs its own callback and metadata verification. |
+| Clickable logo | ✅ Landing/support/shared branding returns home; account branding returns to the landing and workspace branding returns to the scene library. |
+| Placeholder text/unused navigation | ✅ Public copy describes the actual point-cloud product, with no public sample-entry CTA or invented collaboration/versioning. Operator TODO disclosures remain explicit; local access, capture settings and synthetic creation are secondary. |
 | Dynamic copyright | ✅ Current year rendered by shared site script. |
 
-Changed: `static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,site.js}`, API validation and tests. Skipped: invented checkout/contact submission and claims of owned-capture or public-deployment acceptance. Private filenames/thumbnails are cleared on logout; stale requests and old timelines cannot repopulate a new account/scene.
+Changed: `lingbot_map/workspace/static/{app.js,share.js,timeline.js,viewer.js,index.html,share.html,site.js}`, API validation and behavior tests. Skipped: invented checkout/contact submission and claims that fixture QA proves owned-capture or provider acceptance. Private filenames/thumbnails and open dialogs are cleared on logout; stale requests cannot restore an old account/scene. Capture previews release object URLs and revalidate a retained file after page-cache restoration. Skip links focus content without replacing account routes or share capabilities.
 
 ## Phase 4 — Mobile and performance
 
 | Item | Status / implementation |
 |---|---|
-| No horizontal overflow | ✅ Fresh private/shared 390px fixture views measured no document overflow, including walking controls and 120-frame timelines. |
-| Mobile breakpoints | ✅ Responsive studio, fluid support pages, wrapped controls. ⚠️ Physical mobile verification pending. |
-| Mobile hamburger/focus trap | ➖ No drawer/navigation menu is needed; footer links stay visible. Existing share dialog uses native dialog semantics. |
-| Sticky mobile CTA | ✅ Jump to upload/create action for authenticated users. |
-| Optimize images/srcset/lazy | ✅ Small local brand assets; embedded bounded JPEG source thumbnails lazily displayed. ➖ No responsive photo hero/gallery requires srcset. |
-| Tap targets/readable fonts | ✅ CSS minimum 44px controls and readable mobile text; directional walking buttons measured 44px high in the browser. Normal solid-palette text and input boundaries reviewed; open/full Google button and token-field contrast measured in WebKit and Chromium (`ACCESSIBILITY_QA.md`). ⚠️ Physical-device checks and broader assistive-technology coverage remain pending. |
+| No horizontal overflow | ✅ The redesigned landing/account/shared views were inspected at 390×844; the private/shared fixture evidence and limits are in [design QA](../design-qa.md). The earlier 120-frame stress case is recorded separately in [browser QA](BROWSER_QA.md). Scene libraries and timelines scroll within their own regions. |
+| Mobile breakpoints | ✅ Landing/account/studio/shared/support layouts adapt to narrow viewports, with wrapped controls and an aspect-aware initial scene fit. Resize preserves deliberately chosen orbit/zoom and captured/walking viewpoints. ⚠️ Physical mobile verification remains pending. |
+| Mobile hamburger/focus trap | ➖ The compact landing has directly available Sign in and Get started actions; footer destinations remain visible. There is no hidden drawer needing a hamburger or trap. Creation, management, confirmation and sharing use native dialogs for their modal focus behavior. |
+| Sticky mobile CTA | ✅ The public mobile header keeps Get started visible while scrolling; the mobile workspace source column keeps New scene available. Browser inspection measured the public header at top 0 after scrolling. These existing navigation areas provide the sticky actions; the unused floating CTA is not the implementation. |
+| Optimize images/srcset/lazy | ✅ Both themes have 640px, 960px and full-width WebP hero/account/studio exports with `srcset` and `sizes`; native lazy loading defers hidden/below-fold imagery. A browser selected the 640px hero and studio variants at the inspected mobile viewport. The compact brand WebP is separate from retained PNG artwork and favicon exports. Original JPEGs remain source/social assets; bounded source thumbnails load lazily. `scripts/export_web_assets.sh` regenerates the delivery formats. |
+| Tap targets/readable fonts | ✅ Theme, refresh, scene, share/download, replay/mode, storage, selection and other styled controls now retain at least 44px hit dimensions, including mobile overrides. Current mobile browser measurements confirmed 44px buttons; responsive text and layouts were inspected in [design QA](../design-qa.md). [Accessibility QA](ACCESSIBILITY_QA.md) records earlier WebKit/Chromium contrast and focus checks for the prior palette; current theme review is limited to the inspected states. ⚠️ Physical-device and broader assistive-technology coverage remain pending. |
 
-Changed: CSS, viewer/timeline/app scripts, markup and icon generation. Performance fixes remove an eager full confidence tensor and redundant checkpoint hash pass while retaining mandatory verified model loading. Sample work and local maintenance continue during a GPU wait. Skipped: new frontend frameworks, decorative media, unsupported physical-device claims.
+Changed: `lingbot_map/workspace/static/{styles.css,viewer.js,timeline.js,app.js,landing.js,index.html,share.html}`, responsive image/favicon exports, `pages.py` asset fingerprinting and `scripts/export_web_assets.sh`. Landing motion is visibility-, preference- and scroll-bounded; the poster remains useful without WebGL. Earlier model-memory and checkpoint-hash optimizations are retained without changing verified model loading. Sample work and local maintenance continue during a GPU wait. Skipped: a navigation drawer or framework migration without a product need, and unsupported physical-device/performance claims.
 
 ## Phase 5 — UX laws applied
 
 | Principle | Concrete change |
 |---|---|
-| ✅ Hick / Occam / Tesler | One primary upload path; operator access and advanced options secondary; server owns quotas and model configuration. |
-| ✅ Fitts | Large primary action, nearby viewport controls, mobile create shortcut and touch walking controls. |
-| ✅ Jakob / Similarity / Connectedness | Conventional Google entry, labeled file input, grouped playback/actions and native share dialog. |
+| ✅ Hick / Occam / Tesler | Landing → account → create scene separates decisions; operator access, capture settings, synthetic creation and management stay secondary. The server owns quotas and model configuration. |
+| ✅ Fitts | Large primary actions, 44px control targets, nearby viewport tools, sticky mobile Get started/New scene and touch walking controls. |
+| ✅ Jakob / Similarity / Uniform Connectedness | Conventional Google entry, labeled file input with local preview, grouped playback/actions and native creation/management/confirmation/share dialogs. |
 | ✅ Proximity / Prägnanz | Source frame controls stay next to the scene; records keep their own actions. |
 | ✅ Miller | Short public navigation, grouped processing states, paginated inventories. |
-| ✅ Doherty | Immediate busy/progress feedback and unchanged-list caching; GPU latency is not advertised as sub-400ms. |
-| ✅ Von Restorff | Lime primary action against quiet dark/neutral surroundings. |
-| ✅ Serial Position | Upload first, latest scenes prominent, review/download/share at completion. |
-| ✅ Peak-End / Zeigarnik | Visible processing stages, frame replay and explicit ready/download/share result. |
+| ✅ Doherty | Immediate route/focus and pending-work feedback, unchanged-list caching and scroll rendering only when the view changes. GPU latency is not advertised as sub-400ms. |
+| ✅ Von Restorff | Cobalt primary action against porcelain/light or neutral/dark surfaces; secondary controls remain restrained. |
+| ✅ Serial Position | Get started is prominent in the public header/hero and repeated at the landing's end; New scene and latest scenes lead the studio, followed by review/download/share at completion. |
+| ✅ Peak-End / Zeigarnik | A selected-video preview precedes submission; visible processing stages lead to the ready scene, camera replay, download and sharing. |
 | ✅ Postel | Trim operator token whitespace; strict stored identities, bounds and canonical object keys. |
 | ✅ Pareto | Focus on signup → upload → status → view/replay/walk → download/share. Collaboration/versioning deferred. |
 
@@ -122,19 +136,30 @@ Changed: Phase 3/4 UI files. These are design decisions, not usability-study res
 
 ## Phase 6 — Visual polish
 
-✅ Authorized direction: a dark olive/neutral studio with a lime accent, original W mark, spacious scene viewport and restrained controls. Rebrand is Wayline; upstream model/package/license identifiers remain LingBot for attribution.
+✅ Authorized direction: Gallery + Instrument, combining a spacious visual landing with a focused scene studio. Porcelain light is the default; dark and system choices persist across pages. Cobalt actions, restrained system typography, the original two-plane W mark and actual TUM/studio imagery implement the approved references. This supersedes the earlier olive/lime design. Wayline is the product name; upstream model/package/license identifiers remain LingBot for attribution.
 
-➖ Magic UI: React-specific, this app is plain JavaScript. ➖ Threlte/R3F: neither Svelte nor React is present; extending the existing WebGL renderer avoids a framework migration. ➖ Vectary/Jitter: no exported asset supplied or needed; these are not code dependencies. ✅ Fresh synthetic desktop/narrow-view screenshots inspected; see `BROWSER_QA.md`. ⚠️ Real-capture and physical-device visual acceptance remain pending.
+➖ Magic UI: React-specific, this app is plain JavaScript. ➖ Threlte/R3F: neither Svelte nor React is present; extending the existing WebGL renderer avoids a framework migration. ➖ Vectary/Jitter: no export is supplied or required; a future approved still/scene/motion export would enter the static-media workflow, not the dependency list. ✅ [Design QA](../design-qa.md) compares approved references with current desktop/mobile captures, theme changes, dialogs and the real precomputed scene. [Real-capture QA](REAL_CAPTURE_QA.md) separately records the licensed benchmark through the original model. ⚠️ Owned-phone capture, physical-device visual/performance and second-account acceptance remain pending; the redesign fixture invoked no new inference.
 
-Changed: public copy, CSS, markup, brand assets, metadata/manifest, CLI product name/alias and documentation. Skipped: dependency/framework replacements without product benefit.
+Changed: public copy, `static/{styles.css,theme.js,landing.js,viewer.js,timeline.js,index.html,share.html}`, brand/image assets, metadata/manifest, `scripts/{prepare_landing_scene.py,export_web_assets.sh}` and current asset notices. The earlier CLI product name/alias is retained. Skipped: dependency/framework replacements without product benefit and invented reconstruction quality or product capabilities.
 
 ## TODOs requiring operator input
 
 1. `lingbot_map/workspace/pages.py`: approved privacy policy, controller/subprocessors, actual retention, rights-request process and privacy contact.
 2. Same file: approved terms, entity, jurisdiction, billing/refund/acceptable-use/liability rules.
 3. Same file: support email/mailto, phone/tel or explicit no-phone-support policy, legal entity/address.
-4. Same file and `static/site.js`: approved analytics measurement ID and an implemented/audited same-origin collector; update policy/consent before enabling.
-5. Final custom domain, if desired. `LINGBOT_PUBLIC_BASE_URL` currently supplies the working Render HTTPS hostname for absolute metadata.
-6. Remaining provider setup and acceptance: scoped Modal credentials/budgets, owned acceptance capture, spend alerts, external recovery failure/staleness alerts, separate key escrow, full-capacity recovery testing and a replacement-Render recovery drill. Scheduled encrypted offsite recovery and seven-set retention are implemented and enabled on Render, but the first automatic attempt failed after uploading one 8 MiB part. A later read of that part succeeded; a complete automatic live set and live retention remain unverified. The retry fix deployed, but its single operator retry also failed. The failing operation remains unknown; the successful diagnostic probes do not constitute a completed backup. See [the latest runtime and recovery receipt](SCHEDULED_RECOVERY_QA.md). Render hosting, the Google client/callback, and a manual encrypted export plus isolated Linux restore are verified (`RENDER_QA.md`, `RECOVERY_QA.md`); those manual sets remain preserved.
+4. Same file and `lingbot_map/workspace/static/site.js`: approved analytics measurement ID and collector configuration. The consent adapter exists, but an implemented/audited same-origin collector is also needed before enabling collection; update policy/consent together.
+
+These are the explicit `TODO: provide ...` source markers; the contact page has separate email, phone/no-phone-policy and legal-address markers. No fabricated business information replaces them.
+
+## Remaining acceptance and operational work
+
+- Obtain an owned acceptance capture, a second Google account and physical-mobile evidence. Owner signup/returning-login/logout and the licensed benchmark are already recorded; they do not establish these remaining cases.
+- Complete dedicated Modal billing verification and credential/role/budget isolation; validate spend alerts and upstream storage/edge/logging behavior. Existing application allowances remain in force and are not a provider invoice cap.
+- Verify a complete automatic recovery set, readback/restore and live retention. Scheduled encrypted offsite recovery and seven-set retention are implemented and enabled on Render, but both admitted live attempts failed without a completion marker. Successful diagnostic probes and the actual-data offline differential do not establish a completed provider backup or its root cause. Safe stage diagnostics await a normally admitted run; failed-attempt reservations and the daily gate remain intact. See [scheduled recovery QA](SCHEDULED_RECOVERY_QA.md).
+- Complete full-capacity recovery, external failure/staleness alerts, separate key escrow and a replacement-Render restore drill. The verified manual encrypted export and isolated Linux restore remain preserved; see [recovery QA](RECOVERY_QA.md).
+- Finish current release scanning, review/build/CI/deployment verification and remaining load/shutdown/crash-cleanup checks. Record the actual verified revision and scope in [the release receipt](DESIGN_RELEASE_QA.md), rather than treating earlier evidence as a new release check.
+- Resolve model/checkpoint/data hosted-use rights and approved public operator disclosures before claiming public-launch readiness. A custom domain is optional: the existing Render HTTPS origin already supplies absolute metadata; a new domain would require callback/metadata verification.
+
+Implementation and read-only diagnostics can continue autonomously within the existing authorizations and allowances. Owner/provider inputs, physical devices and normal admission timing are distinct from unfinished engineering work. None is closed by this documentation update.
 
 See `launch-readiness.md` for remaining deployment, mobile, model-quality and rights gates. These unresolved items prevent claiming the full requested product is finished.

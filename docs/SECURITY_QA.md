@@ -57,3 +57,13 @@ The complete endpoint inventory, implemented controls and remaining release
 gates are in [the production checklist](PRODUCTION_UX_AUDIT.md) and
 [launch readiness](launch-readiness.md). No production security setting was
 weakened or credential rotated as part of these checks.
+
+## Current redesign source scan — 2026-09-11
+
+Gitleaks scanned a local copy of all 1,200 currently Git-visible files after the
+redesign and final asset exports. It processed approximately 5.96 MB of eligible
+content and returned zero findings. The report used full redaction and source
+was not sent to an external scanning service. Ignored local tokens, preview data,
+provider configuration and diagnostic receipts were excluded from that copy and
+remain excluded from Git. This supplements, and does not replace or broaden, the
+historical exact-secret comparison and provider-boundary limitations above.

@@ -3,44 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shared 3D scene</title>
+  <title>Shared scene — Wayline</title>
   <!-- PAGE_METADATA -->
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="share-body">
+  <a class="skip-link" id="sharedSkipLink" href="#shareTitle">Skip to shared scene</a>
   <main class="share-shell">
     <header class="share-header">
-      <div>
-        <a class="product-kicker brand-link" href="/">Wayline</a>
-        <h1 id="shareTitle">Shared scene</h1>
+      <div class="share-heading">
+        <a class="wordmark" href="/" aria-label="Wayline home"><img class="brand-mark" src="/static/brand-mark.webp" alt="" width="48" height="36">wayline</a>
+        <div><h1 id="shareTitle" tabindex="-1">Shared scene</h1><span class="status-label" id="shareLicense">Loading</span></div>
       </div>
-      <span class="status-label" id="shareLicense">Loading</span>
+      <div class="header-actions"><button class="secondary" id="sharedDownload" type="button" hidden><img src="/static/icons/download.svg" alt="" width="17" height="17">Download GLB</button><button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Appearance: Light"><img src="/static/icons/sun.svg" alt="" width="20" height="20"></button></div>
     </header>
+
     <section class="shared-viewer" aria-labelledby="shareViewerTitle">
-      <div class="viewer-heading">
-        <div>
-          <p class="section-label">Read-only share</p>
-          <h2 id="shareViewerTitle">Interactive point cloud</h2>
-        </div>
-        <p class="viewer-help">Drag to orbit · scroll to zoom · arrow keys supported</p>
+      <h2 class="sr-only" id="shareViewerTitle">Explore this shared point-cloud scene</h2>
+      <div class="viewport-wrap">
+        <div class="viewer-modes" role="group" aria-label="View mode"><button type="button" data-view-mode="orbit" aria-pressed="true">Orbit</button><button type="button" data-view-mode="camera" aria-pressed="false" disabled>Camera</button><button type="button" data-view-mode="walk" aria-pressed="false" disabled>Walk</button></div>
+        <canvas id="sharedCanvas" class="scene-canvas share-canvas" tabindex="0" aria-label="Interactive shared 3D point-cloud viewer. Drag or use arrow keys to orbit; scroll or use plus and minus to zoom."></canvas>
+        <div class="viewport-badge">Shared scene</div>
+        <div class="viewport-tools" aria-label="Viewport controls"><button class="viewport-tool" id="sharedZoomIn" type="button" aria-label="Zoom in"><img src="/static/icons/plus.svg" alt="" width="19" height="19"></button><button class="viewport-tool" id="sharedZoomOut" type="button" aria-label="Zoom out"><img src="/static/icons/minus.svg" alt="" width="19" height="19"></button><button class="viewport-tool" id="sharedReset" type="button" aria-label="Reset view"><img src="/static/icons/arrow-counter-clockwise.svg" alt="" width="19" height="19"></button></div>
       </div>
-      <canvas id="sharedCanvas" class="scene-canvas share-canvas" tabindex="0" aria-label="Interactive shared 3D point-cloud viewer."></canvas>
-      <div class="playback-actions shared-view-controls" aria-label="Scene controls">
-        <button class="secondary" id="sharedZoomIn" type="button" aria-label="Zoom in">+</button>
-        <button class="secondary" id="sharedZoomOut" type="button" aria-label="Zoom out">−</button>
-        <button class="secondary" id="sharedReset" type="button">Reset view</button>
-      </div>
-      <div class="timeline" id="sharedTimeline" hidden>
-        <div class="timeline-top"><div><p class="section-label">RETRACE THE CAPTURE</p><span class="frame-counter">Source frames</span></div>
-          <div class="playback-actions"><button class="secondary play-path" type="button">Play path</button><button class="secondary show-all" type="button">Whole space</button></div></div>
-        <label class="sr-only" for="sharedScrubber">Source frame</label><input id="sharedScrubber" type="range" min="0" max="0" value="0" step="1">
-        <div class="filmstrip" aria-label="Source frames"></div>
-      </div>
-      <p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p>
+      <div class="timeline" id="sharedTimeline" hidden><div class="timeline-top"><div class="playback-actions"><button class="secondary play-path" type="button">Play path</button><button class="secondary show-all" type="button">Whole scene</button></div><span class="frame-counter">Source frames</span></div><label class="sr-only" for="sharedScrubber">Source frame</label><input id="sharedScrubber" type="range" min="0" max="0" value="0" step="1"><div class="filmstrip" aria-label="Source frames"></div></div>
+      <div class="viewer-status-row"><p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p><p class="viewer-help">Drag to orbit · scroll to zoom</p></div>
       <p class="legal-note research-warning" id="shareCommercialWarning" role="note" hidden></p>
-      <button class="secondary" id="sharedDownload" type="button" hidden>Download GLB</button>
       <p class="legal-note" id="shareExpiry"></p>
     </section>
+
+    <section class="share-unavailable" id="shareUnavailable" aria-labelledby="shareUnavailableTitle" hidden><h2 id="shareUnavailableTitle" tabindex="-1">This link is no longer available.</h2><p id="shareUnavailableMessage">It may have expired or been removed. Ask the person who shared it for a new link.</p><a class="primary" href="/">Get started with Wayline</a></section>
   </main>
   <script src="/static/viewer.js"></script>
   <script src="/static/timeline.js"></script>

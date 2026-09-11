@@ -9,33 +9,40 @@
       this.scrubber = root.querySelector('input[type="range"]');
       this.counter = root.querySelector(".frame-counter");
       this.play = root.querySelector(".play-path");
+      this.modes = root.closest(".viewer-section, .shared-viewer").querySelectorAll("[data-view-mode]");
       this.viewer = null;
       this.timer = null;
       this.viewerEvents = null;
       this.scrubber.addEventListener("input", () => { this.stop(); this.seek(Number(this.scrubber.value)); });
       this.play.addEventListener("click", () => this.toggle());
       root.querySelector(".show-all").addEventListener("click", () => this.wholeSpace());
+      this.modes.forEach((button) => button.addEventListener("click", () => {
+        this.stop();
+        if (button.dataset.viewMode === "orbit") this.wholeSpace();
+        else if (button.dataset.viewMode === "camera") this.seek(Number(this.scrubber.value));
+        else this.viewer?.startWalk();
+      }));
+      document.addEventListener("visibilitychange", () => { if (document.hidden) this.stop(); });
       this.walkControls = document.createElement("div");
       this.walkControls.className = "walk-controls";
       const actions = [
-        ["Walk from here", () => { this.stop(); this.viewer?.startWalk(); }],
-        ["Step forward", () => this.viewer?.moveWalk(1, 0)],
-        ["Step back", () => this.viewer?.moveWalk(-1, 0)],
-        ["Step left", () => this.viewer?.moveWalk(0, -1)],
-        ["Step right", () => this.viewer?.moveWalk(0, 1)],
+        ["Forward", () => this.viewer?.moveWalk(1, 0)],
+        ["Back", () => this.viewer?.moveWalk(-1, 0)],
+        ["Left", () => this.viewer?.moveWalk(0, -1)],
+        ["Right", () => this.viewer?.moveWalk(0, 1)],
       ];
-      actions.forEach(([label, action], index) => {
+      actions.forEach(([label, action]) => {
         const button = document.createElement("button");
-        button.className = "secondary";
+        button.className = "secondary walk-step-button";
         button.type = "button";
         button.textContent = label;
-        button.hidden = index > 0;
+        button.setAttribute("aria-label", `Step ${label.toLowerCase()}`);
         button.addEventListener("click", action);
         this.walkControls.append(button);
       });
       this.walkHint = document.createElement("p");
       this.walkHint.className = "muted walk-hint";
-      this.walkHint.textContent = "Drag to look. Use the step buttons or focus the view and use W A S D to move; arrow keys to look. Whole space resets your view.";
+      this.walkHint.textContent = "Drag to look. Use the step buttons, or focus the view and use W A S D to move and arrow keys to look. Orbit resets your view.";
       this.walkHint.hidden = true;
       root.append(this.walkControls, this.walkHint);
     }
@@ -44,6 +51,7 @@
       if (this.timer !== null) cancelAnimationFrame(this.timer);
       this.timer = null;
       this.play.textContent = "Play path";
+      this.play.setAttribute("aria-pressed", "false");
     }
 
     attach(viewer) {
@@ -54,12 +62,13 @@
       const frames = viewer?.trace?.frames;
       this.root.hidden = !frames;
       this.showWalkControls(false);
-      if (this.modeLabel) this.modeLabel.textContent = "FREE ORBIT";
+      this.setMode("orbit");
+      this.modes.forEach((button) => { button.disabled = !viewer || (button.dataset.viewMode !== "orbit" && !frames); });
       if (!viewer) return;
       this.viewerEvents = new AbortController();
       viewer.canvas.addEventListener("viewmode", (event) => {
         this.stop();
-        if (this.modeLabel) this.modeLabel.textContent = event.detail;
+        this.setMode(event.detail === "WALK VIEW" ? "walk" : "orbit");
         this.showWalkControls(event.detail === "WALK VIEW");
       }, { signal: this.viewerEvents.signal });
       if (!frames) return;
@@ -89,7 +98,7 @@
       this.showWalkControls(false);
       this.scrubber.value = index;
       this.counter.textContent = `Frame ${index + 1} / ${this.viewer.trace.frames.length} · ${frame.time.toFixed(1)}s`;
-      if (this.modeLabel) this.modeLabel.textContent = "CAMERA VIEW";
+      this.setMode("camera");
       this.viewer.setFrame(index);
       Array.from(this.strip.children).forEach((button, i) => button.setAttribute("aria-current", String(i === index)));
     }
@@ -102,6 +111,7 @@
       if (index >= frames.length - 1) index = 0;
       const startTime = performance.now(), firstTime = frames[index].time;
       this.play.textContent = "Pause";
+      this.play.setAttribute("aria-pressed", "true");
       this.seek(index);
       const step = (now) => {
         const target = firstTime + (now - startTime) / 1000;
@@ -118,7 +128,7 @@
       this.stop();
       this.showWalkControls(false);
       this.viewer?.reset();
-      if (this.modeLabel) this.modeLabel.textContent = "WHOLE SPACE";
+      this.setMode("orbit");
       if (!this.viewer?.trace) return;
       this.scrubber.value = this.viewer.trace.frames.length - 1;
       this.counter.textContent = `${this.viewer.trace.frames.length} source frames · whole space`;
@@ -126,10 +136,13 @@
     }
 
     showWalkControls(walking) {
-      Array.from(this.walkControls.children).forEach((button, index) => {
-        button.hidden = index === 0 ? walking : !walking;
-      });
+      this.walkControls.hidden = !walking;
       this.walkHint.hidden = !walking;
+    }
+
+    setMode(mode) {
+      this.modes.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.viewMode === mode)));
+      if (this.modeLabel) this.modeLabel.textContent = { orbit: "Orbit", camera: "Camera", walk: "Walk" }[mode];
     }
   }
   window.SceneTimeline = SceneTimeline;

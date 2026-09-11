@@ -58,7 +58,7 @@ where = ["."]
 include = ["lingbot_map*"]
 
 [tool.setuptools.package-data]
-"lingbot_map.workspace" = ["static/*"]
+"lingbot_map.workspace" = ["static/*", "static/icons/*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

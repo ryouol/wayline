@@ -21,7 +21,7 @@
   const label = document.createElement("span");
   label.textContent = `© ${new Date().getFullYear()} Wayline`;
   footer.append(label);
-  for (const [name, href] of [["Privacy", "/privacy"], ["Terms", "/terms"], ["Contact", "/contact"]]) {
+  for (const [name, href] of [["Privacy", "/privacy"], ["Terms", "/terms"], ["Contact", "/contact"], ["Credits", "/static/ASSET-NOTICES.txt"]]) {
     const link = document.createElement("a"); link.textContent = name; link.href = href; footer.append(link);
   }
   const preferences = document.createElement("button");

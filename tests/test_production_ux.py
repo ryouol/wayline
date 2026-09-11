@@ -93,14 +93,25 @@ def test_public_support_metadata_and_assets(client, path, title):
     assert 'src="/static/site.js?v=' in response.text
     assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
     for file in (
+        "brand-mark.png",
+        "brand-mark.webp",
         "favicon.ico",
         "favicon-16.png",
         "favicon-32.png",
         "apple-touch-icon.png",
-        "site.webmanifest",
         "icon-192.png",
         "icon-512.png",
-        "social-preview.png",
+        "site.webmanifest",
+        "landing-poster.jpg",
+        "landing-poster-dark.jpg",
+        "studio-preview.jpg",
+        "studio-preview-dark.jpg",
+        "landing-poster-640.webp",
+        "landing-poster-dark-640.webp",
+        "studio-preview-640.webp",
+        "studio-preview-dark-640.webp",
+        "ASSET-NOTICES.txt",
+        "icons/LICENSE.txt",
     ):
         assert client.get(f"/static/{file}").status_code == 200
 

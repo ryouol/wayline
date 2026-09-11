@@ -1,0 +1,2 @@
+# Preserve the vendored license's original CRLF line endings.
+lingbot_map/workspace/static/icons/LICENSE.txt whitespace=cr-at-eol

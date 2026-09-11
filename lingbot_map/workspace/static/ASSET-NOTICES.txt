@@ -1,0 +1,31 @@
+Wayline presentation assets — September 11, 2026
+
+The public office example and source-frame thumbnails are derived from the
+first 10 seconds of TUM RGB-D Benchmark freiburg3_long_office_household.
+Attribution: J. Sturm, N. Engelhard, F. Endres, W. Burgard and D. Cremers,
+“A Benchmark for the Evaluation of RGB-D SLAM Systems,” IROS 2012.
+Dataset: https://cvg.cit.tum.de/data/datasets/rgbd-dataset
+Data license: Creative Commons Attribution 4.0 International (CC BY 4.0).
+License: https://creativecommons.org/licenses/by/4.0/
+
+Modifications: video frames reconstructed through LingBot-Map, coordinate
+basis corrected for display, point cloud reduced to 75,000 points for the
+landing animation, and light/dark views captured with the Wayline renderer.
+Studio images show the same 750,000-point reference in an isolated local
+workspace. No private user capture is included in these public assets.
+No endorsement by TUM or the dataset authors is implied.
+
+Dataset permission does not establish model/checkpoint/output clearance.
+The reconstruction retains NOASSERTION output metadata and the product's
+research-only policy. See MODEL_PROVENANCE.md in the project repository.
+
+The Wayline two-plane W mark was generated for this redesign with OpenAI
+ImageGen. The mark is original product artwork, not an Apple mark.
+Favicon/manifest sizes and WebP delivery variants are offline exports of this
+approved artwork and the actual viewer captures, made with ImageMagick 7 using
+scripts/export_web_assets.sh. They do not redraw or alter the scene content.
+
+Interface icons: unmodified Phosphor Icons regular, @phosphor-icons/core 2.1.1.
+Copyright (c) 2023 Phosphor Icons. MIT License.
+Full license: /static/icons/LICENSE.txt
+Source/integrity: /static/icons/SOURCE.txt

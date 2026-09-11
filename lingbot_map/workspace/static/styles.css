@@ -293,7 +293,8 @@ dialog::backdrop { background: var(--scrim); backdrop-filter: blur(8px); }
 .inventory-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
 .inventory-meta { display: block; color: var(--quiet); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
 .inventory-action { font-size: 13px; }
-.management-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; bottom: -28px; margin: 24px -28px -28px; padding: 18px 28px; border-top: 1px solid var(--line); background: var(--surface); }
+.management-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; bottom: 0; margin: 24px -28px -28px; padding: 18px 28px; border-top: 1px solid var(--line); background: var(--surface); }
+.management-actions button { flex-shrink: 0; }
 .selection-summary { margin: 0; font-size: 13px; color: var(--muted); }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 .toast, .request-status { position: fixed; z-index: 60; padding: 12px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-size: 14px; }
@@ -430,7 +431,7 @@ body:has(#appView:not([hidden])) .site-footer { padding-block: 6px; }
   .dialog-panel { padding: 24px; }
   .dialog-heading h2 { font-size: 28px; }
   .upload-drop { min-height: 160px; }
-  .management-actions { bottom: -24px; margin-inline: -24px; margin-bottom: -24px; padding-inline: 24px; }
+  .management-actions { margin-inline: -24px; margin-bottom: -24px; padding-inline: 24px; }
   .inventory-row { gap: 6px; grid-template-columns: 44px minmax(0, 1fr) auto; }
   .selector-target { width: 44px; }
   .inventory-action { padding-inline: 5px; font-size: 12px; }

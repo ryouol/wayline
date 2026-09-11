@@ -472,8 +472,11 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
 function updateSelectionSummary() {
   const counts = [state.selectedJobs.size, state.selectedAssets.size, state.selectedShares.size];
   const total = counts.reduce((sum, value) => sum + value, 0);
+  const labels = ["scene", "upload", "share"];
+  const selected = counts.flatMap((count, index) => count
+    ? [`${count} ${labels[index]}${count === 1 ? "" : "s"}`] : []);
   byId("selectionSummary").textContent = total
-    ? `${total} selected · ${counts[0]} scenes · ${counts[1]} uploads · ${counts[2]} shares`
+    ? `${selected.join(" · ")} selected`
     : "Nothing selected";
   byId("bulkDeleteButton").disabled = total === 0;
 }

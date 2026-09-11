@@ -81,7 +81,9 @@ limits and verify retention. Backups need separate encrypted storage.
   allowance, three retained jobs, no uploads, no GPU access and no shares.
 - Google preview accounts receive one successful reconstruction. A second active
   reconstruction is rejected; up to three submitted attempts per rolling day
-  allow recovery from failures. Deleting scenes does not reset usage.
+  allow recovery from failures. Work rejected for shared capacity before any
+  remote attempt does not consume a personal retry. Deleting scenes does not
+  reset usage or refund attempted remote runs.
 - The Render Blueprint defaults to 20 Google accounts; the live service is
   deliberately limited to one during acceptance. Concurrent retained playgrounds
   are capped at 100. Playground retirement releases capacity.
@@ -102,9 +104,16 @@ limits and verify retention. Backups need separate encrypted storage.
   timeout and a per-attempt submission expiry. The app has its own deadline and
   durable cancellation/cleanup records.
 - `WAYLINE_GPU_SECONDS_BUDGET=3600` admits six submissions at 600 reserved
-  invocation seconds each over a rolling 30-day window. Failed/cancelled runs
-  retain this allowance reservation. It limits admissions, not every category
-  on the provider invoice. Provider budgets/alerts remain to be configured.
+  invocation seconds each over a rolling 30-day window. Queued/running research
+  jobs also hold one slot. New uploads and jobs stop when those holds plus prior
+  charges fill the allowance. Before remote dispatch, the worker atomically
+  replaces its own pending hold with a durable charge. Other running work can
+  temporarily count as both a hold and a charge, conservatively understating
+  availability until completion. Requeued work needs an additional slot.
+  Cancellation before dispatch releases the hold; recorded remote attempts stay
+  charged through failures, cancellations, cleanup and scene deletion. Completed
+  idempotent request replays remain available. It limits admissions, not every
+  category on the provider invoice. Provider budgets/alerts remain to be configured.
 
 ## First diagnostic measurement
 

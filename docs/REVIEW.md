@@ -261,3 +261,25 @@ The failed live backups remain an acceptance limitation, not a passing test.
 All three simplify passes and four code-review skill passes completed for onboarding and the geometry follow-up. Model-visible context was N/A. Geometry reuse, efficiency, compatibility and testing found no further issues; its strict-lint finding is fixed. Every finding is retained above, including the open change-size concern. No GitHub comments or merge were performed.
 
 The deployed capture release is `cd24f7fda60586840c2a6c425e44363f3eac3965`, Render deploy `dep-dahn4rnqj5pc739n7f30`, with [passing CI](https://github.com/ryouol/lingbot-map/actions/runs/34557607186). Local verification passed 212 Python tests, six Node suites, strict lint/format checks and mypy. The new real-camera benchmark passed the corrected original-model path, desktop replay/walking/reset and exact browser download; its QA share was revoked. The one-account signup ceiling and all cost allowances are unchanged.
+
+## Shared reconstruction capacity — 2026-09-11
+
+86. **Full shared GPU allowance still accepted uploads and jobs — Fixed in code.** Product-flow audit, P2. [lingbot_map/workspace/modal_engine.py:99](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/modal_engine.py:99). Admission now counts pending research jobs alongside conservative remote charges. Serialized engine availability, upload preflight, asset creation and job submission use the same policy. Job admission and remote charging check inside write transactions. The frontend refreshes personal allowance and engine availability together before uploading and after transitions. Completed idempotent requests still replay with payload validation; samples and local engines retain their behavior. Availability is advisory and can conservatively understate capacity while another charged job is running.
+
+87. **Worker capacity denial consumed personal retry allowance — Fixed in code.** Budget-accounting review, P2. [lingbot_map/workspace/database.py:1343](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/database.py:1343). A dedicated pre-dispatch capacity error now receives safe user-facing feedback. Within the existing fenced failure transaction, its reserve ledger entry is classified as capacity-denied only if the job has no prior remote attempt. Units, timestamps, settlement and remote charges are preserved. The exemption survives job deletion; prior charged or uncertain attempts and unrelated failures remain counted.
+
+88. **Capacity regression exceeded the strict lint line limit — Fixed.** Validation, P3. [tests/test_modal_capacity.py:263](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/tests/test_modal_capacity.py:263). The historical remote-run fixture's SQL literal is split across adjacent strings. The strict E/F/I/B/UP/SIM check now passes without weakening the lint configuration.
+
+89. **An older login response could overwrite newer capacity — Fixed.** Simplify quality, P2. [lingbot_map/workspace/static/app.js:765](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:765). Operator login and trial entry now use the same combined account/engine refresh coordinator as pre-upload and focus. The separate engine-state writer is removed. Behavioral regressions delay each entry response while a newer refresh waits, then verify that newer capacity wins. Server and pre-upload checks already prevented additional GPU work; this fixes controls incorrectly becoming enabled.
+
+90. **Capacity follow-up exceeded the suggested complex-change size — Split into reviewable stages.** Change-size review, P2. [lingbot_map/workspace/modal_engine.py:99](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/modal_engine.py:99). The reviewed delta was 683 changed lines, below 800 but above the under-500 complex-change guidance. Backend enforcement and its tests are a 424-line commit; browser coordination and its regressions are a separate 185-line commit, followed by documentation. The reviewer confirmed this ordering addresses the incremental staging issue. Aggregate draft-PR size findings 19, 66 and 83 remain open.
+
+All three simplify passes and four final code-review skill passes completed.
+Reuse and efficiency found no additional issues; the quality race above is fixed.
+Final compatibility and testing reviews found no issues; model-context review
+was N/A. The full local suite passed 226 Python tests and six Node suites, strict
+Ruff/format checks and mypy. The testing reviewer independently reran the 14
+capacity Python cases and onboarding suite. Backend commit `1fc30a2` and frontend
+commit `bafb1c0` preserve the separate review stages. No provider GPU jobs,
+shared-account limit changes, GitHub comments or merge were performed for this
+capacity pass. See `GPU_CAPACITY_QA.md` for deployment evidence and limitations.

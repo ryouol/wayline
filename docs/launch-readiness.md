@@ -24,6 +24,12 @@ The 2026-09-10 browser pass rendered repeat 5,908-point synthetic scenes and a s
 
 The 2026-09-11 pass adds a licensed real-camera TUM office capture through the original model, after fixing the exporter's pose convention. The fresh deployed run produced a coherent 750,000-point/30-frame scene in 80.356 seconds; replay, walking/reset, matching browser download and share revocation passed. The exact artifact also passed a 390×844 desktop Chromium view. Four of six GPU admissions are used; the owner's free video is unused. This is bounded benchmark evidence, not owned-phone, physical-mobile, metric-accuracy or commercial-use acceptance. See `REAL_CAPTURE_QA.md`.
 
+Shared GPU capacity is also checked before fresh uploads and job admission,
+including pending jobs and conservative remote charges. The UI refreshes capacity
+with personal eligibility; completed request replays remain valid. Capacity-only
+worker denials before any remote attempt preserve personal retries. All 226 Python
+tests and six Node suites pass; see `GPU_CAPACITY_QA.md`. Cost allowances are unchanged.
+
 Automated coverage includes API isolation/CSRF, identity/trial expiry, one-video allowance, mocked Modal cancellation/deadlines, sampling/export, viewer teardown/trace/timeline and backup/restore. See `REVIEW.md` for final check results. A reconstruction fixture passed the Khronos glTF Validator with zero errors and warnings. Fixtures and transport mocks are not real-model acceptance.
 
 ## Required before inviting video testers

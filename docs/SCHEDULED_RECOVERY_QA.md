@@ -3,6 +3,11 @@
 This follow-up covers encrypted scheduled copies and three viewer accessibility
 fixes, not owned-video reconstruction quality or public launch approval.
 
+Later [recovery crash and capacity QA](RECOVERY_CRASH_QA.md) records the
+completion-acknowledgement crash fix and a 3.49 GB provider-free encrypted restore.
+That evidence supplements this report; the live provider failures below remain
+unexplained, and no completed automatic provider backup is established by it.
+
 ## Local verification
 
 - At the recovery checkpoint, 196 Python tests passed, including real age encryption/reassembly/restore,

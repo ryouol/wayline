@@ -392,3 +392,38 @@ created. [The release receipt](DESIGN_RELEASE_QA.md) records deployment IDs,
 public screenshots and the remaining acceptance/recovery boundaries. The draft
 PR remains unmerged, with the aggregate-size finding and other recorded open
 launch requirements preserved.
+
+## Recovery crash follow-up — 2026-09-11
+
+115. **A lost completion acknowledgement could delete the only restorable backup — Fixed.** Recovery review, P2. [lingbot_map/workspace/recovery.py:409](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:409). Durable publication intent now precedes marker upload. Uncertain candidates survive preflight cleanup and follow the existing seven-verified-set retention rule; marker-publication failures do not refund charges or advance success. Real age/subprocess regressions reproduce the previously unsafe crash boundary and verify restoration.
+
+116. **The first regression did not prove pre-upload durability — Fixed.** Testing review, P2. [tests/test_recovery.py:438](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/tests/test_recovery.py:438). The subprocess test now also exits immediately after the destination copies the marker, before upload returns. This catches moving the durable intent write after the upload; both exit points reuse actual decrypt/restore and blocked-next-attempt assertions.
+
+117. **Aggregate PR size remains above guidance — Open.** Change-size review, P2. [docs/REVIEW.md:43](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/REVIEW.md:43). The first recovery code/test commit contained 437 changed lines; the final cap commit `d88da15` contains 151 (15 runtime and 136 test lines). Both increments are below the 500-line complex-change limit. The earlier documentation-inclusive cap review snapshot contained 284 changed lines, and the aggregate snapshot was 15,414 changed text lines plus 48 binary files. Those two snapshots precede final test/evidence additions; findings 19, 66, 83 and 103 remain open. The independently testable sample RGBA/VEC4 stride correction remains the smallest coherent aggregate stage; no main-branch merge is performed.
+
+118. **Uncertain completions could accumulate storage across upload-allowance windows — Fixed.** Recovery follow-up review, P1. [lingbot_map/workspace/recovery.py:344](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:344). Protected `completion_pending` candidates outlived their rolling 30-day upload reservations, allowing fresh allowance windows to add remote sets indefinitely. `MAX_REMOTE_SETS = 8` now rejects fresh work before snapshot copying, reservation, encryption or upload when eight known unpruned prefixes remain. Restart, explicit retry and expired reservations cannot bypass the ceiling; uncertain sources are preserved for operator reconciliation. The multi-window upload/readback regressions assert eight actual scheduled prefixes and unchanged remote bytes when admission stops. This bounds known scheduled sets, not manual or ledger-unknown objects or the provider invoice.
+
+119. **Failed deletion of superseded completed sets could accumulate backups — Fixed.** Recovery follow-up review, P2; pre-existing behavior. [lingbot_map/workspace/recovery.py:277](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/recovery.py:277). Preflight previously protected every completed set, so failed post-success deletion was retried only after another upload succeeded. It now retries deletion of completed sets outside the latest seven verified copies before admitting another snapshot, including after upload reservations expire. Deletion failure stops fresh work, preserves verified copies and leaves charges unchanged. The cleanup-failure regression checks one removal retry per blocked attempt, no new snapshot/upload, and recovery to seven sets once deletion succeeds. Uncertain-candidate protection remains unchanged.
+
+120. **The restored-candidate test still expected a ninth prefix — Fixed.** Duplicate finding retained from both testing and breaking-change reviewers, P2. [tests/test_recovery.py:871](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/tests/test_recovery.py:871). The old expectation admitted another backup with seven verified sets plus one retained candidate already present. The revised regression asserts `recovery_storage_limit`, unchanged prior state and upload count, empty new reservations, and preservation of all seven verified copies. It now verifies the intended eight-prefix policy instead of requiring the superseded behavior.
+
+All three simplify passes (reuse, quality and efficiency) and all four code-review
+subskill passes completed for this follow-up; the model-context pass was N/A.
+The actionable recovery, testing and breaking-change findings are recorded above,
+including the duplicate test-expectation finding. No additional simplify findings
+remain; the aggregate-size finding stays open. The actual process-kill test adds
+partial-artifact privacy, normal startup, exactly-once settlement and preserved-scene
+coverage. [Recovery crash QA](RECOVERY_CRASH_QA.md) records verification evidence
+and the separately scoped near-capacity offline drill. The follow-up is now deployed; the release receipt does not claim successful
+provider recovery.
+
+Final local verification passed 237 Python tests, including 31 recovery tests,
+strict Ruff, formatting for 38 files and mypy for 20 source files. Container
+`3cf2b42c4b229a29e0a11e51d6c358ed775103de3e7818bf896d179ae9a8c541`
+passed the 512 MiB / 0.5 CPU smoke with a 205.9 MiB peak. Exact-commit hosted CI passed, and runtime `d88da15` became live at
+2026-09-11 17:37:23 UTC. All 64 static assets, the recovery source, all 12
+stored artifacts and preserved live state passed the read-only deployment check.
+
+121. **The crash summary overstated public artifact visibility — Fixed.** P2. [docs/launch-readiness.md:64](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/launch-readiness.md:64). Documentation review. The kill occurs after a private artifact transaction commits and before job completion. The acceptance record now names that boundary and preserves the HTTP rejection evidence; it does not claim a post-publication crash test.
+
+122. **The recovery summary generalized failure semantics — Fixed.** P3. [docs/RECOVERY_CRASH_QA.md:12](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/docs/RECOVERY_CRASH_QA.md:12). Documentation review. The unchanged-success and failed-attempt retry statements now apply to failures before durable verified completion. A subsequent retention-deletion failure preserves the completed set and newer success and does not qualify that completed attempt for an operator retry.

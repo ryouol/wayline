@@ -87,14 +87,37 @@ Only after every part verifies does the worker upload and verify complete.json:
 These numbers illustrate the schema only. Parts without a verified completion
 manifest describe an incomplete attempt, not a completed recovery set.
 
+Before uploading that manifest, the worker durably records `completion_pending`.
+A process crash or uncertain response can leave a restorable remote set without
+its local success acknowledgement. The flag protects that candidate from cleanup;
+only verified success clears it and advances `last_success`. Failure and restart
+still preserve the original admission, charges and retry rules. A pending flag
+is not proof that the remote manifest exists or that a backup succeeded.
+
 Retention keeps the latest seven locally verified completed sets. A restored
-ledger also protects uncertain retained candidates until seven verified completed
-sets exist. This can temporarily preserve more than seven prefixes; uncertain
-candidates do not displace verified sets. Completed sets are pruned only after a
-newer set verifies. Failed-prefix cleanup continues on later attempts even when
-the upload allowance is exhausted. Existing manual prefixes are outside this
+ledger and pending completion acknowledgements also protect uncertain candidates
+until seven verified completed sets exist. Candidate pruning runs only after a
+newer set verifies, never during a failed preflight. Uncertain candidates do not
+displace verified sets. Preflight retries deletion of completed sets superseded
+by the latest seven verified copies, so a previous deletion failure does not
+require another upload to retry cleanup. Failed-prefix cleanup also continues
+when the upload allowance is exhausted. Existing manual prefixes are outside this
 worker's deletion scope. Expired, already-pruned ledger entries are compacted
 while recent reservations and unpruned prefixes remain recorded.
+
+At most eight known unpruned scheduled prefixes may exist: seven retained sets
+and one replacement slot. At that ceiling, fresh work stops before snapshot,
+reservation or upload with `recovery_storage_limit`; restarting, retrying or
+aging out monthly reservations does not bypass it. No uncertain source is
+evicted to make room. Retained ambiguous candidates can require operator
+verification and reconciliation before fresh backups resume. Do not erase
+the ledger or refund reservations to bypass this condition.
+
+The per-archive ceiling bounds these known scheduled payloads to approximately
+32.13 GiB across eight sets, including completion manifests. This excludes manual
+or ledger-unknown provider objects and provider-internal accounting, so it is not
+a total storage or invoice cap. Existing deployments already above the ceiling
+are preserved and pause uploads until cleanup/reconciliation frees capacity.
 
 ## Reassemble and restore
 

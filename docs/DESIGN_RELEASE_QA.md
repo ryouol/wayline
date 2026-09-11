@@ -1,5 +1,9 @@
 # Gallery + Instrument release — 2026-09-11
 
+A later backend recovery release is live as `d88da15`; see [recovery crash and
+capacity QA](RECOVERY_CRASH_QA.md). The design/browser evidence below remains the
+historical verification of `9516dbf`, with unchanged static assets.
+
 The approved redesign is live at [Wayline](https://wayline-9ten.onrender.com/).
 Runtime commit: `9516dbfe7e3b672ad13a9b5288c26bf589484fb8`.
 [Hosted CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34623265006).

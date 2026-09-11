@@ -100,6 +100,13 @@ file descriptors. The Render process start marker was unchanged throughout.
 
 ## Remaining acceptance
 
+The later [recovery crash QA](RECOVERY_CRASH_QA.md) adds a real local SIGKILL
+after an artifact transaction commits, followed by normal restart and natural
+lease expiry. Partial artifacts stay private; the retry completes once, cleanup
+finishes, idempotency holds and another saved scene is preserved. Its local
+synthetic engine and three-second test lease do not establish remote provider
+crash behavior. The new encrypted-backup publication regressions are separate.
+
 Still open: full crash/failure recovery at every transport boundary, broader
 codec/concurrency/load cases, public-edge timeout behavior, upstream OAuth/log
 redaction, owned-capture quality and physical mobile QA. See

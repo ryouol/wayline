@@ -49,3 +49,27 @@ These checks establish application admission behavior. They do not create a
 provider invoice cap, measure additional compute/storage/traffic charges, or
 replace the outstanding provider-isolation and recovery acceptance work.
 See [operating costs](operating-costs.md) for the unchanged $20 monthly target.
+
+## Deployed verification
+
+Render deploy `dep-dahnr4fqj5pc739q5i50` is live on
+`1fbfe9a557dcc1e5799814d46590f364ef699e71` after
+[CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34560538161),
+including the production container smoke test. The existing Starter service,
+single instance, disk and environment were preserved; Modal's validated GPU
+worker did not need redeployment.
+
+- HTTPS health returned 200. Public app.js and all four changed server modules
+  matched the reviewed source by SHA-256. Authenticated engine availability was
+  true, consistent with four of six admissions used and no queued/running jobs.
+- All six existing jobs remained READY; pending remote cleanup was zero. The
+  sole Google account still had zero consumed reconstruction units.
+- The real browser retained the owner's Google session after reload, showed one
+  video available and the 60-second/64 MiB limits, and loaded its saved 5,908-point
+  synthetic scene. This is a session/persistence check, not another inference.
+- GPU seconds (3,600), scene delivery (2,000,000,000 bytes), Google signup (one),
+  and recovery upload (10 GiB) allowances were rechecked unchanged.
+
+No upload or GPU invocation was submitted and live capacity was never forced to
+exhaustion. Exhaustion, races and reopening were exercised in isolated tests.
+The private receipt is retained under .lingbot-workspace/capacity-release/.

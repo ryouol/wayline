@@ -283,3 +283,9 @@ capacity Python cases and onboarding suite. Backend commit `1fc30a2` and fronten
 commit `bafb1c0` preserve the separate review stages. No provider GPU jobs,
 shared-account limit changes, GitHub comments or merge were performed for this
 capacity pass. See `GPU_CAPACITY_QA.md` for deployment evidence and limitations.
+
+The reviewed capacity release `1fbfe9a` is live on Render deploy
+`dep-dahnr4fqj5pc739q5i50`, with passing CI including the production container.
+HTTPS health, deployed source hashes, dynamic engine availability and the saved
+Google browser session/scene were verified. Six READY jobs, four GPU admissions
+and the owner's unused video remain unchanged. No GPU inference was repeated.

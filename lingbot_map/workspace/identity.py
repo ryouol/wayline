@@ -24,6 +24,21 @@ class IdentityStore:
     def __init__(self, database: Database):
         self.database = database
 
+    def reconcile_owner_email(self, email: str) -> None:
+        email_hash = hashlib.sha256(email.strip().casefold().encode()).hexdigest()
+        with self.database.transaction() as connection:
+            previous = connection.execute(
+                "SELECT email_hash FROM owner_policy WHERE id=1"
+            ).fetchone()
+            if previous is not None and previous[0] == email_hash:
+                return
+            connection.execute("UPDATE tenants SET is_owner=0 WHERE is_owner=1")
+            connection.execute(
+                "INSERT INTO owner_policy(id,email_hash) VALUES (1,?) "
+                "ON CONFLICT(id) DO UPDATE SET email_hash=excluded.email_hash",
+                (email_hash,),
+            )
+
     def has_google_capacity(self, max_accounts: int) -> bool:
         if max_accounts == 0:
             return True
@@ -36,7 +51,14 @@ class IdentityStore:
             )
 
     def create_workspace(
-        self, *, subject: str, name: str, guest: bool, max_accounts: int, quota: int
+        self,
+        *,
+        subject: str,
+        name: str,
+        guest: bool,
+        max_accounts: int,
+        quota: int,
+        owner: bool = False,
     ) -> dict[str, Any]:
         """Link by Google's immutable subject, never by an email address."""
         provider = "trial" if guest else "google"
@@ -49,8 +71,12 @@ class IdentityStore:
                 (provider, subject),
             ).fetchone()
             if row:
+                if not guest:
+                    connection.execute(
+                        "UPDATE tenants SET is_owner=? WHERE id=?", (int(owner), row["tenant_id"])
+                    )
                 return dict(row)
-            if guest or max_accounts != 0:
+            if guest or (max_accounts != 0 and not owner):
                 count = connection.execute(
                     "SELECT COUNT(*) FROM identities WHERE provider=?", (provider,)
                 ).fetchone()[0]
@@ -76,6 +102,8 @@ class IdentityStore:
                     now,
                 ),
             )
+            if owner and not guest:
+                connection.execute("UPDATE tenants SET is_owner=1 WHERE id=?", (tenant_id,))
             connection.execute(
                 "INSERT INTO users VALUES (?,?,?,?)", (user_id, tenant_id, display, now)
             )
@@ -93,7 +121,10 @@ class IdentityStore:
     def account_type(self, user_id: str) -> str:
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT provider FROM identities WHERE user_id=?", (user_id,)
+                "SELECT CASE WHEN t.is_owner=1 THEN 'owner' ELSE i.provider END "
+                "FROM identities i JOIN users u ON u.id=i.user_id "
+                "JOIN tenants t ON t.id=u.tenant_id WHERE i.user_id=?",
+                (user_id,),
             ).fetchone()
             return row[0] if row else "operator"
 

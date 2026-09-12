@@ -14,6 +14,7 @@ from lingbot_map.workspace.engines import LingbotResearchEngine
 from lingbot_map.workspace.identity import IdentityStore
 from lingbot_map.workspace.modal_engine import ModalLingbotEngine, ReconstructionCapacityExceeded
 from lingbot_map.workspace.runner_contract import REMOTE_TIMEOUT
+from lingbot_map.workspace.service import UploadRejected
 
 from .test_modal_engine import mock_transport
 from .test_workspace_api import fake_mp4
@@ -309,3 +310,20 @@ def test_stale_worker_cannot_exempt_a_retry(service, tenant_id, capture):
         scalar(service, "SELECT event FROM usage_ledger WHERE job_id=?", (job["id"],)) == "reserve"
     )
     assert service.database.get_job(tenant_id, job["id"])["state"] == "running"
+
+
+def test_owner_still_respects_shared_gpu_capacity(service, capacity_engine):
+    principal = IdentityStore(service.database).create_workspace(
+        subject="owner-capacity", name="Owner", guest=False, max_accounts=0, quota=0, owner=True
+    )
+    tenant = principal["tenant_id"]
+    asset = upload(service, tenant)
+    capacity_engine.reserve_run("existing-charge", "old-job", time.time() + 30)
+    assert service.database.reconstruction_allowance(tenant) is None
+    with pytest.raises(ReconstructionCapacityExceeded):
+        submit(service, tenant, asset)
+    with pytest.raises(UploadRejected, match="preview capacity"):
+        upload(service, tenant)
+    with pytest.raises(ReconstructionCapacityExceeded):
+        capacity_engine.reserve_run("new-charge", "owner-job", time.time() + 30)
+    assert scalar(service, "SELECT COUNT(*) FROM remote_runs") == 1

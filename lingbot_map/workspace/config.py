@@ -87,6 +87,7 @@ class Settings:
     modal_gpu_seconds_budget: int = 14_400
     google_client_id: str = ""
     google_client_secret: str = ""
+    owner_email: str = ""
     signup_enabled: bool = False
     trial_enabled: bool = True
     signup_max_accounts: int = 0
@@ -184,6 +185,7 @@ class Settings:
             modal_gpu_seconds_budget=int(os.getenv("WAYLINE_GPU_SECONDS_BUDGET", "14400")),
             google_client_id=os.getenv("WAYLINE_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("WAYLINE_GOOGLE_CLIENT_SECRET", ""),
+            owner_email=os.getenv("WAYLINE_OWNER_EMAIL", "").strip().casefold(),
             signup_enabled=_bool_env("WAYLINE_SIGNUP_ENABLED"),
             trial_enabled=_bool_env("WAYLINE_TRIAL_ENABLED", True),
             signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "0")),

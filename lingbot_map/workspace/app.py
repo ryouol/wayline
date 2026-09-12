@@ -89,7 +89,7 @@ class HealthResponse(BaseModel):
 class UserResponse(BaseModel):
     displayName: str
     tenantName: str
-    accountType: Literal["operator", "google", "trial"] = "operator"
+    accountType: Literal["operator", "google", "trial", "owner"] = "operator"
 
 
 class LoginResponse(BaseModel):
@@ -98,22 +98,22 @@ class LoginResponse(BaseModel):
 
 
 class QuotaResponse(BaseModel):
-    quota_units: int
+    quota_units: int | None
     reserved_units: int
     consumed_units: int
-    available_units: int
+    available_units: int | None
     stored_bytes: int
     asset_count: int
     unattached_asset_count: int
     job_count: int
     artifact_count: int
     share_count: int
-    storage_limit_bytes: int
-    asset_limit: int
-    unattached_asset_limit: int
-    job_limit: int
-    artifact_limit: int
-    share_limit: int
+    storage_limit_bytes: int | None
+    asset_limit: int | None
+    unattached_asset_limit: int | None
+    job_limit: int | None
+    artifact_limit: int | None
+    share_limit: int | None
 
 
 class ReconstructionAllowanceResponse(BaseModel):

@@ -108,4 +108,4 @@ def test_schema_four_upgrade_preserves_existing_workspaces(service):
     assert service.database.authenticate_api_token(BOOTSTRAP_TOKEN) == principal
     service.database.reserve_delivery_bytes(1, limit=1)
     with service.database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 7

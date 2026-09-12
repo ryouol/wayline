@@ -170,6 +170,10 @@ def register_auth_routes(
                 guest=False,
                 max_accounts=runtime.signup_max_accounts,
                 quota=runtime.signup_quota_units,
+                owner=bool(runtime.owner_email)
+                and claims.get("email_verified") is True
+                and str(claims.get("email", "")).strip().casefold()
+                == runtime.owner_email.casefold(),
             )
         except QuotaExceeded:
             response = RedirectResponse("/?signin=capacity", status_code=303)

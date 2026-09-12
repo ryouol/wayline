@@ -755,6 +755,7 @@ async function renderJobDetail() {
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
   const google = state.accountType === "google";
+  const owner = state.accountType === "owner";
   const allowance = state.reconstructionAllowance;
   const allowed = !trial && (!google || allowance?.state === "available");
   const enabled = allowed && Boolean(state.engine?.available);
@@ -771,7 +772,7 @@ function renderReconstructionStatus() {
     || "Reconstruction availability could not be confirmed. Refresh to try again.";
   byId("researchStatus").textContent = trial ? "Synthetic playground"
     : google && !allowed ? (titles[allowance?.state] || "Checking your video allowance")
-      : enabled ? (google ? titles.available : "Ready to reconstruct") : "Reconstruction unavailable";
+      : enabled ? (google ? titles.available : owner ? "Owner account · No video limit" : "Ready to reconstruct") : "Reconstruction unavailable";
   byId("researchStatus").classList.toggle("available", enabled);
   byId("researchReason").textContent = trial
     ? (state.config?.googleSignIn ? (state.config.newAccountsAvailable
@@ -779,7 +780,7 @@ function renderReconstructionStatus() {
       : "New video accounts are currently full. Existing accounts can still sign in with Google.")
       : "This private, one-hour playground creates synthetic scenes. Video signup is still being connected.")
     : google && !allowed ? (allowance?.message || "Refresh your account to check availability before uploading.")
-      : enabled ? (google ? allowance.message : "Your capture is processed privately. Research preview; no payment required.")
+      : enabled ? (google ? allowance.message : owner ? "No personal processing quota. Project spending and file-size safeguards still apply." : "Your capture is processed privately. Research preview; no payment required.")
         : `${unavailableReason}${google && allowed ? " Your remaining videos will be available when capacity returns." : ""}`;
 }
 

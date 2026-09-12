@@ -16,7 +16,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any, TypedDict
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 RECONSTRUCTION_LIMIT = 2
 _JOB_SELECT = """
     SELECT j.*, a.original_name AS source_original_name FROM jobs j
@@ -154,7 +154,15 @@ class Database:
                     else None
                 )
                 existing_version = int(version_row[0]) if version_row is not None else None
-        if existing_version is not None and existing_version not in {1, 2, 3, 4, 5, SCHEMA_VERSION}:
+        if existing_version is not None and existing_version not in {
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            SCHEMA_VERSION,
+        }:
             raise RuntimeError(
                 f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
             )
@@ -168,6 +176,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS tenants (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
+                    is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
                     quota_units INTEGER NOT NULL CHECK (quota_units >= 0),
                     successful_reconstructions INTEGER NOT NULL DEFAULT 0
                         CHECK (successful_reconstructions >= 0),
@@ -206,6 +215,10 @@ class Database:
                     page TEXT NOT NULL CHECK(page IN ('/','/privacy','/terms','/contact')),
                     views INTEGER NOT NULL CHECK(views BETWEEN 1 AND 10000),
                     PRIMARY KEY(day,page)
+                );
+                CREATE TABLE IF NOT EXISTS owner_policy (
+                    id INTEGER PRIMARY KEY CHECK (id=1),
+                    email_hash TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS identities (
                     provider TEXT NOT NULL CHECK(provider IN ('google','trial')),
@@ -417,6 +430,11 @@ class Database:
                     tenant_columns = {
                         row[1] for row in connection.execute("PRAGMA table_info(tenants)")
                     }
+                    if "is_owner" not in tenant_columns:
+                        connection.execute(
+                            "ALTER TABLE tenants ADD COLUMN is_owner "
+                            "INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1))"
+                        )
                     if "successful_reconstructions" not in tenant_columns:
                         connection.execute(
                             "ALTER TABLE tenants ADD COLUMN successful_reconstructions "
@@ -709,6 +727,18 @@ class Database:
                 "share_limit": row["share_limit"],
             }
         )
+        if row["is_owner"]:
+            for key in (
+                "quota_units",
+                "available_units",
+                "storage_limit_bytes",
+                "asset_limit",
+                "unattached_asset_limit",
+                "job_limit",
+                "artifact_limit",
+                "share_limit",
+            ):
+                result[key] = None
         return result
 
     @staticmethod
@@ -838,17 +868,24 @@ class Database:
         asset_id, now = _id("ast"), time.time()
         with self.transaction_or(connection) as active:
             tenant = self._tenant(active, tenant_id)
-            usage = self._resource_usage(active, tenant_id)
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
             claim = active.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             ).fetchone()
             claimed_bytes = int(claim["size_bytes"]) if claim else 0
-            if usage["stored_bytes"] - claimed_bytes + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - claimed_bytes + size_bytes
+                > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
-            if usage["asset_count"] >= tenant["asset_limit"]:
+            if not tenant["is_owner"] and usage["asset_count"] >= tenant["asset_limit"]:
                 raise QuotaExceeded("tenant asset count limit exceeded")
-            if usage["unattached_asset_count"] >= tenant["unattached_asset_limit"]:
+            if (
+                not tenant["is_owner"]
+                and usage["unattached_asset_count"] >= tenant["unattached_asset_limit"]
+            ):
                 raise QuotaExceeded("delete or use an unattached upload before adding another")
             self._consume_rate(
                 active,
@@ -964,7 +1001,8 @@ class Database:
                 return self.reconstruction_allowance(tenant_id, connection=active)
         tenant = connection.execute(
             "SELECT t.successful_reconstructions FROM tenants t JOIN users u ON u.tenant_id=t.id "
-            "JOIN identities i ON i.user_id=u.id WHERE t.id=? AND i.provider='google' LIMIT 1",
+            "JOIN identities i ON i.user_id=u.id WHERE t.id=? AND i.provider='google' "
+            "AND t.is_owner=0 LIMIT 1",
             (tenant_id,),
         ).fetchone()
         if tenant is None:
@@ -1024,8 +1062,8 @@ class Database:
                 allowance = self.reconstruction_allowance(tenant_id, connection=active)
                 if allowance and allowance["state"] != "available":
                     raise QuotaExceeded(allowance["message"])
-            usage = self._resource_usage(active, tenant_id)
-            if usage["job_count"] >= tenant["job_limit"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
+            if not tenant["is_owner"] and usage["job_count"] >= tenant["job_limit"]:
                 raise QuotaExceeded("tenant job count limit exceeded; delete retained jobs")
             self._consume_rate(
                 active,
@@ -1036,7 +1074,7 @@ class Database:
                 now=now,
             )
             available = tenant["quota_units"] - tenant["reserved_units"] - tenant["consumed_units"]
-            if reserve_units > available:
+            if not tenant["is_owner"] and reserve_units > available:
                 raise QuotaExceeded(f"job needs {reserve_units} units; {available} remain")
             if source_asset_id:
                 source = active.execute(
@@ -1570,15 +1608,19 @@ class Database:
             ):
                 raise StaleAttempt("attempt no longer owns this job")
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
-            if usage["artifact_count"] >= tenant["artifact_limit"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
+            if not tenant["is_owner"] and usage["artifact_count"] >= tenant["artifact_limit"]:
                 raise QuotaExceeded("tenant artifact count limit exceeded")
             claim = connection.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             ).fetchone()
             claimed_bytes = int(claim["size_bytes"]) if claim else 0
-            if usage["stored_bytes"] - claimed_bytes + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - claimed_bytes + size_bytes
+                > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             connection.execute(
                 """
@@ -1837,8 +1879,11 @@ class Database:
         now = time.time()
         with self.transaction() as connection:
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
-            if usage["stored_bytes"] + reserve_bytes > tenant["storage_limit_bytes"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] + reserve_bytes > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             global_used = self._global_stored_bytes(connection)
             if (
@@ -1882,7 +1927,7 @@ class Database:
             raise ValueError("object claim size must not be negative")
         with self.transaction() as connection:
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
             claim = connection.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
@@ -1892,7 +1937,10 @@ class Database:
             current = int(claim["size_bytes"])
             if current and size_bytes > current:
                 raise QuotaExceeded("object exceeded its pre-I/O storage reservation")
-            if usage["stored_bytes"] - current + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - current + size_bytes > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             connection.execute(
                 """
@@ -2030,8 +2078,8 @@ class Database:
             if artifact is None:
                 raise KeyError(artifact_id)
             tenant = self._tenant(active, tenant_id)
-            usage = self._resource_usage(active, tenant_id)
-            if usage["share_count"] >= tenant["share_limit"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
+            if not tenant["is_owner"] and usage["share_count"] >= tenant["share_limit"]:
                 raise QuotaExceeded("tenant active share limit exceeded")
             self._consume_rate(
                 active,

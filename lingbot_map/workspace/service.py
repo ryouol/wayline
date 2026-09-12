@@ -184,6 +184,7 @@ class WorkspaceService:
 
     def initialize(self) -> dict[str, int]:
         self.database.initialize()
+        IdentityStore(self.database).reconcile_owner_email(self.settings.owner_email)
         if self.settings.bootstrap_token:
             self.database.bootstrap(
                 token=self.settings.bootstrap_token,

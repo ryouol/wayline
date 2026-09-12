@@ -165,6 +165,13 @@ async function main() {
       assert.equal(h.node("video").disabled, remaining === 0);
     }
   }
+  {
+    const h = harness();
+    h.context.showApp({ ...user, accountType: "owner" }, "csrf", null);
+    assert.equal(h.node("video").disabled, false);
+    assert.equal(h.node("researchStatus").textContent, "Owner account · No video limit");
+    assert.match(h.node("researchReason").textContent, /Project spending/);
+  }
   for (const fails of [false, true]) {
     const h = harness(), pending = deferred(), button = h.node("logoutButton");
     h.select();

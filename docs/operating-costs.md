@@ -75,6 +75,10 @@ alongside compute: [Render bandwidth](https://render.com/docs/outbound-bandwidth
 The 5 GB disk cannot retain unlimited originals/results; respect logical storage
 limits and verify retention. Backups need separate encrypted storage.
 
+## Owner testing allowance
+
+A verified owner email can be configured through `WAYLINE_OWNER_EMAIL`. Its personal processing and inventory ceilings are exempt, while project spending, storage and media safeguards still apply. Public accounts retain two successful videos. See [owner access QA](OWNER_ACCESS_QA.md) for the planned 9,600-second shared allowance and exact-deployment evidence boundary; the earlier six-attempt figures above describe the initial pilot.
+
 ## Limits implemented now
 
 - Visitors receive an isolated one-hour synthetic playground with a 5 MiB

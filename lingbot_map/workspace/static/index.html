@@ -110,7 +110,20 @@
         <div id="jobDetail" hidden>
           <div class="detail-header"><div class="detail-title-block"><p class="section-label" id="detailEngine">Engine</p><h2 id="detailTitle" tabindex="-1">Scene</h2><p class="detail-meta" id="detailMeta"></p></div><div class="detail-actions"><button class="text-button danger" id="cancelButton" type="button" hidden>Cancel</button><div class="artifact-actions"><button class="secondary" id="shareButton" type="button" hidden><img src="/static/icons/share.svg" alt="" width="17" height="17">Share</button><a class="secondary" id="downloadLink" hidden><img src="/static/icons/download.svg" alt="" width="17" height="17">Download GLB</a></div><button class="text-button danger" id="deleteButton" type="button" aria-label="Delete scene" hidden>Delete</button></div></div>
 
-          <section class="progress-section" id="progressSection" aria-labelledby="progressTitle"><div class="progress-heading"><h3 id="progressTitle">Creating your scene</h3><span id="progressPercent">0%</span></div><progress id="progressBar" aria-label="Scene processing progress" value="0" max="100">0%</progress><ol class="stage-list" id="stageList"><li data-stage="queued">Queued</li><li data-stage="validating">Validating</li><li data-stage="generating">Reconstructing</li><li data-stage="exporting">Exporting</li><li data-stage="ready">Ready</li></ol><p class="form-message" id="jobMessage" role="status"></p></section>
+          <section class="progress-section" id="progressSection" aria-labelledby="progressTitle">
+            <div class="progress-heading"><p class="section-label" id="progressStep">Step 1 of 5</p><span class="progress-percent" id="progressPercent" aria-hidden="true">0%</span></div>
+            <div class="progress-copy" role="status" aria-atomic="true"><h3 id="progressTitle">Your scene is in line</h3><p id="progressDescription">Waiting for a processing slot. We'll begin automatically.</p></div>
+            <div class="progress-track" id="progressBar" role="progressbar" aria-label="Scene processing progress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" id="progressFill"></div></div>
+            <ol class="stage-list" id="stageList" aria-label="Scene processing steps">
+              <li><span class="stage-marker" aria-hidden="true">1</span><span>Queued</span></li>
+              <li><span class="stage-marker" aria-hidden="true">2</span><span>Prepare</span></li>
+              <li><span class="stage-marker" aria-hidden="true">3</span><span>Build</span></li>
+              <li><span class="stage-marker" aria-hidden="true">4</span><span>Finish</span></li>
+              <li><span class="stage-marker" aria-hidden="true">5</span><span>Ready</span></li>
+            </ol>
+            <p class="progress-note" id="progressNote">Progress updates by stage. Some steps take longer than others.</p>
+            <p class="form-message" id="jobMessage" role="status"></p>
+          </section>
 
           <section class="viewer-section" id="viewerSection" hidden aria-labelledby="viewerTitle">
             <h3 class="sr-only" id="viewerTitle">Explore your scene</h3>

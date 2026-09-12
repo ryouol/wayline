@@ -30,7 +30,7 @@ function harness(search = "") {
     const listeners = new Map();
     let value = "";
     return {
-      hidden: false, disabled: false, textContent: "", files: [], dataset: {}, children: [], events,
+      hidden: false, disabled: false, textContent: "", files: [], dataset: {}, style: {}, children: [], events,
       open: false, returnValue: "", pauseCount: 0, focusCount: 0,
       get value() { return value; },
       set value(next) { value = next; if (next === "") this.files = []; },
@@ -39,7 +39,10 @@ function harness(search = "") {
       get href() { return attributes.get("href") || ""; },
       set href(next) { attributes.set("href", next); },
       classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
-      setAttribute: (name, next) => attributes.set(name, next),
+      setAttribute(name, next) {
+        attributes.set(name, next);
+        if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = next;
+      },
       removeAttribute: (name) => attributes.delete(name),
       getAttribute: (name) => attributes.get(name),
       hasAttribute(name) { return attributes.has(name) || (name.startsWith("data-") &&
@@ -156,6 +159,73 @@ function harness(search = "") {
 }
 
 async function main() {
+  {
+    const h = harness();
+    const steps = Array.from({ length: 5 }, (_, i) => h.node(`step-${i}`));
+    h.node("stageList").querySelectorAll = () => steps;
+    let job = { id: "processing-a", displayName: "Studio", engineId: "lingbot-research-v1",
+      state: "running", stage: "reconstructing", progress: 0.3, provenance: {}, artifacts: [],
+      usedUnits: 0, reservedUnits: 0 };
+    h.state.selectedId = job.id;
+    h.context.respond = async () => job;
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressTitle").textContent, "Building your space");
+    assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), "30");
+    assert.equal(h.node("progressFill").style.transform, "scaleX(0.3)");
+    assert.equal(h.node("progressFill").style.transition, "none", "first render does not animate from another scene");
+    assert.equal(steps[2].getAttribute("aria-current"), "step");
+    assert.equal(steps[1].classList.contains("complete"), true);
+    job = { ...job, stage: "storing", progress: 0.92 };
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressTitle").textContent, "Saving your scene");
+    assert.equal(h.node("progressFill").style.transform, "scaleX(0.92)");
+    assert.equal(h.node("progressFill").style.transition, "", "same-job updates use the CSS transition");
+    assert.equal(steps[3].getAttribute("aria-current"), "step", "storing stays in the finishing step");
+    assert.equal(steps[2].getAttribute("aria-current"), undefined);
+    let mutations = 0;
+    for (const node of [h.node("progressSection"), h.node("progressBar"), ...steps]) {
+      const original = node.setAttribute;
+      node.setAttribute = function (...args) { mutations++; return original.apply(this, args); };
+    }
+    await h.renderRealJobDetail();
+    assert.equal(mutations, 0, "unchanged polling does not rewrite progress accessibility attributes");
+    for (const [stage, expectedStep] of [["queued", 0], ["validating", 1], ["uploading_to_gpu", 1], ["generating", 2], ["exporting", 3]]) {
+      job = { ...job, stage, state: stage === "queued" ? "queued" : "running" };
+      await h.renderRealJobDetail();
+      assert.equal(steps[expectedStep].getAttribute("aria-current"), "step", stage);
+    }
+    job = { ...job, state: "running", stage: "reconstructing", cancellationRequested: true };
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressTitle").textContent, "Stopping safely", "late worker stage updates cannot hide pending cancellation");
+    assert.equal(steps.some((step) => step.hasAttribute("aria-current")), false);
+    for (const [state, title] of [["failed", "We couldn't finish this scene"], ["cancelled", "Scene creation cancelled"]]) {
+      job = { ...job, state, stage: state };
+      await h.renderRealJobDetail();
+      assert.equal(h.node("progressTitle").textContent, title, "terminal state wins over the cancellation flag");
+      assert.equal(h.node("cancelButton").hidden, true);
+      assert.equal(h.node("progressSection").dataset.status, state);
+    }
+    job = { ...job, state: "queued", stage: "recovered", progress: 0, cancellationRequested: false };
+    await h.renderRealJobDetail();
+    assert.match(h.node("progressDescription").textContent, /queued to resume/);
+    for (const [progress, value] of [[NaN, "0"], [-0.5, "0"], [1.5, "100"]]) {
+      job = { ...job, state: "running", stage: "new-stage", progress };
+      await h.renderRealJobDetail();
+      assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), value);
+      assert.equal(steps.some((step) => step.hasAttribute("aria-current")), false);
+    }
+    job = { ...job, id: "processing-b", stage: "validating", progress: 0.05 };
+    h.state.selectedId = job.id;
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressFill").style.transition, "none");
+    job = { ...job, state: "ready", stage: "ready", progress: 1 };
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressSection").hidden, true, "finished scenes hand over to the viewer");
+    h.context.clearDetail();
+    assert.equal(h.node("progressSection").hidden, true);
+    assert.equal(h.node("progressSection").dataset.jobId, undefined);
+  }
+
   {
     const h = harness();
     for (const remaining of [2, 1, 0]) {

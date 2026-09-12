@@ -581,3 +581,13 @@ Twelve scene/export tests pass, including positive/negative origin offsets, vari
 153. **Changing the owner setting left old sessions exempt — Fixed.** P2. [identity.py:27](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/identity.py:27). Startup now compares a persisted hash of normalized owner configuration and atomically revokes old grants when it changes or is removed. Existing-session regressions cover removal/reassignment and case-insensitive unchanged configuration. The strengthened owner GPU test exercises actual upload and job admission, in addition to the reservation guard.
 
 All three simplify focuses and four code-review subskills completed; no new actionable issue remains. Existing aggregate PR-size finding 139 remains open. [Owner access QA](OWNER_ACCESS_QA.md) records policy, schema migration, source/local verification, private activation and budget requirements separately from provider release evidence.
+
+## Processing presentation — 2026-09-12
+
+154. **Late progress could hide pending cancellation — Fixed.** P2. [app.js:671](../lingbot_map/workspace/static/app.js#L671). The presentation uses the authoritative cancellation flag for nonterminal jobs, so a late worker stage cannot replace “Stopping safely.” Terminal states take precedence. The actual detail-rendering regression covers this race's response shape.
+
+155. **Unchanged polling rewrote progress accessibility attributes — Fixed.** P3. [app.js:695](../lingbot_map/workspace/static/app.js#L695). Progress values, status/job attributes, current-step attributes and transform updates now check for changes. New scenes still suppress the previous scene's transition. The regression asserts no repeated attribute mutations on unchanged responses.
+
+156. **Current-step typography had a duplicate CSS rule — Fixed.** P3. [styles.css:214](../lingbot_map/workspace/static/styles.css#L214). Removed the leftover duplicate after replacing the original stage styling.
+
+Three simplify focuses and four code-review subskills completed. No further actionable finding; model-context is N/A. Existing P2 aggregate PR-size finding 139 at line 521 remains open; this presentation increment is a coherent stage below 500 changed lines. [Processing QA](PROCESSING_UI_QA.md) separates local browser/state evidence from provider deployment receipts.

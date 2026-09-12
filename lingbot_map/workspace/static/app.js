@@ -12,7 +12,6 @@ const state = {
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
-const stageOrder = ["queued", "validating", "generating", "reconstructing", "exporting", "storing", "ready"];
 const sessionChannel = "BroadcastChannel" in window
   ? new BroadcastChannel("lingbot-workspace-session-v1") : null;
 
@@ -220,10 +219,8 @@ function clearDetail() {
   byId("detailEngine").textContent = "Engine";
   byId("detailTitle").textContent = "Scene";
   byId("detailMeta").textContent = "";
-  byId("progressTitle").textContent = "Processing";
-  byId("progressPercent").textContent = "0%";
-  byId("progressBar").value = 0;
-  byId("progressBar").textContent = "0%";
+  byId("progressSection").hidden = true;
+  delete byId("progressSection").dataset.jobId;
   byId("jobMessage").textContent = "";
   byId("viewerStatus").textContent = "Waiting for a scene.";
   byId("cancelButton").hidden = true;
@@ -668,13 +665,53 @@ async function selectJob(jobId) {
   if (window.matchMedia("(max-width: 860px)").matches) byId("workspaceMain").scrollIntoView({ block: "start" });
 }
 
-function updateStages(job) {
-  const currentIndex = stageOrder.indexOf(job.stage);
-  const ready = job.state === "ready";
-  byId("stageList").querySelectorAll("li").forEach((item) => {
-    const index = stageOrder.indexOf(item.dataset.stage);
-    item.classList.toggle("complete", ready || (currentIndex >= 0 && index < currentIndex));
-    item.classList.toggle("current", item.dataset.stage === job.stage || (item.dataset.stage === "generating" && job.stage === "reconstructing"));
+function updateProgress(job) {
+  const section = byId("progressSection"), bar = byId("progressBar"), fill = byId("progressFill");
+  const stopped = job.state === "failed" || job.state === "cancelled";
+  const cancelling = !terminalStates.has(job.state) && (job.cancellationRequested || job.stage === "cancelling");
+  const stages = {
+    queued: [0, "Your scene is in line", "Waiting for a processing slot. We'll begin automatically."],
+    validating: [1, "Preparing your video", "Checking your capture and selecting frames for your scene."],
+    uploading_to_gpu: [1, "Preparing your video", "Transferring your frames to the private processing runner."],
+    generating: [2, "Creating your sample", "Generating the points that make up your synthetic scene."],
+    reconstructing: [2, "Building your space", "Finding depth and camera positions. This is usually the longest step."],
+    exporting: [3, "Bringing it together", "Preparing your scene for viewing and download."],
+    storing: [3, "Saving your scene", "Saving the finished files to your workspace."],
+    ready: [4, "Your scene is ready", "Ready to explore."],
+  };
+  let [step, title, description] = stages[job.stage] || [-1, "Creating your scene", "Waiting for the next processing update."];
+  if (job.state === "queued") {
+    [step, title, description] = stages.queued;
+    if (["interrupted", "recovered"].includes(job.stage)) description = "Processing was interrupted. Your scene is queued to resume.";
+  }
+  if (stopped || cancelling) {
+    step = -1;
+    title = job.state === "failed" ? "We couldn't finish this scene" : cancelling ? "Stopping safely" : "Scene creation cancelled";
+    description = job.state === "failed" ? "Your scene wasn't completed. You can start again from New scene."
+      : cancelling ? "Waiting for processing to stop and resources to be released." : "Processing has stopped. You can start a new scene whenever you're ready.";
+  }
+  const percent = Number.isFinite(job.progress) ? Math.round(Math.min(1, Math.max(0, job.progress)) * 100) : 0;
+  const setText = (id, text) => { if (byId(id).textContent !== text) byId(id).textContent = text; };
+  if (section.hidden !== (job.state === "ready")) section.hidden = job.state === "ready";
+  const setAttribute = (node, name, value) => { if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
+  const transition = section.dataset.jobId === job.id ? "" : "none";
+  if (fill.style.transition !== transition) fill.style.transition = transition;
+  const transform = `scaleX(${percent / 100})`;
+  if (fill.style.transform !== transform) fill.style.transform = transform;
+  setAttribute(section, "data-status", stopped ? job.state : cancelling ? "cancelling" : "active");
+  setAttribute(section, "data-job-id", job.id);
+  setAttribute(bar, "aria-valuenow", String(percent));
+  setAttribute(bar, "aria-valuetext", `${percent}%. ${title}.`);
+  setText("progressPercent", `${percent}%`);
+  setText("progressTitle", title);
+  setText("progressDescription", description);
+  setText("progressStep", stopped ? "Processing stopped" : cancelling ? "Cancellation requested" : step >= 0 ? `Step ${step + 1} of 5` : "In progress");
+  setText("progressNote", stopped || cancelling ? "The bar shows the last reported progress." : "Progress updates by stage. Some steps take longer than others.");
+  byId("stageList").querySelectorAll("li").forEach((item, index) => {
+    item.classList.toggle("complete", step > index);
+    item.classList.toggle("current", step === index);
+    if (step === index) setAttribute(item, "aria-current", "step");
+    else if (item.hasAttribute("aria-current")) item.removeAttribute("aria-current");
   });
 }
 
@@ -688,14 +725,7 @@ async function renderJobDetail() {
   byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample" : "Research reconstruction";
   byId("detailTitle").textContent = job.displayName;
   byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)}`;
-  const percent = Math.round(job.progress * 100);
-  document.querySelector(".progress-section").classList.toggle("is-ready", job.state === "ready");
-  byId("progressSection").hidden = job.state === "ready";
-  byId("progressPercent").textContent = `${percent}%`;
-  byId("progressBar").value = percent;
-  byId("progressBar").textContent = `${percent}%`;
-  byId("progressTitle").textContent = job.state === "ready" ? "Complete" : job.stage.replaceAll("_", " ");
-  updateStages(job);
+  updateProgress(job);
   byId("cancelButton").hidden = terminalStates.has(job.state);
   byId("deleteButton").hidden = !terminalStates.has(job.state);
   byId("jobMessage").textContent = job.error?.message || (job.state === "cancelled" ? "Scene creation was cancelled." : "");

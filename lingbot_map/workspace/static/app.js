@@ -328,7 +328,7 @@ function renderSignInOptions() {
   byId("accountTitle").textContent = returning ? "Welcome back." : full ? "The preview is full right now." : "Your own space starts here.";
   byId("accountDescription").textContent = returning ? "Your spaces are right where you left them."
     : full ? "We’re keeping the preview small while we improve reconstruction."
-      : "One video to start. A new way to see it.";
+      : "Two videos to start. A new way to see it.";
   byId("accountSwitch").hidden = returning;
   byId("googleLogin").hidden = !config?.googleSignIn || (full && !returning);
   byId("googleLoginLabel").textContent = "Continue with Google";
@@ -337,7 +337,7 @@ function renderSignInOptions() {
   byId("onboardingStatus").textContent = !config.googleSignIn
     ? "Google sign-in is not available on this installation yet."
     : full && !returning ? "Already have an account? Sign in below to open your spaces."
-      : returning ? "Sign in securely with your Google account." : "A private workspace. One video to start. No card needed.";
+      : returning ? "Sign in securely with your Google account." : "A private workspace. Two videos to start. No card needed.";
 }
 
 function openCreateScene({ refresh = true } = {}) {
@@ -765,8 +765,8 @@ function renderReconstructionStatus() {
   byId("frameLimit").disabled = !canChoose;
   byId("capturePicker").classList.toggle("unavailable", !canChoose);
   byId("researchButton").disabled = !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
-  const titles = { available: "One video available", processing: "Reconstruction in progress",
-    used: "Included video used", retry_later: "Try again later" };
+  const titles = { available: `${allowance?.remaining ?? 2} of ${allowance?.limit ?? 2} videos remaining`, processing: "Reconstruction in progress",
+    used: "Both videos used", retry_later: "Try again later" };
   const unavailableReason = state.engine?.unavailableReasons?.join(" ")
     || "Reconstruction availability could not be confirmed. Refresh to try again.";
   byId("researchStatus").textContent = trial ? "Synthetic playground"
@@ -780,7 +780,7 @@ function renderReconstructionStatus() {
       : "This private, one-hour playground creates synthetic scenes. Video signup is still being connected.")
     : google && !allowed ? (allowance?.message || "Refresh your account to check availability before uploading.")
       : enabled ? (google ? allowance.message : "Your capture is processed privately. Research preview; no payment required.")
-        : `${unavailableReason}${google && allowed ? " Your included video is still available." : ""}`;
+        : `${unavailableReason}${google && allowed ? " Your remaining videos will be available when capacity returns." : ""}`;
 }
 
 function cancelCaptureCheck() {

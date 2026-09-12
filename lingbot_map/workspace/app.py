@@ -119,6 +119,8 @@ class QuotaResponse(BaseModel):
 class ReconstructionAllowanceResponse(BaseModel):
     state: Literal["available", "processing", "used", "retry_later"]
     message: str
+    limit: int
+    remaining: int
 
 
 class MeResponse(BaseModel):

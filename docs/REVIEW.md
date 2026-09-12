@@ -559,3 +559,11 @@ The 24-line, three-file source increment passed all three simplify focuses and a
 148. **Global pending feedback covered the signing-out label — Fixed in source.** P3. [styles.css:153](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/styles.css:153). The redundant global status hides during logout while the disabled button displays Signing out…. Error/retry and successful session cleanup remain visible and tested.
 
 The focused source/test increment completed three simplify passes and four code-review subskills; no new actionable review finding remained. Existing aggregate size finding 139 remains open. All eleven Node suites and 56 Python API/static/production-UX tests pass. [Sign-out QA](SIGNOUT_QA.md) records local scrolling, narrow pending layout and actual cross-tab logout, separately from deployment verification.
+
+## Unlimited signup and two lifetime videos — 2026-09-12
+
+149. **The allowance title duplicated the API's limit — Fixed.** P3. [app.js:768](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/static/app.js:768). The title now reads both remaining and limit from the allowance response, retaining the existing safe display defaults.
+
+150. **Google allowance lookup lacked a tenant-user index — Fixed.** P2. [database.py:190](/Users/royluo/Documents/Codex/2026-08-31/turn-this-into-a-workable-prompt-2/work/lingbot-map/lingbot_map/workspace/database.py:190). Unlimited signup would grow the identity scan on each account/admission lookup. Initialization now creates `idx_users_tenant` for existing and new databases; the reviewed query plan resolves the tenant's users before the unique identity lookup.
+
+All three simplify focuses and four code-review subskills completed for this coherent increment, with no further actionable finding; context was N/A. Existing P2 aggregate size finding 139 remains open at line 521: the PR spans 34,464 changed text lines and 48 binaries at review time, despite this increment staying below 500 lines. [Two-video QA](TWO_VIDEO_QA.md) records 258 passing Python tests, eleven Node suites, scoped lint/type checks, browser allowance states and schema migration/rollback requirements separately from deployment evidence.

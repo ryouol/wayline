@@ -89,9 +89,9 @@ class Settings:
     google_client_secret: str = ""
     signup_enabled: bool = False
     trial_enabled: bool = True
-    signup_max_accounts: int = 100
+    signup_max_accounts: int = 0
     trial_max_accounts: int = 100
-    signup_quota_units: int = 120
+    signup_quota_units: int = 240
     recovery_recipient: str = ""
     recovery_volume_id: str = ""
     recovery_upload_budget_bytes: int = 10 * 1024**3
@@ -186,9 +186,9 @@ class Settings:
             google_client_secret=os.getenv("WAYLINE_GOOGLE_CLIENT_SECRET", ""),
             signup_enabled=_bool_env("WAYLINE_SIGNUP_ENABLED"),
             trial_enabled=_bool_env("WAYLINE_TRIAL_ENABLED", True),
-            signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "100")),
+            signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "0")),
             trial_max_accounts=int(os.getenv("WAYLINE_TRIAL_MAX_ACCOUNTS", "100")),
-            signup_quota_units=int(os.getenv("WAYLINE_SIGNUP_QUOTA_UNITS", "120")),
+            signup_quota_units=int(os.getenv("WAYLINE_SIGNUP_QUOTA_UNITS", "240")),
             recovery_recipient=os.getenv("WAYLINE_RECOVERY_RECIPIENT", ""),
             recovery_volume_id=os.getenv("WAYLINE_RECOVERY_VOLUME_ID", ""),
             recovery_upload_budget_bytes=int(
@@ -224,7 +224,11 @@ class Settings:
             raise ValueError("Modal jobs require LINGBOT_JOB_TIMEOUT_SECONDS <= 3600")
         if self.modal_gpu_seconds_budget < 600:
             raise ValueError("GPU budget must permit at least one bounded job")
-        if min(self.signup_max_accounts, self.trial_max_accounts, self.signup_quota_units) < 1:
+        if self.signup_max_accounts < 0:
+            raise ValueError(
+                "Wayline signup limit must be nonnegative; zero allows unlimited accounts"
+            )
+        if min(self.trial_max_accounts, self.signup_quota_units) < 1:
             raise ValueError("Wayline account and usage limits must be positive")
         if self.signup_enabled and not (
             self.google_client_id and self.google_client_secret and self.public_base_url

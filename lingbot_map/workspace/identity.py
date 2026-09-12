@@ -25,6 +25,8 @@ class IdentityStore:
         self.database = database
 
     def has_google_capacity(self, max_accounts: int) -> bool:
+        if max_accounts == 0:
+            return True
         with self.database.connect() as connection:
             return (
                 connection.execute(
@@ -48,11 +50,12 @@ class IdentityStore:
             ).fetchone()
             if row:
                 return dict(row)
-            count = connection.execute(
-                "SELECT COUNT(*) FROM identities WHERE provider=?", (provider,)
-            ).fetchone()[0]
-            if count >= max_accounts:
-                raise QuotaExceeded("This beta is at capacity. Please try again later.")
+            if guest or max_accounts != 0:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM identities WHERE provider=?", (provider,)
+                ).fetchone()[0]
+                if count >= max_accounts:
+                    raise QuotaExceeded("This beta is at capacity. Please try again later.")
             tenant_id, user_id = _id("ten"), _id("usr")
             display = name.strip()[:80] or "Explorer"
             tenant_name = "Sample playground" if guest else f"{display}'s spaces"

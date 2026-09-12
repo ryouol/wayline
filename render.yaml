@@ -56,9 +56,9 @@ services:
       - key: WAYLINE_GOOGLE_CLIENT_SECRET
         sync: false
       - key: WAYLINE_SIGNUP_MAX_ACCOUNTS
-        value: "20"
+        value: "0"
       - key: WAYLINE_SIGNUP_QUOTA_UNITS
-        value: "120"
+        value: "240"
       - key: WAYLINE_TRIAL_MAX_ACCOUNTS
         value: "100"
       - key: WAYLINE_MODAL_ENABLED

@@ -7,7 +7,7 @@ const source = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/
 const markup = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/index.html"), "utf8");
 const documentOrder = new Map([...markup.matchAll(/\bid="([^"]+)"/g)].map((match, index) => [match[1], index]));
 const user = { tenantName: "Private space", displayName: "Visitor", accountType: "google" };
-const allowance = (state) => ({ state, message: `Allowance: ${state}` });
+const allowance = (state, remaining = state === "used" ? 0 : 2) => ({ state, remaining, limit: 2, message: `Allowance: ${state}` });
 const account = (state) => ({ user, csrfToken: "csrf", reconstructionAllowance: allowance(state) });
 const capacityMessage = "Reconstruction is temporarily paused because preview capacity is full. Please try again later.";
 const engines = (available = true) => ({ engines: [{ id: "lingbot-research-v1", available,
@@ -156,6 +156,15 @@ function harness(search = "") {
 }
 
 async function main() {
+  {
+    const h = harness();
+    for (const remaining of [2, 1, 0]) {
+      h.context.showApp(user, "csrf", allowance(remaining ? "available" : "used", remaining));
+      assert.equal(h.node("researchStatus").textContent,
+        remaining ? `${remaining} of 2 videos remaining` : "Both videos used");
+      assert.equal(h.node("video").disabled, remaining === 0);
+    }
+  }
   for (const fails of [false, true]) {
     const h = harness(), pending = deferred(), button = h.node("logoutButton");
     h.select();
@@ -516,7 +525,7 @@ async function main() {
     assert.equal(h.state.reconstructionAllowance.state, "available");
     assert.equal(h.node("video").disabled, true);
     assert.match(h.node("researchReason").textContent, /preview capacity is full/);
-    assert.match(h.node("researchReason").textContent, /included video is still available/);
+    assert.match(h.node("researchReason").textContent, /remaining videos.*capacity returns/);
     assert.equal(h.node("researchMessage").textContent, "", "the live capacity status owns the pause message");
     h.context.engineResponse = async () => engines();
     await h.windowEvents.get("focus")();

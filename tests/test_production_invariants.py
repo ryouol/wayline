@@ -100,7 +100,7 @@ def test_schema_one_migrates_in_place_with_new_durability_tables(tmp_path):
     database = Database(path)
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
         assert connection.execute("SELECT name FROM tenants").fetchone()[0] == "Legacy"
         tenant_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(tenants)").fetchall()
@@ -152,7 +152,7 @@ def test_schema_two_invalidates_unrecoverable_sessions_and_preserves_claims(tmp_
 
     database.initialize()
     with database.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
         assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         claim = connection.execute(
             "SELECT size_bytes,materialized,purpose FROM object_claims"

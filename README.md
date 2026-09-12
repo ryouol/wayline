@@ -65,7 +65,7 @@ later scaling migration, not dependencies of this controlled beta.
 
 - Google identities use the verified immutable Google subject, a server-side
   authorization-code exchange, PKCE, nonce and one-use browser-bound state.
-- A Google account receives one successful reconstruction, with at most one
+- A Google account receives two successful lifetime reconstructions, with at most one
   queued/running reconstruction and three attempts in a rolling day. Deleting
   scenes does not reset these limits. There is no checkout or paid credit sale.
 - The Render configuration limits captures to 60 seconds; the Modal engine

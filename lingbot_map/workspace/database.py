@@ -14,9 +14,10 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+RECONSTRUCTION_LIMIT = 2
 _JOB_SELECT = """
     SELECT j.*, a.original_name AS source_original_name FROM jobs j
     LEFT JOIN assets a ON a.id = j.source_asset_id AND a.tenant_id = j.tenant_id
@@ -33,6 +34,13 @@ def token_digest(token: str) -> str:
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+class ReconstructionAllowance(TypedDict):
+    state: str
+    message: str
+    limit: int
+    remaining: int
 
 
 class QuotaExceeded(ValueError):
@@ -146,7 +154,7 @@ class Database:
                     else None
                 )
                 existing_version = int(version_row[0]) if version_row is not None else None
-        if existing_version is not None and existing_version not in {1, 2, 3, 4, SCHEMA_VERSION}:
+        if existing_version is not None and existing_version not in {1, 2, 3, 4, 5, SCHEMA_VERSION}:
             raise RuntimeError(
                 f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
             )
@@ -161,6 +169,8 @@ class Database:
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     quota_units INTEGER NOT NULL CHECK (quota_units >= 0),
+                    successful_reconstructions INTEGER NOT NULL DEFAULT 0
+                        CHECK (successful_reconstructions >= 0),
                     reserved_units INTEGER NOT NULL DEFAULT 0 CHECK (reserved_units >= 0),
                     consumed_units INTEGER NOT NULL DEFAULT 0 CHECK (consumed_units >= 0),
                     storage_limit_bytes INTEGER NOT NULL DEFAULT 5368709120,
@@ -177,6 +187,7 @@ class Database:
                     display_name TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
                 CREATE TABLE IF NOT EXISTS remote_runs (
                     attempt_id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
@@ -402,6 +413,23 @@ class Database:
                         connection.execute(
                             "ALTER TABLE object_claims ADD COLUMN purpose "
                             "TEXT NOT NULL DEFAULT 'legacy'"
+                        )
+                    tenant_columns = {
+                        row[1] for row in connection.execute("PRAGMA table_info(tenants)")
+                    }
+                    if "successful_reconstructions" not in tenant_columns:
+                        connection.execute(
+                            "ALTER TABLE tenants ADD COLUMN successful_reconstructions "
+                            "INTEGER NOT NULL DEFAULT 0 CHECK (successful_reconstructions >= 0)"
+                        )
+                        # The previous Google policy permitted one lifetime success.
+                        # consumed_units survives scene deletion and ledger retention.
+                        connection.execute(
+                            "UPDATE tenants SET successful_reconstructions="
+                            "CASE WHEN consumed_units>0 THEN 1 ELSE 0 END, "
+                            "quota_units=MAX(quota_units,240) WHERE id IN ("
+                            "SELECT u.tenant_id FROM users u JOIN identities i ON i.user_id=u.id "
+                            "WHERE i.provider='google')"
                         )
                     connection.execute("UPDATE schema_meta SET version = ?", (SCHEMA_VERSION,))
                     connection.commit()
@@ -929,45 +957,52 @@ class Database:
 
     def reconstruction_allowance(
         self, tenant_id: str, *, connection: sqlite3.Connection | None = None
-    ) -> dict[str, str] | None:
+    ) -> ReconstructionAllowance | None:
         """Report the same Google preview policy used by upload and job admission."""
         if connection is None:
             with self.connect() as active:
                 return self.reconstruction_allowance(tenant_id, connection=active)
         tenant = connection.execute(
-            "SELECT t.consumed_units FROM tenants t JOIN users u ON u.tenant_id=t.id "
+            "SELECT t.successful_reconstructions FROM tenants t JOIN users u ON u.tenant_id=t.id "
             "JOIN identities i ON i.user_id=u.id WHERE t.id=? AND i.provider='google' LIMIT 1",
             (tenant_id,),
         ).fetchone()
         if tenant is None:
             return None
-        if tenant["consumed_units"] > 0:
-            return {
-                "state": "used",
-                "message": "Your included reconstruction has been used. "
-                "You can still view, download and share your space.",
-            }
-        if connection.execute(
+        remaining = max(0, RECONSTRUCTION_LIMIT - tenant["successful_reconstructions"])
+        result: ReconstructionAllowance = {
+            "limit": RECONSTRUCTION_LIMIT,
+            "remaining": remaining,
+            "state": "available",
+            "message": f"{remaining} of {RECONSTRUCTION_LIMIT} lifetime videos remaining. "
+            "No payment required.",
+        }
+        if remaining == 0:
+            result["state"] = "used"
+            result["message"] = (
+                "Both included reconstructions have been used. "
+                "You can still view, download and share your spaces."
+            )
+        elif connection.execute(
             "SELECT 1 FROM jobs WHERE tenant_id=? AND engine_id='lingbot-research-v1' "
             "AND state IN ('queued','running') LIMIT 1",
             (tenant_id,),
         ).fetchone():
-            return {
-                "state": "processing",
-                "message": "A reconstruction is already in progress in your workspace.",
-            }
-        attempts = connection.execute(
-            "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
-            "AND units>1 AND created_at>?",
-            (tenant_id, time.time() - 86400),
-        ).fetchone()[0]
-        if attempts >= 3:
-            return {
-                "state": "retry_later",
-                "message": "The preview allows three reconstruction attempts per day. "
-                "Please try again later.",
-            }
-        return {"state": "available", "message": "One video available. No payment required."}
+            result["state"] = "processing"
+            result["message"] = "A reconstruction is already in progress in your workspace."
+        elif (
+            connection.execute(
+                "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
+                "AND units>1 AND created_at>?",
+                (tenant_id, time.time() - 86400),
+            ).fetchone()[0]
+            >= 3
+        ):
+            result["state"] = "retry_later"
+            result["message"] = (
+                "The preview allows three reconstruction attempts per day. Please try again later."
+            )
+        return result
 
     def create_job(
         self,
@@ -1267,7 +1302,7 @@ class Database:
         now = time.time()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id "
+                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id,engine_id "
                 "FROM jobs "
                 "WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
@@ -1307,6 +1342,12 @@ class Database:
                 connection.execute(
                     "INSERT INTO usage_ledger VALUES (?, ?, ?, 'consume', ?, ?, ?)",
                     (_id("led"), tenant_id, job_id, used_units, "completed job usage", now),
+                )
+            if row["engine_id"] == "lingbot-research-v1":
+                connection.execute(
+                    "UPDATE tenants SET successful_reconstructions=successful_reconstructions+1 "
+                    "WHERE id=?",
+                    (tenant_id,),
                 )
             connection.execute(
                 """

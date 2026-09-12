@@ -193,7 +193,7 @@ def test_google_flow_provisions_once_and_blocks_replay(settings, monkeypatch):
         assert done.status_code == 303
         me = browser.get("/api/me").json()
         assert me["user"]["displayName"] == "Ada"
-        assert me["quota"]["available_units"] == 120
+        assert me["quota"]["available_units"] == 240
         assert me["reconstructionAllowance"]["state"] == "available"
         config = browser.get("/api/config").json()
         assert config["googleSignIn"] is True and config["newAccountsAvailable"] is False
@@ -383,12 +383,26 @@ def test_google_preview_limits_survive_scene_deletion(service, client, monkeypat
         used_units=30,
     )
     service.database.queue_delete_job(tenant, completed["id"])
+    check_allowance("available")
+    assert client.get("/api/me").json()["reconstructionAllowance"]["remaining"] == 1
+    completed = submit()
+    attempt = service.database.claim_next_job(
+        worker_id="test-worker", lease_seconds=30, max_attempts=1
+    )
+    assert service.database.finish_job(
+        tenant,
+        completed["id"],
+        attempt_token=attempt["attempt_token"],
+        worker_id="test-worker",
+        used_units=30,
+    )
+    service.database.queue_delete_job(tenant, completed["id"])
     check_allowance("used")
-    with pytest.raises(ValueError, match="included reconstruction has been used"):
+    with pytest.raises(ValueError, match="Both included reconstructions have been used"):
         submit()
 
 
-def test_operator_does_not_receive_a_one_video_preview_allowance(authenticated_client):
+def test_operator_does_not_receive_a_video_preview_allowance(authenticated_client):
     assert authenticated_client.get("/api/me").json()["reconstructionAllowance"] is None
 
 
@@ -408,7 +422,7 @@ def google_upload(service, client):
 
 
 def block_google_upload(service, tenant, asset_id, state="used"):
-    for _ in range(3 if state == "retry_later" else 1):
+    for _ in range(3 if state == "retry_later" else 2 if state == "used" else 1):
         job = service.database.create_job(
             tenant_id=tenant,
             engine_id="lingbot-research-v1",
@@ -494,7 +508,7 @@ def test_blocked_upload_only_parses_a_completed_replay_candidate(
     monkeypatch.setattr(Request, "form", forbidden_parser)
     response = client.post("/api/assets", files=files, headers=headers)
     assert response.status_code == 409
-    assert "included reconstruction has been used" in response.json()["detail"]
+    assert "Both included reconstructions have been used" in response.json()["detail"]
     assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
 
 
@@ -528,7 +542,7 @@ def test_upload_admission_is_rechecked_before_creating_an_asset(
     monkeypatch.setattr(Request, "form", change_state_after_admission)
     response = client.post("/api/assets", files=files, headers=headers)
     assert response.status_code == 409
-    assert "included reconstruction has been used" in response.json()["detail"]
+    assert "Both included reconstructions have been used" in response.json()["detail"]
     assert len(client.get("/api/assets").json()["assets"]) == 1
     assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
     with service.database.connect() as connection:
@@ -538,4 +552,115 @@ def test_upload_admission_is_rechecked_before_creating_an_asset(
                 "SELECT COUNT(*) FROM idempotency_keys WHERE state='in_progress'"
             ).fetchone()[0]
             == 0
+        )
+
+
+def test_unlimited_google_signup_keeps_existing_workspaces(settings, monkeypatch):
+    from lingbot_map.workspace.service import WorkspaceService
+
+    configured = replace(
+        settings,
+        signup_enabled=True,
+        signup_max_accounts=0,
+        google_client_id="test-client",
+        google_client_secret="test-secret",
+        public_base_url="http://testserver",
+    )
+    claims = {"sub": "first", "given_name": "Explorer"}
+    monkeypatch.setattr(identity, "exchange_google_code", lambda **kwargs: claims)
+    workspaces = {}
+    workspace = WorkspaceService(configured)
+    with TestClient(create_app(configured, service=workspace, start_worker=False)) as browser:
+        for subject in ["first", "second", "third", "first"]:
+            claims["sub"] = subject
+            start = browser.get("/auth/google/start", follow_redirects=False)
+            state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+            done = browser.get(
+                "/auth/google/callback",
+                params={"state": state, "code": "test-code"},
+                follow_redirects=False,
+            )
+            assert done.status_code == 303 and done.headers["location"] == "/"
+            me = browser.get("/api/me").json()
+            assert me["reconstructionAllowance"]["remaining"] == 2
+            assert me["quota"]["available_units"] == 240
+            assert browser.get("/api/config").json()["newAccountsAvailable"] is True
+            if subject in workspaces:
+                assert me["user"] == workspaces[subject]
+            workspaces[subject] = me["user"]
+        with workspace.database.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM identities WHERE provider='google'"
+                ).fetchone()[0]
+                == 3
+            )
+
+
+@pytest.mark.parametrize("previous_successes", [0, 1])
+def test_schema_five_preserves_lifetime_video_usage_after_deleted_history(
+    service, previous_successes
+):
+    import time
+
+    from lingbot_map.workspace.database import QuotaExceeded, StaleAttempt
+
+    principal = IdentityStore(service.database).create_workspace(
+        subject="existing-preview", name="Explorer", guest=False, max_accounts=0, quota=120
+    )
+    tenant = principal["tenant_id"]
+    token, csrf = service.database.create_session(principal, 3600)
+
+    def complete():
+        job = service.database.create_job(
+            tenant_id=tenant,
+            engine_id="lingbot-research-v1",
+            source_asset_id=None,
+            params={},
+            provenance={},
+            reserve_units=120,
+        )
+        attempt = service.database.claim_next_job(
+            worker_id="lifetime-test", lease_seconds=30, max_attempts=1
+        )
+        arguments = dict(
+            attempt_token=attempt["attempt_token"], worker_id="lifetime-test", used_units=120
+        )
+        assert service.database.finish_job(tenant, job["id"], **arguments)
+        with pytest.raises(StaleAttempt):
+            service.database.finish_job(tenant, job["id"], **arguments)
+        service.database.queue_delete_job(tenant, job["id"])
+
+    for _ in range(previous_successes):
+        complete()
+    with service.database.transaction() as connection:
+        connection.execute("DELETE FROM usage_ledger WHERE tenant_id=?", (tenant,))
+        connection.execute("ALTER TABLE tenants DROP COLUMN successful_reconstructions")
+        connection.execute("UPDATE schema_meta SET version=5")
+    service.database.initialize()
+    assert service.database.authenticate_session(token) is not None
+    assert service.database.quota(tenant)["quota_units"] == 240
+    assert service.database.quota(tenant)["consumed_units"] == 120 * previous_successes
+    assert service.database.reconstruction_allowance(tenant)["remaining"] == 2 - previous_successes
+    for _ in range(2 - previous_successes):
+        complete()
+    service.database.run_retention(terminal_before=time.time() + 1, unattached_before=0)
+    service.database.initialize()
+    assert service.database.reconstruction_allowance(tenant)["remaining"] == 0
+    assert service.database.quota(tenant)["consumed_units"] == 240
+    with service.database.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=?", (tenant,)
+            ).fetchone()[0]
+            == 0
+        )
+    with pytest.raises(QuotaExceeded, match="Both included reconstructions"):
+        service.database.create_job(
+            tenant_id=tenant,
+            engine_id="lingbot-research-v1",
+            source_asset_id=None,
+            params={},
+            provenance={},
+            reserve_units=2,
         )

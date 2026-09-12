@@ -79,14 +79,17 @@ limits and verify retention. Backups need separate encrypted storage.
 
 - Visitors receive an isolated one-hour synthetic playground with a 5 MiB
   allowance, three retained jobs, no uploads, no GPU access and no shares.
-- Google preview accounts receive one successful reconstruction. A second active
+- Google preview accounts receive two successful lifetime reconstructions. A second active
   reconstruction is rejected; up to three submitted attempts per rolling day
   allow recovery from failures. Work rejected for shared capacity before any
   remote attempt does not consume a personal retry. Deleting scenes does not
-  reset usage or refund attempted remote runs.
-- The Render Blueprint defaults to 20 Google accounts; the live service allows
-  two total accounts for the bounded pilot: the owner and one additional
-  first-come signup. This is not an invite allowlist or a GPU budget increase.
+  reset usage or refund attempted remote runs. A durable success counter survives
+  scene deletion and ledger retention; schema 6 carries forward the prior
+  one-success allowance. Google accounts have 240 sampled-frame units for
+  two full 120-frame reconstructions, separate from the shared GPU ceiling.
+- `WAYLINE_SIGNUP_MAX_ACCOUNTS=0` removes the total Google-account ceiling;
+  positive values can impose a count cap. OAuth rate limits remain enforced.
+  Opening signup does not increase the shared GPU budget.
   Concurrent retained playgrounds are capped at 100. Playground retirement
   releases capacity. See [pilot onboarding QA](ONBOARDING_QA.md).
 - Captures: 60 seconds on the Render configuration, 64 MiB upload ceiling,

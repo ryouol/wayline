@@ -1302,8 +1302,8 @@ class Database:
         now = time.time()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id,engine_id "
-                "FROM jobs "
+                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id,"
+                "engine_id FROM jobs "
                 "WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
             ).fetchone()

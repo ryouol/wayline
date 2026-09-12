@@ -149,3 +149,50 @@ def test_fractional_frame_rate_does_not_underreserve(settings, tmp_path):
     legacy = {**metadata, "durationSeconds": round(metadata["durationSeconds"], 3)}
     del legacy["samplingDurationSeconds"]
     assert engine.estimate_units(legacy, {}) >= len(times)
+
+
+@pytest.mark.parametrize("origin", [-0.001667, 2.5])
+def test_capture_normalizes_start_offset_and_preserves_variable_timing(
+    tmp_path, monkeypatch, origin
+):
+    source = Path(__file__).parent / "fixtures" / "vfr-test-pattern.mp4"
+    decoder = cv2.VideoCapture(str(source))
+
+    class OffsetCapture:
+        def __getattr__(self, name):
+            return getattr(decoder, name)
+
+        def get(self, key):
+            value = decoder.get(key)
+            return value + origin * 1000 if key == cv2.CAP_PROP_POS_MSEC else value
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda path: OffsetCapture())
+    timestamps = extract_capture(source, tmp_path / "frames", max_frames=10, sample_fps=15)
+    assert timestamps == [0, 0.1, 0.2, 0.3, 0.4, 0.5, 1, 1.5, 2, 2.5]
+    assert not decoder.isOpened()
+
+
+@pytest.mark.parametrize("bad_time", [float("nan"), 0.0, -1.0])
+def test_capture_still_rejects_invalid_timing(tmp_path, monkeypatch, bad_time):
+    source = Path(__file__).parent / "fixtures" / "vfr-test-pattern.mp4"
+    decoder = cv2.VideoCapture(str(source))
+
+    class InvalidCapture:
+        reads = 0
+
+        def __getattr__(self, name):
+            return getattr(decoder, name)
+
+        def read(self):
+            self.reads += 1
+            return decoder.read()
+
+        def get(self, key):
+            if key == cv2.CAP_PROP_POS_MSEC and self.reads > 1:
+                return bad_time
+            return decoder.get(key)
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda path: InvalidCapture())
+    with pytest.raises(ValueError, match="presentation timestamps"):
+        extract_capture(source, tmp_path / "frames", max_frames=10, sample_fps=15)
+    assert not decoder.isOpened()

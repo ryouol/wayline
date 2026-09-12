@@ -37,12 +37,17 @@ def extract_capture(
         indices = np.linspace(0, count - 1, length, dtype=int)
         output.mkdir(mode=0o700, parents=True, exist_ok=True)
         timestamps: list[float] = []
+        time_origin: float | None = None
         for index, source_frame in enumerate(indices):
             capture.set(cv2.CAP_PROP_POS_FRAMES, int(source_frame))
             ok, frame = capture.read()
             if not ok or frame is None:
                 raise ValueError("The capture contains an unreadable frame")
-            timestamp = round(float(capture.get(cv2.CAP_PROP_POS_MSEC)) / 1000, 6)
+            presentation_time = float(capture.get(cv2.CAP_PROP_POS_MSEC)) / 1000
+            if time_origin is None:
+                # Container edit lists can place the first decoded frame before zero.
+                time_origin = presentation_time
+            timestamp = round(presentation_time - time_origin, 6)
             if (
                 not math.isfinite(timestamp)
                 or timestamp < 0

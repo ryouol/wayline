@@ -1,5 +1,9 @@
 # Wayline deployment runbook — Render + Modal
 
+For the current deployed commit, account policy and acceptance boundary, start with
+[launch readiness](launch-readiness.md) and the [review guide](REVIEWER_GUIDE.md).
+Dated QA links below describe the rollout at that time.
+
 ## Single-instance beta deployment
 
 - Linux, Python 3.11, one application instance
@@ -61,7 +65,7 @@ the user's other projects. Hosting is $8.25/month before tax and overages. The
 user accepted $20 as a monthly target with some flexibility; it is not an
 enforced invoice cap. See [operating costs](operating-costs.md).
 
-1. Connect `ryouol/lingbot-map` and
+1. Connect `ryouol/wayline` and
    `codex/production-ready-lingbot-map` within Wayline / Production. Review the
    Blueprint's Starter service and 5 GB disk and deploy the exact reviewed commit.
 2. Supply `LINGBOT_PUBLIC_BASE_URL` and its exact `LINGBOT_ALLOWED_HOSTS` hostname.
@@ -84,9 +88,9 @@ prepared and verified on 2026-09-10. A synthetic-input GPU diagnostic passed;
 see [Modal QA](MODAL_QA.md) for measurements and the exact verification boundary.
 Render deployment, a generated-input GPU round trip, download/share expiry and
 revocation, visitor isolation and redeploy persistence passed; see [live QA](RENDER_QA.md).
-The [latest deployment and recovery receipt](SCHEDULED_RECOVERY_QA.md) records the
-current runtime and rollout status. Google signup/returning login/logout passed in
-`wayline-roy-20260910`; the initial signup ceiling is one account. An owned
+The [current launch snapshot](launch-readiness.md) records the runtime and rollout
+status; [scheduled recovery QA](SCHEDULED_RECOVERY_QA.md) retains the earlier evidence. Google signup/returning login/logout passed in
+`wayline-roy-20260910`; the application-wide signup ceiling is now removed; public accounts receive two successful lifetime videos. An owned
 capture, second-account switching, public Google branding, operator legal/contact
 identity, provider budgets and upstream logging/edge-limit checks remain pending. Render holds a private personal-workspace Modal credential; it
 is not scoped to one app. No credentials appear in Git or browser assets.

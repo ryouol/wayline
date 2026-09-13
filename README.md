@@ -1,167 +1,133 @@
 # Wayline
 
-A private video-to-3D workspace built around the original LingBot-Map model.
-Upload a short walkthrough, follow its processing stages, explore the resulting
-point cloud, replay the captured camera path frame by frame, and download or
-share the scene.
+**Turn a short walkthrough into a 3D point-cloud scene you can explore and share.**
 
-**Current verification boundary:** [the Render preview](https://wayline-9ten.onrender.com)
-is live. The Gallery + Instrument redesign gives visitors a visual landing page
-and **Get started → Google signup**, with light, dark and system appearance.
-The public scene is an attributed, precomputed TUM office reconstruction;
-viewing it does not invoke a GPU. There is no public sample-entry CTA.
-The private Modal runner uses the verified original checkpoint; a real benchmark
-capture passed the corrected camera-geometry path, download and browser replay.
-Google signup, returning login and logout passed for the owner; the current
-two-account ceiling opens one additional pilot slot while acceptance continues.
-The owner's free-video allowance is unused.
-An encrypted export of the deployed database, objects and secrets passed an
-isolated Linux restore. Owned-capture quality, second-account acceptance, physical
-mobile testing, successful automated backup readback and public-launch
-rights/policies remain open. See [design QA](design-qa.md),
-[live verification](docs/RENDER_QA.md) and [recovery evidence](docs/RECOVERY_QA.md).
+[Open Wayline — production URL](https://wayline-9ten.onrender.com/) ·
+[Engineer review guide](docs/REVIEWER_GUIDE.md) ·
+[Architecture](docs/architecture.md) ·
+[Documentation](docs/README.md) ·
+[Review PR](https://github.com/ryouol/wayline/pull/10)
 
-Original LingBot model code, checkpoint attribution, package identifiers and
-upstream license notices remain intact. Wayline is the product name; it is not
-a claim of endorsement or commercial model rights. Read
-[MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) before enabling hosted inference.
+![Wayline landing page](docs/screenshots/landing.png)
+
+Wayline gives a captured space a persistent home: upload a video, follow processing,
+then orbit the point cloud, replay the camera path, download a GLB, or create an
+expiring view-only share. The frontend and API run together on Render; a private
+Modal GPU worker performs reconstruction using the upstream LingBot-Map model.
+
+## Start here
+
+**Live research preview, not general availability.** The deployed application is
+functional, but reconstruction quality and hosted model/data rights remain open
+review items. A licensed benchmark passed; a later user capture reached READY but
+did not pass visual-quality acceptance. See [launch readiness](docs/launch-readiness.md).
+
+The current application and this handoff open by default on
+[`codex/production-ready-lingbot-map`](https://github.com/ryouol/wayline/tree/codex/production-ready-lingbot-map).
+`main` is the earlier baseline; [PR #10](https://github.com/ryouol/wayline/pull/10)
+is draft and unmerged. Review that branch, not `main`, to inspect the deployed product.
+The repository remains private; reviewers need access.
+
+## Product flow
+
+1. **Discover:** a visual landing page leads to Google signup.
+2. **Create:** upload a short MP4/MOV, then follow preparation, building and saving.
+3. **Explore:** orbit, replay camera frames, or use basic walk controls.
+4. **Keep or share:** download a GLB or send an expiring, revocable view-only link.
+
+Public accounts receive **two successful lifetime reconstructions**. Failed or
+cancelled work does not consume a success; deleting a scene does not reset it.
+The verified owner has no personal processing quota. All accounts share the
+project's spending, storage, file-size and execution safeguards. Account creation
+has no application-wide count cap; this is not unlimited processing capacity.
+
+| Sign up | Processing |
+|---|---|
+| ![Wayline signup](docs/screenshots/signup.png) | ![Five-step processing panel](docs/screenshots/processing.png) |
+
+![Wayline studio with a synthetic scene](docs/screenshots/studio.png)
+
+Screenshots show the current UI in isolated local fixtures. The studio scene is
+**CC0 synthetic geometry**, not a reconstructed video. Landing/signup artwork is
+a precomputed TUM RGB-D office reconstruction. [Screenshot sources](docs/screenshots/README.md).
 
 ## Run locally
 
-Use Python 3.11 and the committed dependency lock:
+Prerequisites: Python **3.11**, `uv`, and Node.js to run frontend tests. GPU/CUDA,
+Google credentials and Modal billing are unnecessary for the local synthetic flow.
 
 ```bash
-uv sync --frozen --extra dev
+git clone --branch codex/production-ready-lingbot-map git@github.com:ryouol/wayline.git
+cd wayline
+uv sync --python 3.11 --frozen --extra dev
 uv run wayline --dev
 ```
 
-Open http://127.0.0.1:7860 to see the landing page. **Get started** opens signup;
-Google requires configured OAuth credentials. For local use, open **Sign in →
-Local operator access** and use the development token printed on first startup.
-The operator can create the CC0 synthetic sample from the creation dialog without
-a GPU. Operator access is not public onboarding. The bounded isolated trial API
-is retained for existing integrations, but no public landing action enters it.
+Open [localhost:7860](http://127.0.0.1:7860/). Choose **Sign in → Local operator
+access**, use the development token printed on first startup, and create a
+**Synthetic scene** from **New scene**. Keep that token private. Local state is
+stored in `.lingbot-workspace/`; never commit it. Google login requires separate
+OAuth configuration. The local operator login is not public onboarding.
 
-## Architecture
+## How it is built
 
-```text
-Browser: website, WebGL point-cloud viewer and camera timeline
-  │ one origin; HttpOnly session and CSRF protection
-  ▼
-Render: FastAPI + durable job worker + SQLite + private persistent disk
-  │ authenticated Modal SDK; unique staging path per attempt
-  ▼
-Modal: original LingBot model on a bounded A100 80 GB job
-  └── GLB with colored points, camera poses, timestamps and source thumbnails
+```mermaid
+flowchart LR
+    Browser[Browser: HTML / CSS / JavaScript + WebGL] --> Web[Render: FastAPI + session auth]
+    Web --> DB[(SQLite: jobs, identity, quotas)]
+    Web --> Files[Private persistent files]
+    Web --> Worker[Durable job workers]
+    Worker --> GPU[Modal: private LingBot GPU runner]
+    GPU --> Worker
+    Worker --> Files
 ```
 
-Render serves both frontend and API. Modal is a private GPU worker with no
-public inference endpoint. The viewer uses client-side WebGL; reopening a
-completed scene does not invoke inference. A persistent Render disk means one
-application instance and brief deploy downtime. Postgres/object storage are a
-later scaling migration, not dependencies of this controlled beta.
+| Area | Entry point |
+|---|---|
+| HTTP, identity and configuration | [workspace/app.py](lingbot_map/workspace/app.py), [auth_routes.py](lingbot_map/workspace/auth_routes.py), [config.py](lingbot_map/workspace/config.py) |
+| Job lifecycle and persistence | [service.py](lingbot_map/workspace/service.py), [database.py](lingbot_map/workspace/database.py), [storage.py](lingbot_map/workspace/storage.py) |
+| Video, reconstruction and export | [capture.py](lingbot_map/workspace/capture.py), [modal_engine.py](lingbot_map/workspace/modal_engine.py), [modal_app.py](modal_app.py) |
+| Product and viewer | [static/](lingbot_map/workspace/static/): `app.js`, `viewer.js`, `timeline.js`, `styles.css` |
+| Deployment and checks | [Dockerfile](Dockerfile), [render.yaml](render.yaml), [CI](.github/workflows/ci.yml), [tests/](tests/) |
+| Original model research | [lingbot_map/](lingbot_map/), [demo.py](demo.py), [benchmark/](benchmark/) |
 
-## Preview behavior
+One Render Starter instance and a persistent disk serve the app. SQLite and the
+disk prevent horizontal scaling; deploys can briefly interrupt availability.
+Opening an existing scene uses browser WebGL and does not rerun the GPU model.
+The viewer supports the exported colored **POINTS** contract, not arbitrary GLB meshes.
 
-- Google identities use the verified immutable Google subject, a server-side
-  authorization-code exchange, PKCE, nonce and one-use browser-bound state.
-- A Google account receives two successful lifetime reconstructions, with at most one
-  queued/running reconstruction and three attempts in a rolling day. Deleting
-  scenes does not reset these limits. There is no checkout or paid credit sale.
-- The Render configuration limits captures to 60 seconds; the Modal engine
-  samples at most 120 frames and exports at most 750,000 points. These are
-  configured limits, not measured quality/performance guarantees.
-- Stored jobs survive web restarts; reservations, request idempotency, attempt
-  fencing and durable deletion protect the database/object boundary.
-- Shared links use `/s#capability`; the browser sends the capability in an
-  authorization header, never a request path or query. Every metadata/content
-  fetch rechecks expiry and revocation. Shares include camera replay.
-- The viewer accepts one untransformed POINTS primitive with vertex colors.
-  Reconstruction export bakes coordinates into glTF Y-up and stores its camera
-  trace alongside the points. It is not a general-purpose mesh/GLB renderer.
-
-## Deploy Render + Modal
-
-Start with [docs/deployment.md](docs/deployment.md), the committed
-[Dockerfile](Dockerfile) and [render.yaml](render.yaml). Both Google signup and
-Modal submission default off in the Blueprint until their external setup and
-acceptance tests are complete.
-
-The explicit Modal deployment module is now `modal_app.py`; the previous inert
-manifest and separate disabled module were replaced as part of this rebuild.
-Importing the web application does not import the Modal deployment or start
-remote work. Deploy and prepare weights explicitly:
-
-```bash
-uv run modal token new
-uv run modal deploy modal_app.py
-uv run modal run modal_app.py
-```
-
-Preparing the original pinned checkpoint is a research-only operator action.
-It downloads and verifies the checkpoint on a CPU task; it is not a GPU
-reconstruction test. Hosted usage rights remain unresolved. CUDA PyTorch is
-version/index-pinned; the other runner dependencies use the hashed Modal lock.
-
-## Direct model research
-
-Install the CUDA runtime separately and exactly as required by your host:
-
-```bash
-uv pip install --python .venv/bin/python torch==2.8.0 torchvision==0.23.0 \
-  --index-url https://download.pytorch.org/whl/cu128
-uv pip install --python .venv/bin/python -e '.[research,vis]'
-LINGBOT_RESEARCH_ACK='I understand LingBot is research-only' ./download_weights.sh
-.venv/bin/python demo.py \
-  --model_path ./lingbot-map.pt \
-  --model_sha256 "$(cut -d' ' -f1 lingbot-map.pt.sha256)" \
-  --image_folder /path/to/owned-or-licensed-images \
-  --use_sdpa
-```
-
-The downloader pins a model-repository revision, checks exact sizes and hashes,
-and writes the sidecar digest required by every direct loader. Every PyTorch and
-ONNX model loader copies the exact digest into a private content-addressed file
-before use; PyTorch also loads with `weights_only=True`. Sky-mask caches are
-bound to that model digest, and there is no unverified escape hatch.
-
-No throughput, scale, accuracy, or state-of-the-art claim is made by this fork;
-none is covered by a reproducible CI artifact on the supported runtime.
-
-## Verify
+## Verify and deploy
 
 ```bash
 uv run pytest
 uv run ruff check .
-uv run ruff check lingbot_map/workspace lingbot_map/checkpoints.py tests modal_app.py webui/server.py --select E,F,I,B,UP,SIM
 uv run mypy lingbot_map/workspace lingbot_map/checkpoints.py
-node tests/session-events.test.js
-node tests/viewer-lifecycle.test.js
-node tests/viewer-trace.test.js
-node tests/timeline.test.js
+for suite in tests/*.test.js; do node "$suite" || exit 1; done
 docker build -t wayline:local .
-uv run python scripts/smoke_container.py
+uv run python scripts/smoke_container.py --image wayline:local
 ```
 
-The tests cover storage/auth isolation, sample creation, quotas, OAuth protocol
-handling with mocked provider responses, Modal transport with a mocked client,
-scene export geometry, camera timeline behavior, share capabilities, and offline
-backup/restore. Mocks are not evidence that Google or Modal works remotely.
+[CI](.github/workflows/ci.yml) additionally checks strict lint/format rules,
+dependency locks, wheel contents and the constrained production container.
+Install `age` and `age-keygen` to run the encryption/restore tests locally;
+without them, those tests may skip. CI installs the encryption tools.
+The deployed runtime at `785bc7e` passed **273 Python tests and 11 Node suites**.
+Tests using mocked providers are not live GPU or OAuth acceptance evidence.
 
-## Delivery and operating plan
+Use the [Render + Modal runbook](docs/deployment.md) for deployment, secrets,
+backups and recovery. Deploys are manual, using an exact reviewed commit.
+[Operating costs](docs/operating-costs.md) documents the approximately $20/month
+target and the distinction between application allowances and a provider invoice cap.
 
-- [Launch readiness](docs/launch-readiness.md): evidence and remaining gates.
-- [Delivery plan](docs/WAYLINE_PLAN.md): full requested scope.
-- [Operating costs and future credits](docs/operating-costs.md): assumptions,
-  beta limits and billing design.
-- [Production UX audit](docs/PRODUCTION_UX_AUDIT.md): attached six-phase checklist.
-- [Model provenance](MODEL_PROVENANCE.md): research-use and commercialization questions.
+## Naming and rights
 
-## License
+**Wayline** is the application and repository name. `lingbot_map`, the installed
+`lingbot-map` Python distribution, existing configuration keys and the historical
+branch name remain stable integration identifiers. They retain the model's origin
+and avoid breaking deployments, imports or stored workspaces during a docs cleanup.
 
-Repository source is presented under [`LICENSE.txt`](LICENSE.txt). That source
-license must not be assumed to cover model weights, training data, example
-assets, output rights, or trademarks. The generated synthetic sample has the
-separate provenance and CC0 dedication in [`SAMPLE_LICENSE.md`](SAMPLE_LICENSE.md).
-See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for retained upstream
-notices and review flags.
+[LICENSE.txt](LICENSE.txt) covers repository source only as stated there.
+[MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) tracks unresolved model/checkpoint/data
+rights. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) retains upstream notices;
+[SAMPLE_LICENSE.md](SAMPLE_LICENSE.md) separately dedicates the synthetic sample
+to CC0. The product rename is not an endorsement or a claim of commercial clearance.

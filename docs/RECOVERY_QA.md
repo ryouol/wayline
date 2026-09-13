@@ -19,9 +19,9 @@ establish a nightly schedule or a completed restore onto a replacement Render se
   Modal credentials, was exported separately as `render-env-20260910.json.age`.
   No plaintext environment archive was written. Decryption and the bootstrap
   credential match were verified without printing secret values.
-- Both encrypted files are in `/Users/royluo/Documents/Wayline Backups`, with
+- Both encrypted files are in `~/Documents/Wayline Backups`, with
   private directory/file permissions. The age identity is stored separately at
-  `/Users/royluo/.config/wayline/recovery-age.key` with mode `0600`.
+  `~/.config/wayline/recovery-age.key` with mode `0600`.
   Both locations are on the same Mac; independent key escrow is still required.
 - A fresh Docker volume was restored with the existing snapshot verifier. The
   app then ran as UID 10001 with a read-only root, 512 MiB, 0.5 CPU, no external

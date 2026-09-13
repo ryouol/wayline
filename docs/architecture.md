@@ -1,4 +1,4 @@
-# Workspace architecture
+# Wayline architecture
 
 ## Components
 
@@ -66,13 +66,13 @@ continue to count against tenant storage until object deletion succeeds.
 Attempt artifacts are not returned, downloaded, or shareable until their job's
 fenced `ready` settlement commits.
 
-## Production migration boundary
+## Future scaling boundary
 
 SQLite and a local worker are appropriate for the single-instance demo, not for
 horizontal scaling. Preserve the current service and API contracts while
 replacing:
 
-| Current | Production | Required behavior |
+| Current | Future option | Required behavior |
 |---|---|---|
 | SQLite repository | Postgres | preserve attempt fences, quota/idempotency/outbox transactions; RLS/tenant tests; `FOR UPDATE SKIP LOCKED`; migrations |
 | Local object store | S3/R2/GCS | implement the full injected protocol; direct signed multipart upload; checksums; scoped IAM; lifecycle/delete reconciliation |

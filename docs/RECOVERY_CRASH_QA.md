@@ -98,7 +98,7 @@ the successful run and both diagnostic receipts remain in the ignored local
 
 - Runtime: `d88da1579e57de8ba99d44e3ebdf8662f1679bc3`; Render deploy `dep-dai3o8m7bikc73bekfs0`
   became live at 2026-09-11T17:37:23.389238Z on the existing Wayline service.
-- [Exact-commit CI](https://github.com/ryouol/lingbot-map/actions/runs/34628366203)
+- [Exact-commit CI](https://github.com/ryouol/wayline/actions/runs/34628366203)
   passed 237 Python tests, ten Node suites, strict lint/type/format checks,
   packaging and production-container verification.
 - Public HTTPS health returned 200. All 64 deployed static files and the recovery

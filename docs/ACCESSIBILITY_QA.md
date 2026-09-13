@@ -22,7 +22,7 @@ This is a targeted browser audit, not a WCAG certification or physical-phone tes
 
 Exact screenshots were saved and the private-before/private-after and mobile-after
 files were visually inspected. Evidence directory on the QA machine:
-`/Users/royluo/Documents/ChatGPT/LingBot/viewer-accessibility-2026-09-11/`.
+the private operator evidence folder `viewer-accessibility-2026-09-11/` (not included in Git).
 
 - `02-private-keyboard-before.png`
 - `05-private-keyboard-after.png`
@@ -79,7 +79,7 @@ on macOS; iOS Safari and physical-phone validation remain unverified.
 
 The CSS correction is deployed in Render release `dep-dahojr142hec739r047g`,
 runtime `21826402da53350132ab05fd1a08e9a53e7e8bd9`, after
-[CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34563859126).
+[CI passed](https://github.com/ryouol/wayline/actions/runs/34563859126).
 The public stylesheet matched local source byte-for-byte (SHA-256
 `c7d575b01441643432c6fa31a6c7604f20a384990ec6953abb80b9790878b23e`).
 HTTPS health returned 200. All environment values were preserved. Six jobs

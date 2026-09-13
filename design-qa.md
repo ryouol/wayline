@@ -7,7 +7,7 @@ design and release-package acceptance, not commercial-launch or new-model accept
 
 ## Reference and comparison
 
-Approved source: `/Users/royluo/Documents/ChatGPT/LingBot/design-2026-09-11/04-gallery-instrument-signup.png`.
+Approved source: private operator design artifact `04-gallery-instrument-signup.png` (not included in Git).
 Studio reference: `03-instrument.png` in the same directory. The handoff and
 revision brief remain alongside those artifacts.
 

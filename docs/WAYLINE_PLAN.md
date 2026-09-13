@@ -72,7 +72,7 @@ controls reduce exposure; they are not a provider invoice cap. See
 - Original hardening and the fresh-canvas viewer fix are preserved in `027d338`.
 - Current local and runtime CI gates passed: 226 Python tests, six Node suites,
   strict Ruff/formatting, mypy for 20 modules, wheel build and container smoke.
-  [Runtime CI](https://github.com/ryouol/lingbot-map/actions/runs/34563859126)
+  [Runtime CI](https://github.com/ryouol/wayline/actions/runs/34563859126)
   validates the deployed commit.
 - Secret scanning included reachable Git history and exact live-credential
   matching; the recorded scan found no credential matches. Endpoint, identity,
@@ -87,4 +87,4 @@ controls reduce exposure; they are not a provider invoice cap. See
 - Simplify's three passes and all four final code-review passes completed.
   [REVIEW.md](REVIEW.md) retains 92 numbered findings and dispositions; aggregate
   change-size concerns 19, 66 and 83 remain open. The branch is pushed and
-  [PR #10](https://github.com/ryouol/lingbot-map/pull/10) remains a draft.
+  [PR #10](https://github.com/ryouol/wayline/pull/10) remains a draft.

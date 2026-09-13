@@ -70,7 +70,7 @@ its tab closed, viewport reset and disposable database/objects/token removed.
 
 ## Deployment
 
-[Exact-commit CI](https://github.com/ryouol/lingbot-map/actions/runs/34633462356) passed all checks, including 255 Python tests in 31.31 seconds and the 512 MiB / 0.5 CPU container smoke at a 201.2 MiB peak. Runtime
+[Exact-commit CI](https://github.com/ryouol/wayline/actions/runs/34633462356) passed all checks, including 255 Python tests in 31.31 seconds and the 512 MiB / 0.5 CPU container smoke at a 201.2 MiB peak. Runtime
 `b8ac0fc2eafb123349f8369ede6b7779cd5bc037` became live on the existing Render service at
 `2026-09-11T18:40:07.818394Z`; deployment `dep-dai4lm1594qs73eegks0`.
 

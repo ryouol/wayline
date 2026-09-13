@@ -52,7 +52,7 @@ questions.
 
 ## Deployment receipt
 
-Exact-source [CI 34639918566](https://github.com/ryouol/lingbot-map/actions/runs/34639918566)
+Exact-source [CI 34639918566](https://github.com/ryouol/wayline/actions/runs/34639918566)
 passed for `5e1d370`: 255 Python tests in 35.73 seconds, all eleven Node suites,
 strict lint/type/format, wheel verification and production-container smoke.
 The 512 MiB / 0.5 CPU smoke peaked at 202.3 MiB.

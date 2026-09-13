@@ -28,12 +28,12 @@ current runtime, CI and recovery rollout status.
 - Verified application commit `351f339f9847530fae5955d2e9ce2ce68753624e`;
   deploy `dep-dahk166k1f9s73fk7bq0` was live with normal Docker startup during that pass.
   The SSH directory is owned by UID 10001 with mode `0700`.
-- [CI for that application commit passed](https://github.com/ryouol/lingbot-map/actions/runs/34543233887),
+- [CI for that application commit passed](https://github.com/ryouol/wayline/actions/runs/34543233887),
   including 170 Python tests and the production container smoke.
   The initial application deployment also
-  [passed CI](https://github.com/ryouol/lingbot-map/actions/runs/34534857893).
+  [passed CI](https://github.com/ryouol/wayline/actions/runs/34534857893).
   The preceding disk-fix commit also passed
-  [CI](https://github.com/ryouol/lingbot-map/actions/runs/34533934729).
+  [CI](https://github.com/ryouol/wayline/actions/runs/34533934729).
 - Private data is `/data/wayline`, below Render's root-owned `/data` mount.
   The initial `/data` configuration failed before database initialization.
 - Modal app `wayline-reconstruction`, workspace `royluo05`, image

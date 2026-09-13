@@ -118,7 +118,7 @@ the scene's visual-quality conclusion or close physical-phone acceptance.
 
 ### UI deployment receipt
 
-Exact-source [CI 34640794995](https://github.com/ryouol/lingbot-map/actions/runs/34640794995)
+Exact-source [CI 34640794995](https://github.com/ryouol/wayline/actions/runs/34640794995)
 passed for `c8fd218`: 255 Python tests in 31.08 seconds, all eleven Node suites,
 strict lint/type/format and wheel/container verification. The 512 MiB / 0.5 CPU
 container smoke peaked at 214.2 MiB. All simplify and code-review subskill passes

@@ -54,7 +54,7 @@ See [operating costs](operating-costs.md) for the unchanged $20 monthly target.
 
 Render deploy `dep-dahnr4fqj5pc739q5i50` is live on
 `1fbfe9a557dcc1e5799814d46590f364ef699e71` after
-[CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34560538161),
+[CI passed](https://github.com/ryouol/wayline/actions/runs/34560538161),
 including the production container smoke test. The existing Starter service,
 single instance, disk and environment were preserved; Modal's validated GPU
 worker did not need redeployment.

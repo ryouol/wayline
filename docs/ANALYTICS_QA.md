@@ -55,7 +55,7 @@ this collector rollout and makes no private-studio or physical-device claim.
 
 ## Deployment
 
-Runtime `b4dd89670034b7d0b0ca42c19cd0633b35b844b0` passed [exact-commit hosted CI](https://github.com/ryouol/lingbot-map/actions/runs/34631234915)
+Runtime `b4dd89670034b7d0b0ca42c19cd0633b35b844b0` passed [exact-commit hosted CI](https://github.com/ryouol/wayline/actions/runs/34631234915)
 and became live on the existing [Wayline service](https://wayline-9ten.onrender.com/)
 at `2026-09-11T18:10:32.618362Z`. Render deployment: `dep-dai47qmq1p3s73b22ijg`.
 

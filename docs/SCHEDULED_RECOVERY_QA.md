@@ -52,7 +52,7 @@ completion marker. Its exact failing operation was not captured; a later read
 succeeded, which alone does not prove an immediate readback failure caused it.
 
 The reviewed retry fix `1e78b473fd9806701435b3f560a42ea659ce663a` then deployed as
-`dep-dahmc83m8hqs73cee4fg` after [CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34554260281).
+`dep-dahmc83m8hqs73cee4fg` after [CI passed](https://github.com/ryouol/wayline/actions/runs/34554260281).
 One explicit bounded operator retry ran for 19.427 seconds and also failed with
 `backup_failed`, leaving one encrypted part and no completion marker. Its actual
 admission time and operator-retry tag are retained. The old partial prefix was
@@ -83,7 +83,7 @@ remain charged while the worker waits for its normal daily admission.
 ## Diagnostic deployment
 
 Runtime `0ca62c35be8b77f8db1063b8c39fe560fb472907` deployed in
-`dep-dahmi2jm8hqs73cf72i0`. [Its CI passed](https://github.com/ryouol/lingbot-map/actions/runs/34555027387),
+`dep-dahmi2jm8hqs73cf72i0`. [Its CI passed](https://github.com/ryouol/wayline/actions/runs/34555027387),
 including all 196 Python tests and the production container smoke. Post-deploy
 checks returned HTTP 200, four READY jobs, one Google identity and the saved
 5,908-point scene. The two-attempt ledger and all configured allowances survived

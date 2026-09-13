@@ -53,7 +53,7 @@ See [model provenance](../MODEL_PROVENANCE.md).
 
 ## Release verification
 
-[Exact-source CI](https://github.com/ryouol/lingbot-map/actions/runs/34637277544)
+[Exact-source CI](https://github.com/ryouol/wayline/actions/runs/34637277544)
 passed for `abd3f4329209e1d046603f8fa311d81166a5636c`: 255 Python tests in
 32.20 seconds, all 11 Node suites, lint/type/format, wheel and production-container
 checks. The constrained 512MiB/0.5CPU smoke peaked at 200.8MiB and passed its

@@ -316,6 +316,8 @@
 
     async load(url, { headers = {}, prefetchedResponse = null } = {}) {
       if (this.destroyed) throw new Error("The viewer has been closed.");
+      const loadStarted = performance.now();
+      this.readiness = null;
       const sequence = ++this.loadSequence;
       if (this.loadController) this.loadController.abort();
       this.loadController = new AbortController();
@@ -327,7 +329,9 @@
         signal: this.loadController.signal,
       });
       if (!response.ok) throw new Error("The stored scene could not be loaded.");
-      const parsed = parseGlb(await response.arrayBuffer());
+      const bytes = await response.arrayBuffer();
+      const downloadFinished = performance.now();
+      const parsed = parseGlb(bytes);
       if (this.destroyed || sequence !== this.loadSequence) return;
       const raw = parsed.positions.values;
       if (parsed.synthetic && !parsed.trace) {
@@ -387,6 +391,20 @@
       }
       this.status.textContent = `${this.count.toLocaleString()} points loaded.${this.interactive ? " Drag or use arrow keys to orbit." : ""}`;
       this.draw();
+      const drawSubmitted = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyed || sequence !== this.loadSequence || this.gl.isContextLost()) return;
+        this.readiness = {
+          downloadSeconds: (downloadFinished - loadStarted) / 1000,
+          parseUploadDrawSeconds: (drawSubmitted - downloadFinished) / 1000,
+          browserReadySeconds: (performance.now() - loadStarted) / 1000,
+          browserReadyAt: new Date().toISOString(),
+          definition: "first draw plus two animation frames; not GPU presentation confirmation",
+        };
+        this.canvas.dispatchEvent(new CustomEvent("wayline-viewer-ready", {
+          detail: this.readiness,
+        }));
+      }));
     }
 
     normalizePoint(point) { return point.map((value, axis) => (value-this.center[axis])/this.extent*2); }

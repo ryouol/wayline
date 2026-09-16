@@ -676,6 +676,7 @@ class WorkspaceService:
 
     def _process_job(self, job: dict[str, Any]) -> None:
         tenant_id, job_id = job["tenant_id"], job["id"]
+        processing_started = time.monotonic()
         attempt_token = job["attempt_token"]
         worker_id = job["worker_id"]
         engine = self.engines[job["engine_id"]]
@@ -723,6 +724,7 @@ class WorkspaceService:
             )
             if cancelled():
                 raise JobCancelled("job cancelled before artifacts were committed")
+            storage_started = time.monotonic()
             progress("storing", 0.92)
             for artifact in result.artifacts:
                 suffix = Path(artifact.filename).suffix.lower()
@@ -794,6 +796,21 @@ class WorkspaceService:
                 worker_id=worker_id,
                 used_units=result.used_units,
             )
+            if completed:
+                logger.info(
+                    "reconstruction_completed %s",
+                    json.dumps(
+                        {
+                            "jobId": job_id,
+                            "attemptId": attempt_token,
+                            "queueWaitSeconds": max(0, job["started_at"] - job["created_at"]),
+                            "serverProcessingSeconds": time.monotonic() - processing_started,
+                            "artifactStorageSeconds": time.monotonic() - storage_started,
+                            "stages": result.report,
+                            "viewerReadinessMeasured": False,
+                        }
+                    ),
+                )
             if not completed:
                 self._discard_attempt_artifacts(tenant_id, job_id, attempt_token, stored_objects)
         except JobCancelled as error:

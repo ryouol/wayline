@@ -231,9 +231,12 @@ class ModalLingbotEngine(LingbotResearchEngine):
         call = None
         succeeded = False
         try:
+            upload_started = time.monotonic()
             progress("uploading_to_gpu", 0.15)
             async with volume.batch_upload.aio() as batch:
                 batch.put_file(str(context.source_path), f"/{attempt}/source.video")
+            source_upload_seconds = time.monotonic() - upload_started
+            provider_started = time.monotonic()
             function = modal.Function.from_name(MODAL_APP, "reconstruct")
             call = await function.spawn.aio(
                 attempt_id=attempt,
@@ -248,6 +251,8 @@ class ModalLingbotEngine(LingbotResearchEngine):
                 )
             progress("reconstructing", 0.3)
             raw_report = await call.get.aio()
+            provider_round_trip_seconds = time.monotonic() - provider_started
+            download_started = time.monotonic()
             progress("exporting", 0.85)
             path = work_dir / "scene.glb"
             size = 0
@@ -262,6 +267,11 @@ class ModalLingbotEngine(LingbotResearchEngine):
             if not isinstance(raw_report, dict):
                 raise ValueError("The runner returned an invalid report")
             report = _public_report(raw_report)
+            report.update(
+                sourceUploadSeconds=source_upload_seconds,
+                providerRoundTripSeconds=provider_round_trip_seconds,
+                artifactDownloadSeconds=time.monotonic() - download_started,
+            )
             if report.get("checkpointSha256") != MODEL_SHA256:
                 raise ValueError("The runner used an unexpected checkpoint")
             used_units = report.get("frames")
@@ -295,7 +305,18 @@ class ModalLingbotEngine(LingbotResearchEngine):
             if call is not None and not succeeded:
                 try:
                     async with asyncio.timeout(10):
+                        cancel_started = time.monotonic()
                         await call.cancel.aio(terminate_containers=True)
+                        logger.info(
+                            "provider_cancel_ack %s",
+                            json.dumps(
+                                {
+                                    "attemptId": attempt,
+                                    "ackSeconds": time.monotonic() - cancel_started,
+                                    "providerTerminationVerified": False,
+                                }
+                            ),
+                        )
                 except Exception:
                     logger.warning("GPU cancellation will be retried by cleanup")
             if not succeeded:

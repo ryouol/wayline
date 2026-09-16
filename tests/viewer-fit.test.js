@@ -16,6 +16,7 @@ const canvas = {
   getContext: () => gl, addEventListener() {}, dispatchEvent() {},
 };
 const scope = {
+  performance, requestAnimationFrame: callback => callback(),
   window: { addEventListener() {}, devicePixelRatio: 1 }, AbortController, TextDecoder,
   CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
   ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },

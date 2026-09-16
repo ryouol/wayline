@@ -3,7 +3,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
-const scope = {window: {}, AbortController, TextDecoder,
+const animationFrames = [];
+const scope = {window: {}, AbortController, TextDecoder, performance,
+  requestAnimationFrame: callback => animationFrames.push(callback),
   CustomEvent: class { constructor(type, options) { this.type=type; this.detail=options.detail; } },
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/viewer.js"), "utf8"), scope);
@@ -30,8 +32,13 @@ async function load(buffer, options) {
   let request;
   scope.fetch=async (url, init) => {request={url,init}; return {ok:true,arrayBuffer:async()=>buffer};};
   const viewer=Object.create(scope.window.PointCloudViewer.prototype);
-  Object.assign(viewer,{status:{},loadSequence:0,gl:{bindBuffer(){},bufferData(){}},draw(){},canvas:{dispatchEvent(){}}});
+  Object.assign(viewer,{status:{},loadSequence:0,gl:{bindBuffer(){},bufferData(){},isContextLost(){return false;}},draw(){},canvas:{dispatchEvent(){}}});
   await viewer.load("/api/public/share/content", options);
+  assert.equal(viewer.readiness, null, "Download and draw do not imply browser readiness");
+  animationFrames.splice(0).forEach(callback => callback());
+  assert.equal(viewer.readiness, null, "Wait for the second animation frame");
+  animationFrames.splice(0).forEach(callback => callback());
+  assert.ok(viewer.readiness.browserReadySeconds >= viewer.readiness.downloadSeconds);
   return {viewer,request};
 }
 (async()=>{

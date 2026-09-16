@@ -44,7 +44,15 @@ def remote_engine(settings, service):
     return engine, context
 
 
-def mock_transport(monkeypatch, *, stall=None, frames=30, missing_call=False, failed_removal=False):
+def mock_transport(
+    monkeypatch,
+    *,
+    stall=None,
+    frames=30,
+    missing_call=False,
+    failed_removal=False,
+    provider_failure=False,
+):
     import modal
 
     calls = SimpleNamespace(cancelled=0, uploads=[], removed=[], submissions=[], polls=0)
@@ -75,6 +83,8 @@ def mock_transport(monkeypatch, *, stall=None, frames=30, missing_call=False, fa
 
     async def get():
         calls.polls += 1
+        if provider_failure:
+            raise RuntimeError("provider unavailable")
         if stall == "inference":
             await asyncio.Future()
         return {"checkpointSha256": MODEL_SHA256, "pointCount": 5908, "frames": frames}
@@ -111,6 +121,9 @@ def test_remote_transport_persists_call_budget_and_retrieves_artifact(remote_eng
     result = engine.run(context, lambda *a: None, lambda: False)
     try:
         assert result.used_units == 30
+        for key in ("sourceUploadSeconds", "providerRoundTripSeconds", "artifactDownloadSeconds"):
+            assert result.report[key] >= 0
+        assert "billedCostUsd" not in result.report
         assert result.artifacts[0].path.read_bytes()[:4] == b"glTF"
         assert calls.submissions[0]["max_frames"] == 30
         assert calls.submissions[0]["expires_at"] > 0
@@ -304,3 +317,73 @@ def test_disabling_submission_keeps_durable_remote_cleanup(remote_engine, monkey
         assert len(calls.removed) == 1
     finally:
         restarted.stop_worker()
+
+
+def test_provider_failure_keeps_charge_and_durable_cleanup(remote_engine, monkeypatch):
+    engine, context = remote_engine
+    calls = mock_transport(monkeypatch, provider_failure=True)
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        engine.run(context, lambda *a: None, lambda: False)
+    assert calls.cancelled == 1
+    assert not list(context.work_root.iterdir())
+    with engine.database.connect() as connection:
+        row = connection.execute("SELECT * FROM remote_runs").fetchone()
+        assert row["call_id"] == "fc_test"
+        assert row["cleaned"] == 0
+    assert engine.capacity_unavailable_reason() is not None
+
+
+def test_stage_metrics_are_allowlisted_and_finite():
+    from lingbot_map.workspace.engines import _public_report
+
+    report = _public_report(
+        {
+            "modelLoadingSeconds": 2.5,
+            "hostToDeviceSeconds": float("nan"),
+            "artifactUploadSeconds": -1,
+            "workerTotalSeconds": True,
+            "gpuType": "NVIDIA A100",
+            "secretSourcePath": "/private/capture",
+            "billedCostUsd": 12,
+        }
+    )
+    assert report == {"modelLoadingSeconds": 2.5, "gpuType": "NVIDIA A100"}
+
+
+def test_provider_failure_releases_user_reservation_but_not_remote_admission(
+    remote_engine, service, tenant_id, monkeypatch
+):
+    engine, _ = remote_engine
+    service.engines[engine.descriptor.id] = engine
+    monkeypatch.setattr(
+        service.inspector,
+        "inspect",
+        lambda _: {
+            "durationSeconds": 1,
+            "frames": 10,
+            "width": 64,
+            "height": 48,
+        },
+    )
+    asset = service.upload_video(
+        tenant_id=tenant_id,
+        filename="failure.mp4",
+        media_type="video/mp4",
+        stream=io.BytesIO(fake_mp4()),
+    )
+    job = service.database.create_job(
+        tenant_id=tenant_id,
+        engine_id=engine.descriptor.id,
+        source_asset_id=asset["id"],
+        params={},
+        provenance={},
+        reserve_units=3,
+    )
+    mock_transport(monkeypatch, provider_failure=True)
+    assert service.process_next_job()
+    failed = service.database.get_job(tenant_id, job["id"])
+    assert failed["state"] == "failed"
+    assert failed["artifacts"] == []
+    quota = service.database.quota(tenant_id)
+    assert quota["reserved_units"] == quota["consumed_units"] == 0
+    assert engine.capacity_unavailable_reason() is not None

@@ -134,8 +134,23 @@ def _public_report(value: dict[str, Any]) -> dict[str, Any]:
         "peakVramBytes",
         "artifactBytes",
         "pointCount",
+        "workerImportSeconds",
+        "volumeReloadSeconds",
+        "frameExtractionSeconds",
+        "framePreprocessingSeconds",
+        "modelLoadingSeconds",
+        "hostToDeviceSeconds",
+        "exportSeconds",
+        "artifactUploadSeconds",
+        "workerTotalSeconds",
+        "sourceUploadSeconds",
+        "providerRoundTripSeconds",
+        "artifactDownloadSeconds",
+        "peakReservedVramBytes",
+        "inputWidth",
+        "inputHeight",
     }
-    string_keys = {"engineVersion", "license", "sourceRevision", "checkpointSha256"}
+    string_keys = {"engineVersion", "license", "sourceRevision", "checkpointSha256", "gpuType"}
     for key in numeric_keys:
         item = value.get(key)
         if isinstance(item, (int, float)) and not isinstance(item, bool):

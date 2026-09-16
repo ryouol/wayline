@@ -97,6 +97,9 @@ def reconstruct(
     max_frames: int = 120,
     extract_fps: int = 3,
 ) -> dict:
+    import time
+
+    entered = time.monotonic()
     import json
     import tempfile
     import time
@@ -109,6 +112,7 @@ def reconstruct(
     from lingbot_map.workspace.capture import extract_capture
     from lingbot_map.workspace.scene_export import export_reconstruction
 
+    import_seconds = time.monotonic() - entered
     acknowledge(research_ack)
     if not 0 < expires_at - time.time() <= 3600:
         raise ValueError("Capture submission has expired or has an invalid deadline")
@@ -118,7 +122,9 @@ def reconstruct(
         or not 1 <= extract_fps <= 15
     ):
         raise ValueError("Invalid capture job parameters")
+    volume_started = time.monotonic()
     jobs.reload()
+    volume_reload_seconds = time.monotonic() - volume_started
     root = Path("/jobs") / attempt_id
     source = root / "source.video"
     if source.is_symlink() or not source.is_file() or source.stat().st_size > 250 * 1024 * 1024:
@@ -127,7 +133,9 @@ def reconstruct(
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="wayline-") as directory:
         folder = Path(directory) / "frames"
+        stage_started = time.monotonic()
         timestamps = extract_capture(source, folder, max_frames=max_frames, sample_fps=extract_fps)
+        extraction_seconds = time.monotonic() - stage_started
         args = SimpleNamespace(
             image_size=518,
             patch_size=14,
@@ -143,11 +151,19 @@ def reconstruct(
         )
         device = torch.device("cuda")
         dtype = torch.bfloat16
+        stage_started = time.monotonic()
         images, _, _ = demo.load_images(image_folder=str(folder), image_size=518, patch_size=14)
+        preprocessing_seconds = time.monotonic() - stage_started
+        torch.cuda.reset_peak_memory_stats()
+        stage_started = time.monotonic()
         model = demo.load_model(args, device)
         model.aggregator = model.aggregator.to(dtype=dtype)
+        torch.cuda.synchronize()
+        model_loading_seconds = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         images = images.to(device)
-        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        transfer_seconds = time.monotonic() - stage_started
         if time.time() >= expires_at:
             raise ValueError("Capture expired before model inference")
         inference_started = time.monotonic()
@@ -160,10 +176,23 @@ def reconstruct(
             )
         torch.cuda.synchronize()
         inference_seconds = time.monotonic() - inference_started
+        stage_started = time.monotonic()
         predictions, images_cpu = demo.postprocess(predictions, images)
         visualization = demo.prepare_for_visualization(predictions, images_cpu)
         report = export_reconstruction(visualization, timestamps, root / "scene.glb")
+        export_seconds = time.monotonic() - stage_started
         report.update(
+            workerImportSeconds=import_seconds,
+            volumeReloadSeconds=volume_reload_seconds,
+            frameExtractionSeconds=extraction_seconds,
+            framePreprocessingSeconds=preprocessing_seconds,
+            modelLoadingSeconds=model_loading_seconds,
+            hostToDeviceSeconds=transfer_seconds,
+            exportSeconds=export_seconds,
+            gpuType=torch.cuda.get_device_name(),
+            inputWidth=int(images.shape[-1]),
+            inputHeight=int(images.shape[-2]),
+            peakReservedVramBytes=torch.cuda.max_memory_reserved(),
             inferenceSeconds=inference_seconds,
             totalSeconds=time.monotonic() - started,
             peakVramBytes=torch.cuda.max_memory_allocated(),
@@ -174,7 +203,10 @@ def reconstruct(
         )
         (root / "report.json").write_text(json.dumps(report, allow_nan=False))
         (root / "report.json").chmod(0o600)
+        stage_started = time.monotonic()
         jobs.commit()
+        report["artifactUploadSeconds"] = time.monotonic() - stage_started
+        report["workerTotalSeconds"] = time.monotonic() - entered
     return report
 
 

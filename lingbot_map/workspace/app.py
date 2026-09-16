@@ -1079,6 +1079,13 @@ def main() -> None:
         print(settings.bootstrap_token)
     import uvicorn
 
+    # Only application events: do not enable HTTP client or request URL logging.
+    workspace_logger = logging.getLogger("lingbot_map.workspace")
+    workspace_logger.setLevel(logging.INFO)
+    if not workspace_logger.handlers:
+        workspace_logger.addHandler(logging.StreamHandler())
+    workspace_logger.propagate = False
+
     # OAuth callbacks can contain authorization codes. Avoid default request logs.
     with workspace_lock(settings.data_dir):
         uvicorn.run(

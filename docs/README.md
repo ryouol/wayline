@@ -20,7 +20,7 @@ operational state conflict. Every live claim is a dated observation, not a monit
 
 - Accounts and limits: [two-video policy](TWO_VIDEO_QA.md), [owner exception](OWNER_ACCESS_QA.md), [sign-out](SIGNOUT_QA.md).
 - Product UI: [processing](PROCESSING_UI_QA.md), [theme](CURRENT_THEME_QA.md), [studio](STUDIO_THEME_QA.md), [mobile viewport](MOBILE_WALK_QA.md).
-- GPU efficiency: [measurement contract, benchmark protocol and evidence boundaries](GPU_EFFICIENCY.md).
+- GPU efficiency: [measurement contract and protocol](GPU_EFFICIENCY.md), [September 16 benchmark and cancellation evidence](GPU_EFFICIENCY_QA.md).
 - Reconstruction: [real benchmark](REAL_CAPTURE_QA.md), [user capture quality](GOOGLE_CAPTURE_QA.md), [capacity](CAPACITY_QA.md), [GPU admission](GPU_CAPACITY_QA.md).
 - Reliability: [request/cancellation checks](RELIABILITY_QA.md), [manual recovery](RECOVERY_QA.md), [scheduled recovery](SCHEDULED_RECOVERY_QA.md), [crash recovery](RECOVERY_CRASH_QA.md).
 - Security and policy: [security review](security-review.md), [provider logs](PROVIDER_LOG_QA.md), [analytics](ANALYTICS_QA.md).

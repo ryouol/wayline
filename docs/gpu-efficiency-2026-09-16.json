@@ -1,0 +1,227 @@
+{
+  "researchOnly": true,
+  "upstream": "LingBot-Map",
+  "runs": [
+    {
+      "sceneId": "tum-fr3-office-first10s",
+      "sourceSha256": "50ca39e22796f8e741983f9830cb7fffbbcf03579fa1f648eaa80a1c2fcccdbd",
+      "license": "CC BY 4.0; TUM RGB-D Benchmark; Sturm et al., IROS 2012; frames 0-299 transcoded to H.264; https://cvg.cit.tum.de/data/datasets/rgbd-dataset#license",
+      "sourceMetadata": {
+        "container": "video/mp4",
+        "durationSeconds": 10.0,
+        "fps": 30.0,
+        "frames": 300,
+        "height": 480,
+        "samplingDurationSeconds": 10.0,
+        "width": 640
+      },
+      "extractFps": 3,
+      "maxFrames": 120,
+      "state": "ready",
+      "estimatedCostUsd": null,
+      "billedCostUsd": null,
+      "browserReadiness": {
+        "firstLocalLoadSeconds": 0.18859999999403954,
+        "scope": "loopback fixture; first draw plus two animation frames; not production end-to-end latency"
+      },
+      "qualityReview": {
+        "missingSurfacesSeverity": 2,
+        "noisyBoundariesSeverity": 2,
+        "recognizableStructureLossSeverity": 0,
+        "grossTrajectoryDiscontinuityAtReviewedPositions": 0,
+        "scale": "0 absent; 1 minor; 2 clearly visible; 3 prevents recognition",
+        "protocol": "1280x800; fixed normalized orbit and five nearest replay positions; no ground-truth accuracy claim"
+      },
+      "providerQueueSeconds": null,
+      "containerStartupSeconds": null,
+      "jobId": "job_cecd1acaf2654e119832fd8d5405de6f",
+      "queueWaitSeconds": 0.0012691020965576172,
+      "serverCompletionSeconds": 107.06211805343628,
+      "artifacts": [
+        {
+          "id": "art_8a495f8912394816991636e6c9232df3",
+          "sha256": "3556540de61cb0a99f8d1d54b128715739ecd3cc06593fb22fa515aae0e992b3",
+          "metadata": {
+            "artifactBytes": 12210576,
+            "artifactDownloadSeconds": 1.802736375015229,
+            "artifactUploadSeconds": 2.6780071519999993,
+            "checkpointSha256": "ee665103348e07e6b826d529b8e61de8f413d5432a4f2e84970d6c8fd2e1cd72",
+            "commerciallyCleared": false,
+            "exportSeconds": 0.6057807859999969,
+            "frameExtractionSeconds": 2.271413151000001,
+            "framePreprocessingSeconds": 0.13352753899999925,
+            "frames": 30,
+            "gpuType": "NVIDIA A100-SXM4-80GB",
+            "hostToDeviceSeconds": 0.016052326999997035,
+            "inferenceSeconds": 5.797793361000004,
+            "inputHeight": 392,
+            "inputWidth": 518,
+            "modelLoadingSeconds": 41.134929845,
+            "peakReservedVramBytes": 9288286208,
+            "peakVramBytes": 9263651840,
+            "pointCount": 750000,
+            "providerRoundTripSeconds": 103.41502633399796,
+            "researchOnly": true,
+            "sourceRevision": "204754b72bb24f561f8d7e7e1e4e4cd9e809adf9",
+            "sourceUploadSeconds": 1.5965359580004588,
+            "totalSeconds": 50.024155585,
+            "volumeReloadSeconds": 0.12610910099999995,
+            "workerImportSeconds": 4.691348345,
+            "workerTotalSeconds": 57.521595383999994
+          }
+        },
+        {
+          "id": "art_68aea51919424cd7a5ad2078017c3aca",
+          "sha256": "fb0e95ddf95c1a50c0ea2a6a9eddfcd58bf22d639ea8ae92351a4b6df84f5497",
+          "metadata": {}
+        }
+      ],
+      "gpuFunctionWindowComponentUsd": 0.03991998719649599
+    },
+    {
+      "sceneId": "tum-fr3-office-first10s",
+      "sourceSha256": "50ca39e22796f8e741983f9830cb7fffbbcf03579fa1f648eaa80a1c2fcccdbd",
+      "license": "CC BY 4.0; TUM RGB-D Benchmark; Sturm et al., IROS 2012; frames 0-299 transcoded to H.264; https://cvg.cit.tum.de/data/datasets/rgbd-dataset#license",
+      "sourceMetadata": {
+        "container": "video/mp4",
+        "durationSeconds": 10.0,
+        "fps": 30.0,
+        "frames": 300,
+        "height": 480,
+        "samplingDurationSeconds": 10.0,
+        "width": 640
+      },
+      "extractFps": 2,
+      "maxFrames": 120,
+      "state": "ready",
+      "estimatedCostUsd": null,
+      "billedCostUsd": null,
+      "browserReadiness": {
+        "firstLocalLoadSeconds": 0.18390000000596046,
+        "scope": "loopback fixture; first draw plus two animation frames; not production end-to-end latency"
+      },
+      "qualityReview": {
+        "missingSurfacesSeverity": 2,
+        "noisyBoundariesSeverity": 2,
+        "recognizableStructureLossSeverity": 0,
+        "grossTrajectoryDiscontinuityAtReviewedPositions": 0,
+        "scale": "0 absent; 1 minor; 2 clearly visible; 3 prevents recognition",
+        "protocol": "1280x800; fixed normalized orbit and five nearest replay positions; no ground-truth accuracy claim"
+      },
+      "providerQueueSeconds": null,
+      "containerStartupSeconds": null,
+      "jobId": "job_0e6a620b57a24896a574ebb7523e203d",
+      "queueWaitSeconds": 0.001474142074584961,
+      "serverCompletionSeconds": 34.31273102760315,
+      "artifacts": [
+        {
+          "id": "art_228a7121823540a1a6b3b72fe04a1065",
+          "sha256": "83e83667f30ecff18970b16970ddb31eaf57215e79a8a6d2b46dccbdde45b983",
+          "metadata": {
+            "artifactBytes": 12140192,
+            "artifactDownloadSeconds": 1.6888961250078864,
+            "artifactUploadSeconds": 2.627590397000006,
+            "checkpointSha256": "ee665103348e07e6b826d529b8e61de8f413d5432a4f2e84970d6c8fd2e1cd72",
+            "commerciallyCleared": false,
+            "exportSeconds": 0.4451002870000025,
+            "frameExtractionSeconds": 0.8179112950000018,
+            "framePreprocessingSeconds": 0.0675694720000024,
+            "frames": 20,
+            "gpuType": "NVIDIA A100-SXM4-80GB",
+            "hostToDeviceSeconds": 0.010487638000000743,
+            "inferenceSeconds": 1.5325979590000003,
+            "inputHeight": 392,
+            "inputWidth": 518,
+            "modelLoadingSeconds": 25.54197399399999,
+            "peakReservedVramBytes": 9286189056,
+            "peakVramBytes": 9272171520,
+            "pointCount": 750000,
+            "providerRoundTripSeconds": 31.690966207999736,
+            "researchOnly": true,
+            "sourceRevision": "204754b72bb24f561f8d7e7e1e4e4cd9e809adf9",
+            "sourceUploadSeconds": 0.8383761669974774,
+            "totalSeconds": 28.416237366999994,
+            "volumeReloadSeconds": 0.3905695819999977,
+            "workerImportSeconds": 1.9260000001963817e-05,
+            "workerTotalSeconds": 31.436993744999995
+          }
+        },
+        {
+          "id": "art_672f29c012c847beb22d8f164cadd1a6",
+          "sha256": "3ff356711cf0ddb84d2298e28644b1017f6dc9b4e5d6c28d9125e63287114a2b",
+          "metadata": {}
+        }
+      ],
+      "gpuFunctionWindowComponentUsd": 0.021817273659029995
+    }
+  ],
+  "summary": {
+    "attempts": 2,
+    "successfulScenes": 2,
+    "failures": 0,
+    "estimatedCostUsdPerSuccess": null,
+    "billedCostUsdPerSuccess": null
+  },
+  "componentRate": {
+    "usdPerGpuSecond": 0.000694,
+    "source": "https://modal.com/pricing",
+    "checkedAt": "2026-09-16",
+    "scope": "GPU only during measured function window; excludes startup, idle and all other resources"
+  },
+  "runningCancellation": {
+    "runtimeCommit": "aff758c0f3cb09fe8635665c945fa50005107ef2",
+    "sourceSha256": "63637860153244f131f936fad9eb7657f287cfbf8f228611633db3686fd968b7",
+    "sourceMetadata": {
+      "container": "video/mp4",
+      "durationSeconds": 12.0,
+      "fps": 10.0,
+      "frames": 120,
+      "height": 480,
+      "samplingDurationSeconds": 12.0,
+      "width": 640
+    },
+    "cancelRequestedAt": 1789575285.687711,
+    "cancelSettledSeconds": 1.173,
+    "inferenceFramesObserved": 23,
+    "finalInferenceFramesObserved": 72,
+    "residualExecutionUpperBoundSeconds": 6.4436540603637695,
+    "providerBeforeCancel": {
+      "backlog": 0,
+      "containers": 1,
+      "runningInputs": 1
+    },
+    "providerAfterCancel": {
+      "backlog": 0,
+      "containers": 0,
+      "runningInputs": 0
+    },
+    "cancelledJob": {
+      "state": "cancelled",
+      "stage": "cancelled",
+      "usedUnits": 0,
+      "reservedUnits": 120,
+      "artifacts": [],
+      "cancellationRequested": true
+    },
+    "cleanupPendingNormalGrace": true,
+    "callId": "fc-01M2NFXMCX73TM1DQ4R2QNPX7E",
+    "remoteCleanupDueAt": 1789576840.6118345,
+    "admissionChargeRetained": true,
+    "operatorReservationEvidence": {
+      "quota": {
+        "reserved_units": 0,
+        "consumed_units": 64
+      },
+      "events": [
+        {
+          "event": "reserve",
+          "units": 120
+        },
+        {
+          "event": "cancelled",
+          "units": -120
+        }
+      ]
+    }
+  }
+}

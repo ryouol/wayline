@@ -102,6 +102,10 @@ means null, never zero. Report GPU-only component estimates with that label.
 
 ## Cancellation and recovery evidence
 
+[Fresh September 16 observations](GPU_EFFICIENCY_QA.md#fresh-cancellation-observations)
+include provider-queued cancellation and production cancellation during inference,
+with an observed 6.444-second upper bound to zero provider inputs/containers.
+
 - Automated queue cancellation checks release reservations without provider work.
 - The atomic-finish race test verifies committed cancellation wins and no partial
   artifact is published. Existing lease/attempt tests reject stale publication.
@@ -126,8 +130,8 @@ other users' jobs or terminate a shared container without isolating the drill.
 
 ## Completion boundary
 
-Instrumentation and regression evidence are implemented. A licensed real-scene
-comparison, separately attributed provider queue/startup, full per-success cost,
-and a fresh residual-GPU-time/provider-failure drill remain required before this
-optional portfolio story can be marked complete. Generated test patterns verify
-execution only. Keep those gaps explicit in recruiting claims.
+Instrumentation, regression evidence and [one licensed real-scene comparison](GPU_EFFICIENCY_QA.md)
+are recorded. Separate provider queue/startup timing and full per-success cost
+remain unverified. The exploratory comparison is confounded by cold/warm order;
+it does not establish a sampling speedup. Provider-failure tests use mocks. Keep
+those gaps explicit in recruiting claims. Generated test patterns verify execution only.

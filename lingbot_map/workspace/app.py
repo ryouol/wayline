@@ -12,6 +12,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -28,7 +29,7 @@ from fastapi import (
     Path as ApiPath,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -48,6 +49,7 @@ from .database import (
     RateLimitExceeded,
     token_digest,
 )
+from .delivery import BudgetedFileResponse
 from .engines import EngineUnavailable
 from .identity import IdentityStore
 from .pages import SUPPORT_PAGES, app_page, support_page
@@ -861,11 +863,11 @@ def create_app(
             file_stat = path.stat()
         except FileNotFoundError as error:
             raise HTTPException(404, "Artifact not found.") from error
-        workspace.database.reserve_delivery_bytes(
-            file_stat.st_size, limit=runtime.scene_delivery_budget_bytes
-        )
-        return FileResponse(
+        return BudgetedFileResponse(
             path,
+            reserve_bytes=partial(
+                workspace.database.reserve_delivery_bytes, limit=runtime.scene_delivery_budget_bytes
+            ),
             media_type=artifact["media_type"],
             filename=artifact["filename"],
             content_disposition_type="attachment" if attachment else "inline",

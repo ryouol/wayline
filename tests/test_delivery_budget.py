@@ -1,5 +1,6 @@
 """Scene delivery admission stays atomic, global and durable across restarts."""
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from lingbot_map.workspace.app import create_app
 from lingbot_map.workspace.database import Database, QuotaExceeded
+from lingbot_map.workspace.delivery import BudgetedFileResponse
 from lingbot_map.workspace.sample import build_synthetic_scene
 from lingbot_map.workspace.service import WorkspaceService
 
@@ -16,7 +18,7 @@ from .conftest import BOOTSTRAP_TOKEN
 
 def test_all_scene_delivery_routes_share_an_allowance_after_restart(settings):
     scene_size = len(build_synthetic_scene().glb)
-    limited = replace(settings, scene_delivery_budget_bytes=scene_size * 3)
+    limited = replace(settings, scene_delivery_budget_bytes=scene_size * 2 + 4)
     service = WorkspaceService(limited)
     headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
     with TestClient(create_app(limited, service=service, start_worker=False)) as client:
@@ -60,8 +62,115 @@ def test_all_scene_delivery_routes_share_an_allowance_after_restart(settings):
         with restarted.database.connect() as connection:
             assert (
                 connection.execute("SELECT SUM(reserved_bytes) FROM delivery_budget").fetchone()[0]
-                == scene_size * 3
+                == scene_size * 2 + 4
             )
+
+
+@pytest.mark.parametrize("route", ["content", "download", "share"])
+@pytest.mark.parametrize(
+    ("byte_range", "status"),
+    [
+        ("bytes=999999999-", 416),
+        ("not-a-range", 400),
+        ("bytes=9-3", 400),
+        ("bytes=-0", 416),
+        ("bytes=0-3,8-11", 416),
+    ],
+)
+def test_rejected_ranges_leave_capacity_for_valid_downloads(settings, route, byte_range, status):
+    scene_size = len(build_synthetic_scene().glb)
+    limited = replace(settings, scene_delivery_budget_bytes=scene_size)
+    service = WorkspaceService(limited)
+    headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        job = client.post("/api/jobs/sample", headers=headers).json()
+        assert service.process_next_job()
+        job = client.get(f"/api/jobs/{job['id']}", headers=headers).json()
+        scene = next(item for item in job["artifacts"] if item["kind"] == "scene")
+        path = f"/api/artifacts/{scene['id']}/{route}"
+        if route == "share":
+            share = client.post(
+                f"/api/artifacts/{scene['id']}/shares", json={"ttlSeconds": 300}, headers=headers
+            ).json()
+            headers = {"Authorization": "Bearer " + share["url"].split("#")[1]}
+            path = "/api/public/share/content"
+        for _ in range(3):
+            assert client.get(path, headers={**headers, "Range": byte_range}).status_code == status
+        with service.database.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM delivery_budget").fetchone()[0] == 0
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200 and len(response.content) == scene_size
+        assert client.get(path, headers=headers).status_code == 409
+
+
+@pytest.mark.parametrize("range_kind", ["prefix", "suffix", "open"])
+def test_partial_delivery_reserves_only_response_bytes(settings, range_kind):
+    limited = replace(settings, scene_delivery_budget_bytes=4)
+    service = WorkspaceService(limited)
+    headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        job = client.post("/api/jobs/sample", headers=headers).json()
+        assert service.process_next_job()
+        job = client.get(f"/api/jobs/{job['id']}", headers=headers).json()
+        scene = next(item for item in job["artifacts"] if item["kind"] == "scene")
+        byte_range = {
+            "prefix": "bytes=0-3",
+            "suffix": "bytes=-4",
+            "open": f"bytes={scene['sizeBytes'] - 4}-",
+        }[range_kind]
+        response = client.get(scene["viewUrl"], headers={**headers, "Range": byte_range})
+        assert response.status_code == 206 and len(response.content) == 4
+        with service.database.connect() as connection:
+            assert (
+                connection.execute("SELECT SUM(reserved_bytes) FROM delivery_budget").fetchone()[0]
+                == 4
+            )
+        assert (
+            client.get(scene["viewUrl"], headers={**headers, "Range": "bytes=4-7"}).status_code
+            == 409
+        )
+
+
+def test_if_range_mismatch_reserves_full_response_before_sending(settings):
+    limited = replace(settings, scene_delivery_budget_bytes=4)
+    service = WorkspaceService(limited)
+    headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        job = client.post("/api/jobs/sample", headers=headers).json()
+        assert service.process_next_job()
+        job = client.get(f"/api/jobs/{job['id']}", headers=headers).json()
+        scene = next(item for item in job["artifacts"] if item["kind"] == "scene")
+        response = client.get(
+            scene["viewUrl"], headers={**headers, "Range": "bytes=0-3", "If-Range": '"stale"'}
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "quota_exceeded"
+        with service.database.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM delivery_budget").fetchone()[0] == 0
+
+
+def test_interrupted_transfer_keeps_its_reservation(tmp_path):
+    database = Database(tmp_path / "delivery.sqlite3")
+    database.initialize()
+    artifact = tmp_path / "scene.glb"
+    artifact.write_bytes(b"glTF")
+    response = BudgetedFileResponse(
+        artifact, reserve_bytes=lambda size: database.reserve_delivery_bytes(size, limit=4)
+    )
+
+    async def disconnected_send(message):
+        if message["type"] == "http.response.body":
+            raise OSError("Client disconnected")
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    with pytest.raises(OSError, match="Client disconnected"):
+        asyncio.run(
+            response({"type": "http", "method": "GET", "headers": []}, receive, disconnected_send)
+        )
+    with pytest.raises(QuotaExceeded):
+        database.reserve_delivery_bytes(1, limit=4)
 
 
 def test_concurrent_delivery_reservations_cannot_overspend(tmp_path):

@@ -8,7 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
-  capturePreviewUrl: null,
+  capturePreviewUrl: null, retention: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -25,6 +25,35 @@ function formatBytes(value) {
 function formatDate(value) {
   if (!value) return "Not started";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value * 1000));
+}
+
+function retentionDuration(seconds) {
+  for (const [unit, size] of [["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]]) {
+    if (seconds >= size && seconds % size === 0) {
+      const count = seconds / size;
+      return `${count} ${unit}${count === 1 ? "" : "s"}`;
+    }
+  }
+  return "0 seconds";
+}
+
+function expiryLabel(job) {
+  if (!Number.isFinite(job.expiresAt)) return "";
+  return `${job.expiresAt <= Date.now() / 1000 ? "Removal due" : "Expires"} ${formatDate(job.expiresAt)}`;
+}
+
+function renderRetention() {
+  const policy = state.retention;
+  const lifetime = policy?.workspaceExpiresAt != null
+    ? `This playground and its scenes expire ${formatDate(policy.workspaceExpiresAt)}.`
+    : policy ? `Scenes are kept for ${retentionDuration(policy.terminalJobSeconds)} after processing finishes.`
+      : "Scenes are temporary.";
+  const credits = state.accountType === "google"
+    ? " Deletion or expiry does not restore video processing credits." : "";
+  const notice = `${lifetime} Download a copy before expiry.${credits}`;
+  byId("creationRetention").textContent = notice;
+  byId("managementRetention").textContent = notice + (policy && policy.workspaceExpiresAt == null
+    ? ` Unused uploads are removed after ${retentionDuration(policy.unattachedUploadSeconds)}.` : "");
 }
 
 async function api(path, options = {}) {
@@ -157,7 +186,7 @@ function refreshAccount({ fresh = false } = {}) {
     try {
       const [result, engines] = await Promise.all([api("/api/me"), api("/api/engines")]);
       if (epoch !== state.epoch) throw new DOMException("Stale account response", "AbortError");
-      showApp(result.user, result.csrfToken, result.reconstructionAllowance);
+      showApp(result.user, result.csrfToken, result.reconstructionAllowance, result.retention);
       state.engine = engines.engines.find((engine) => engine.id === "lingbot-research-v1");
       renderReconstructionStatus();
       return result;
@@ -237,6 +266,7 @@ function secureReset() {
   cancelCaptureCheck();
   releaseCapturePreview();
   state.reconstructionAllowance = null;
+  state.retention = null;
   state.accountRefresh = null;
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
@@ -345,13 +375,15 @@ function openCreateScene({ refresh = true } = {}) {
   if (refresh) refreshAccount({ fresh: true }).catch(report);
 }
 
-function showApp(user, csrfToken, allowance = null) {
+function showApp(user, csrfToken, allowance = null, retention = null) {
   const principal = `${user.tenantName}\u0000${user.displayName}`;
   if (state.principal && state.principal !== principal) secureReset();
   state.principal = principal;
   state.csrf = csrfToken || "";
   state.accountType = user.accountType || "operator";
   state.reconstructionAllowance = allowance;
+  state.retention = retention;
+  renderRetention();
   byId("shareButton").hidden = state.accountType === "trial" || !byId("shareButton").dataset.artifactId;
   renderAccountActions();
   byId("loginView").hidden = true;
@@ -426,7 +458,7 @@ function renderJobs() {
     jobState.textContent = job.state;
     const timestamp = document.createElement("span");
     timestamp.className = "job-time";
-    timestamp.textContent = formatDate(job.createdAt);
+    timestamp.textContent = expiryLabel(job) || formatDate(job.createdAt);
     button.append(name, jobState, timestamp);
     button.addEventListener("click", () => selectJob(job.id).catch(report));
     item.append(button);
@@ -443,7 +475,7 @@ function renderManagedJobs() {
   jobs.forEach((job) => list.append(inventoryRow({
     id: job.id,
     name: job.displayName,
-    meta: `${job.state} · ${formatDate(job.createdAt)}`,
+    meta: `${job.state} · ${expiryLabel(job) || formatDate(job.createdAt)}`,
     selected: state.selectedJobs.has(job.id),
     actionLabel: "Delete",
     onSelect: (checked) => {
@@ -724,7 +756,7 @@ async function renderJobDetail() {
   byId("jobDetail").hidden = false;
   byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample" : "Research reconstruction";
   byId("detailTitle").textContent = job.displayName;
-  byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)}`;
+  byId("detailMeta").textContent = `Created ${formatDate(job.createdAt)}${job.expiresAt != null ? ` · ${expiryLabel(job)}` : ""}`;
   updateProgress(job);
   byId("cancelButton").hidden = terminalStates.has(job.state);
   byId("deleteButton").hidden = !terminalStates.has(job.state);

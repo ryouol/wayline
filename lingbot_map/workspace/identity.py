@@ -131,6 +131,14 @@ class IdentityStore:
     def is_guest(self, user_id: str) -> bool:
         return self.account_type(user_id) == "trial"
 
+    def workspace_expires_at(self, user_id: str) -> float | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT created_at FROM identities WHERE user_id=? AND provider='trial'",
+                (user_id,),
+            ).fetchone()
+            return float(row[0]) + TRIAL_TTL_SECONDS if row else None
+
     def expire_trials(self) -> int:
         """Retire expired playgrounds without racing an active artifact write."""
         removed = 0

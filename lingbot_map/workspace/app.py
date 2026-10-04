@@ -125,11 +125,18 @@ class ReconstructionAllowanceResponse(BaseModel):
     remaining: int
 
 
+class RetentionResponse(BaseModel):
+    terminalJobSeconds: int
+    unattachedUploadSeconds: int
+    workspaceExpiresAt: float | None
+
+
 class MeResponse(BaseModel):
     user: UserResponse
     csrfToken: str | None
     quota: QuotaResponse
     reconstructionAllowance: ReconstructionAllowanceResponse | None
+    retention: RetentionResponse
 
 
 class EngineResponse(BaseModel):
@@ -195,6 +202,7 @@ class JobResponse(BaseModel):
     updatedAt: float
     startedAt: float | None
     finishedAt: float | None
+    expiresAt: float | None
 
 
 class JobDetailResponse(JobResponse):
@@ -332,9 +340,23 @@ def _artifact(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str, Any]:
+def _job(
+    value: dict[str, Any],
+    *,
+    retention_seconds: int,
+    workspace_expires_at: float | None,
+    include_artifacts: bool = False,
+) -> dict[str, Any]:
     source_name = Path(value.get("source_original_name") or "").stem
     display_name = " ".join(source_name.replace("_", " ").split()) or "Captured space"
+    expires_at = workspace_expires_at
+    if value["state"] in {"ready", "failed", "cancelled"}:
+        # Match retention's COALESCE(finished_at, updated_at), including epoch zero.
+        finished = value["finished_at"]
+        terminal_expiry = (
+            finished if finished is not None else value["updated_at"]
+        ) + retention_seconds
+        expires_at = terminal_expiry if expires_at is None else min(expires_at, terminal_expiry)
     result = {
         "id": value["id"],
         "displayName": (
@@ -360,6 +382,7 @@ def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str,
         "updatedAt": value["updated_at"],
         "startedAt": value["started_at"],
         "finishedAt": value["finished_at"],
+        "expiresAt": expires_at,
     }
     if include_artifacts:
         result["artifacts"] = [_artifact(item) for item in value.get("artifacts", [])]
@@ -644,6 +667,11 @@ def create_app(
             "reconstructionAllowance": workspace.database.reconstruction_allowance(
                 current.tenant_id
             ),
+            "retention": {
+                "terminalJobSeconds": runtime.terminal_job_retention_seconds,
+                "unattachedUploadSeconds": runtime.unattached_asset_retention_seconds,
+                "workspaceExpiresAt": identities.workspace_expires_at(current.user_id),
+            },
         }
 
     @application.delete("/api/session", status_code=204)
@@ -779,7 +807,11 @@ def create_app(
 
     @application.post("/api/jobs/sample", status_code=202, response_model=JobResponse)
     def sample_job(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
-        return _job(workspace.submit_sample(current.tenant_id, idempotency_key=idempotency_key))
+        return _job(
+            workspace.submit_sample(current.tenant_id, idempotency_key=idempotency_key),
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+        )
 
     @application.post("/api/jobs/research", status_code=202, response_model=JobResponse)
     def research_job(
@@ -798,7 +830,11 @@ def create_app(
             )
         except InvalidEngineParameters as error:
             raise HTTPException(422, str(error)) from error
-        return _job(result)
+        return _job(
+            result,
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+        )
 
     @application.get("/api/jobs", response_model=JobsResponse)
     def list_jobs(
@@ -812,7 +848,18 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        return {"jobs": [_job(item) for item in jobs], "nextCursor": next_cursor}
+        workspace_expiry = identities.workspace_expires_at(current.user_id)
+        return {
+            "jobs": [
+                _job(
+                    item,
+                    retention_seconds=runtime.terminal_job_retention_seconds,
+                    workspace_expires_at=workspace_expiry,
+                )
+                for item in jobs
+            ],
+            "nextCursor": next_cursor,
+        }
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetailResponse)
     def get_job(job_id: JobId, current: CurrentPrincipal):
@@ -820,7 +867,12 @@ def create_app(
             value = workspace.database.get_job(current.tenant_id, job_id)
         except KeyError as error:
             raise HTTPException(404, "Job not found.") from error
-        return _job(value, include_artifacts=True)
+        return _job(
+            value,
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+            include_artifacts=True,
+        )
 
     @application.post("/api/jobs/{job_id}/cancel", status_code=202, response_model=CancelResponse)
     def cancel_job(

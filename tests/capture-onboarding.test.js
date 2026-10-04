@@ -161,6 +161,35 @@ function harness(search = "") {
 async function main() {
   {
     const h = harness();
+    const retention = { terminalJobSeconds: 7 * 86400, unattachedUploadSeconds: 3600, workspaceExpiresAt: null };
+    h.context.respond = async () => ({ ...account("available"), retention });
+    await h.context.refreshAccount();
+    assert.match(h.node("creationRetention").textContent, /7 days after processing finishes/);
+    assert.match(h.node("creationRetention").textContent, /does not restore video processing credits/);
+    assert.match(h.node("managementRetention").textContent, /Unused uploads are removed after 1 hour/);
+    const expiry = Date.now() / 1000 + 600;
+    h.context.showApp({ ...user, accountType: "trial" }, "csrf", null, { ...retention, workspaceExpiresAt: expiry });
+    assert.match(h.node("creationRetention").textContent, /This playground and its scenes expire/);
+    assert.ok(h.node("creationRetention").textContent.includes(h.context.formatDate(expiry)));
+    assert.doesNotMatch(h.node("creationRetention").textContent, /7 days|credits/);
+    h.context.showApp(user, "csrf", allowance("available"), retention);
+    assert.doesNotMatch(h.node("creationRetention").textContent, /This playground/);
+    const job = { id: "expiry-test", displayName: "Test scene", engineId: "synthetic-sample-v1", state: "ready",
+      expiresAt: expiry, createdAt: expiry - 86400, stage: "ready", progress: 1, provenance: {}, artifacts: [],
+      usedUnits: 0, reservedUnits: 0 };
+    h.state.jobs = [job];
+    h.state.selectedId = job.id;
+    h.context.renderJobs();
+    assert.ok(h.node("jobList").children[0].children[0].children[2].textContent.includes(h.context.formatDate(expiry)));
+    assert.ok(h.node("managementJobList").children[0].children[1].children[1].textContent.includes(h.context.formatDate(expiry)));
+    h.context.respond = async () => job;
+    await h.renderRealJobDetail();
+    assert.ok(h.node("detailMeta").textContent.includes(`Expires ${h.context.formatDate(expiry)}`));
+    assert.match(h.context.expiryLabel({ expiresAt: 100 }), /^Removal due /);
+    assert.equal(h.context.expiryLabel({ expiresAt: null }), "");
+  }
+  {
+    const h = harness();
     const steps = Array.from({ length: 5 }, (_, i) => h.node(`step-${i}`));
     h.node("stageList").querySelectorAll = () => steps;
     let job = { id: "processing-a", displayName: "Studio", engineId: "lingbot-research-v1",

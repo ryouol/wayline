@@ -389,7 +389,7 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(path), gl.STATIC_DRAW);
       }
-      this.status.textContent = `${this.count.toLocaleString()} points loaded.${this.interactive ? " Drag or use arrow keys to orbit." : ""}`;
+      this.status.textContent = `${this.count.toLocaleString()} points loaded.`;
       this.draw();
       const drawSubmitted = performance.now();
       requestAnimationFrame(() => requestAnimationFrame(() => {

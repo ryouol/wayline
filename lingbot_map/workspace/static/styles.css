@@ -249,11 +249,11 @@ body:has(#logoutButton:disabled) > .request-status { display: none; }
 .walk-controls .walk-step-button { background: var(--glass); backdrop-filter: blur(16px); font-size: 13px; padding: 8px; }
 .viewport-wrap:has(.walk-controls:not([hidden])) .viewport-badge { display: none; }
 .walk-step-button { min-width: 44px; min-height: 44px; }
-.walk-hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+.frame-navigation-help { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .viewer-status-row { display: flex; justify-content: space-between; gap: 20px; padding: 12px 24px; }
 .viewer-status, .viewer-help { margin: 0; color: var(--quiet); font-size: 12px; }
 .viewer-status { overflow-wrap: anywhere; }
-.viewer-help { text-align: right; flex-shrink: 0; }
+.viewer-help { text-align: right; flex: 1; max-width: 48ch; }
 .scene-info, .provenance-section { margin-inline: 24px; border-top: 1px solid var(--line); }
 summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; color: var(--muted); cursor: pointer; font-size: 13px; list-style: none; }
 summary::-webkit-details-marker { display: none; }
@@ -364,7 +364,8 @@ body:has(#appView:not([hidden])) .site-footer { padding-block: 6px; }
   .account-layout { gap: 24px; padding-inline: 0; }
   .account-form h1 { font-size: 39px; }
   .scene-canvas { height: max(400px, calc(100svh - 390px)); }
-  .viewer-help { display: none; }
+  .viewer-status-row { flex-direction: column; gap: 6px; }
+  .viewer-help { text-align: left; max-width: none; }
 }
 @media (max-width: 760px) {
   .login-shell, .account-shell { width: calc(100% - 40px); }

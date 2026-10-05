@@ -11,6 +11,9 @@
       this.play = root.querySelector(".play-path");
       const section = root.closest(".viewer-section, .shared-viewer");
       this.modes = section.querySelectorAll("[data-view-mode]");
+      this.help = section.querySelector(".viewer-help");
+      this.strip.setAttribute("role", "group");
+      this.strip.setAttribute("aria-label", "Source frames. Use Left and Right arrow keys, Home, or End to select a frame.");
       this.viewer = null;
       this.timer = null;
       this.viewerEvents = null;
@@ -44,12 +47,7 @@
         button.addEventListener("click", action);
         this.walkControls.append(button);
       });
-      this.walkHint = document.createElement("p");
-      this.walkHint.className = "muted walk-hint";
-      this.walkHint.textContent = "Drag to look. Use the step buttons, or focus the view and use W A S D to move and arrow keys to look. Orbit resets your view.";
-      this.walkHint.hidden = true;
       section.querySelector(".viewport-wrap").append(this.walkControls);
-      root.append(this.walkHint);
     }
 
     stop() {
@@ -80,10 +78,12 @@
       this.scrubber.max = frames.length - 1;
       this.scrubber.value = frames.length - 1;
       this.counter.textContent = `${frames.length} source frames · whole space`;
+      this.scrubber.setAttribute("aria-valuetext", this.counter.textContent);
       frames.forEach((frame, index) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "frame-button";
+        button.tabIndex = index === 0 ? 0 : -1;
         button.setAttribute("aria-label", `View frame ${index + 1} at ${frame.time.toFixed(1)} seconds`);
         const image = document.createElement("img");
         image.src = frame.thumbnail;
@@ -93,6 +93,16 @@
         time.textContent = `${frame.time.toFixed(1)}s`;
         button.append(image, time);
         button.addEventListener("click", () => { this.stop(); this.seek(index); });
+        button.addEventListener("keydown", (event) => {
+          if (event.altKey || event.ctrlKey || event.metaKey) return;
+          const target = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: frames.length - 1 }[event.key];
+          if (target === undefined) return;
+          event.preventDefault();
+          this.stop();
+          const next = Math.max(0, Math.min(frames.length - 1, target));
+          this.seek(next);
+          this.strip.children[next].focus({ preventScroll: true });
+        });
         this.strip.append(button);
       });
     }
@@ -103,9 +113,13 @@
       this.showWalkControls(false);
       this.scrubber.value = index;
       this.counter.textContent = `Frame ${index + 1} / ${this.viewer.trace.frames.length} · ${frame.time.toFixed(1)}s`;
+      this.scrubber.setAttribute("aria-valuetext", this.counter.textContent);
       this.setMode("camera");
       this.viewer.setFrame(index);
-      Array.from(this.strip.children).forEach((button, i) => button.setAttribute("aria-current", String(i === index)));
+      Array.from(this.strip.children).forEach((button, i) => {
+        button.setAttribute("aria-current", String(i === index));
+        button.tabIndex = i === index ? 0 : -1;
+      });
       const selected = this.strip.children[index].getBoundingClientRect();
       const visible = this.strip.getBoundingClientRect();
       if (selected.left < visible.left) this.strip.scrollLeft += selected.left - visible.left;
@@ -141,17 +155,25 @@
       if (!this.viewer?.trace) return;
       this.scrubber.value = this.viewer.trace.frames.length - 1;
       this.counter.textContent = `${this.viewer.trace.frames.length} source frames · whole space`;
+      this.scrubber.setAttribute("aria-valuetext", this.counter.textContent);
       Array.from(this.strip.children).forEach((button) => button.setAttribute("aria-current", "false"));
     }
 
     showWalkControls(walking) {
       this.walkControls.hidden = !walking;
-      this.walkHint.hidden = !walking;
     }
 
     setMode(mode) {
+      const name = { orbit: "Orbit", camera: "Camera", walk: "Walk" }[mode];
+      const instructions = {
+        orbit: "Drag or use arrow keys to orbit. Scroll or use + / − to zoom. 0 resets the view.",
+        camera: "Use the source frames or slider to replay. Drag or use arrow keys in the view to return to Orbit.",
+        walk: "Drag or use arrow keys to look. Use W A S D or the step buttons to move. 0 returns to Orbit.",
+      }[mode];
       this.modes.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.viewMode === mode)));
-      if (this.modeLabel) this.modeLabel.textContent = { orbit: "Orbit", camera: "Camera", walk: "Walk" }[mode];
+      if (this.modeLabel) this.modeLabel.textContent = name;
+      this.help.textContent = instructions;
+      this.viewer?.canvas.setAttribute("aria-label", `Interactive 3D point-cloud viewer. ${name} view. ${instructions}`);
     }
   }
   window.SceneTimeline = SceneTimeline;

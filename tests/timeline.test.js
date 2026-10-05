@@ -11,6 +11,7 @@ function element() {
       options?.signal.addEventListener("abort", () => delete this.listeners[name]);
     },
     setAttribute(key, value) { this.attrs[key] = value; },
+    focus(options) { document.activeElement = this; this.focusOptions = options; },
     append(...children) { this.children.push(...children); },
     replaceChildren() { this.children = []; },
     getBoundingClientRect() { return { left: 0, right: 200 }; },
@@ -19,7 +20,9 @@ function element() {
 const controls = Object.fromEntries([".filmstrip", 'input[type="range"]', ".frame-counter", ".play-path", ".show-all"].map(key => [key, element()]));
 const modes = ["orbit", "camera", "walk"].map(mode => ({ ...element(), dataset: { viewMode: mode } }));
 const viewport = element();
-const root = { ...element(), querySelector: key => controls[key], closest: () => ({ querySelectorAll: () => modes, querySelector: () => viewport }) };
+const help = element();
+const root = { ...element(), querySelector: key => controls[key], closest: () => ({ querySelectorAll: () => modes,
+  querySelector: key => key === ".viewer-help" ? help : viewport }) };
 let now = 0, nextId = 0;
 const scheduled = new Map();
 const document = { ...element(), createElement: element };
@@ -43,6 +46,32 @@ function tick(time) {
 }
 timeline.attach(viewer);
 const strip = controls[".filmstrip"];
+function pressFrame(index, key, modifiers = {}) {
+  let prevented = false;
+  strip.children[index].listeners.keydown?.({ key, ...modifiers, preventDefault() { prevented = true; } });
+  return prevented;
+}
+assert.deepEqual(strip.children.map(button => button.tabIndex), [0, -1, -1], "A long frame strip has one Tab entry");
+assert.equal(pressFrame(0, "ArrowRight"), true);
+assert.equal(selected.at(-1), 1);
+assert.equal(document.activeElement, strip.children[1]);
+assert.equal(document.activeElement.focusOptions.preventScroll, true, "Frame navigation does not scroll the page vertically");
+assert.deepEqual(strip.children.map(button => button.tabIndex), [-1, 0, -1]);
+assert.match(viewer.canvas.attrs["aria-label"], /Camera view/);
+assert.match(help.textContent, /return to Orbit/);
+assert.equal(pressFrame(1, "End"), true);
+assert.equal(selected.at(-1), 2);
+assert.equal(pressFrame(2, "ArrowRight"), true);
+assert.equal(selected.at(-1), 2, "Right at the last frame stays within the captured path");
+assert.equal(pressFrame(2, "Home"), true);
+assert.equal(selected.at(-1), 0);
+assert.equal(pressFrame(0, "ArrowLeft"), true);
+assert.equal(selected.at(-1), 0, "Left at the first frame stays within the captured path");
+assert.equal(pressFrame(0, "End", { metaKey: true }), false, "Browser shortcuts are not captured");
+assert.equal(pressFrame(0, "Tab"), false, "Tab can leave the strip normally");
+timeline.wholeSpace();
+assert.match(viewer.canvas.attrs["aria-label"], /Orbit view/);
+assert.match(help.textContent, /zoom/);
 strip.scrollLeft = 400;
 strip.children.forEach((button, index) => {
   button.getBoundingClientRect = () => ({ left: index * 160 - strip.scrollLeft, right: index * 160 + 80 - strip.scrollLeft });
@@ -57,6 +86,9 @@ assert.equal(controls[".play-path"].attrs["aria-pressed"], "true");
 tick(1500);
 assert.equal(selected.at(-1), 1, "Playback follows source timestamps, not frame count");
 assert.equal(strip.scrollLeft, 40, "Advancing reveals the complete active thumbnail at the right edge");
+assert.equal(document.activeElement, strip.children[0], "Playback updates selection without stealing keyboard focus");
+assert.deepEqual(strip.children.map(button => button.tabIndex), [-1, 0, -1]);
+assert.match(controls['input[type="range"]'].attrs["aria-valuetext"], /Frame 2 \/ 3/);
 timeline.seek(1);
 assert.equal(strip.scrollLeft, 40, "An already-visible thumbnail does not shift the strip");
 tick(3100);
@@ -66,6 +98,10 @@ assert.equal(scheduled.size, 0, "The final frame stops playback");
 assert.equal(controls[".play-path"].attrs["aria-pressed"], "false");
 timeline.toggle();
 assert.equal(scheduled.size, 1);
+pressFrame(0, "ArrowRight");
+assert.equal(scheduled.size, 0, "Choosing a frame by keyboard stops camera playback");
+assert.equal(selected.at(-1), 1);
+timeline.toggle();
 viewer.canvas.listeners.viewmode({detail: "FREE ORBIT"});
 assert.equal(scheduled.size, 0, "Manual exploration stops camera playback");
 timeline.wholeSpace();
@@ -74,6 +110,9 @@ assert.equal(modes[0].attrs["aria-pressed"], "true");
 viewer.canvas.listeners.viewmode({detail: "WALK VIEW"});
 assert.equal(modes[2].attrs["aria-pressed"], "true");
 assert.equal(timeline.walkControls.hidden, false);
+assert.match(help.textContent, /W A S D/);
+assert.doesNotMatch(help.textContent, /arrows? keys to orbit/);
+assert.match(viewer.canvas.attrs["aria-label"], /Walk view/);
 timeline.toggle();
 document.hidden = true;
 document.listeners.visibilitychange();

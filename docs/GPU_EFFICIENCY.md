@@ -13,7 +13,10 @@ lifecycle timestamps. Do not subtract clocks on different machines.
 | Measurement | Boundary |
 |---|---|
 | Application queue | Job `startedAt - createdAt`; first claim, including earlier waiting on recovered jobs |
-| Source upload | Local Modal volume upload, before spawn |
+| Browser preflight | Submit through the account and engine availability checks; excludes earlier video metadata decoding |
+| Browser upload request | `/api/assets` request through parsed response, including network transfer, server validation/storage, and existing retry/backoff time; **not pure transfer time** |
+| Browser queue request | `/api/jobs/research` request through parsed acknowledgement; **not time waiting for the worker** |
+| Source upload to Modal | Local Modal volume upload, before spawn; separate from the browser upload request |
 | Provider round trip | Spawn through returned report; includes provider queue/startup, execution and RPC overhead |
 | Worker imports | Entry into Python function through imports; **not container startup** |
 | Volume reload | Worker input volume synchronization |
@@ -35,6 +38,33 @@ storage and current-attempt processing durations. The browser exposes the last
 measurement as `viewer.readiness` and emits `wayline-viewer-ready` on its canvas.
 Stale or destroyed viewers cannot emit readiness. These timings are local only;
 no new analytics requests or capability tokens are collected.
+
+The browser also retains the latest completed video-submission measurement in
+`state.submissionTiming` and emits `wayline-submission-timing` on `#researchForm`.
+Its seconds fields are `preflightSeconds`, `uploadRequestSeconds`,
+`queueRequestSeconds`, and `totalSeconds`. Unattempted stages stay null. The total
+ends at the queue acknowledgement or at a blocked, failed, or cancelled stage;
+it excludes later inventory refreshes, cleanup, and reconstruction. `outcome`
+records `queued`, `blocked`, `failed`, or `cancelled`, and `endedAtStage` identifies
+the last measured stage. A failed queue request does not prove the server never
+queued work: a lost response can leave the submission outcome uncertain.
+
+These immutable receipts use `performance.now()` within the browser. They contain
+no filenames, file contents, identity or job IDs, request tokens, or raw errors.
+Only the current page's latest attempt is retained; starting another attempt or
+resetting the session clears it, and late responses from an old session cannot
+publish it. There is no persistence or analytics transmission. To inspect a local
+receipt during an authorized test, subscribe before submitting:
+
+```js
+document.getElementById("researchForm").addEventListener(
+  "wayline-submission-timing", ({ detail }) => console.table(detail)
+);
+```
+
+Compare these browser stages with the existing worker and viewer measurements
+without subtracting timestamps from different clocks. This instrumentation does
+not by itself establish a bottleneck or a speed improvement.
 
 Provider queue and container startup are **unresolved separately**: the installed
 Modal public call-graph contract supplies state/identity, not reliable lifecycle

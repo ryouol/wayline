@@ -23,7 +23,8 @@ const deferred = () => {
 function harness(search = "") {
   const nodes = new Map(), timers = new Map(), windowEvents = new Map(), documentEvents = new Map();
   const videos = [], createdUrls = [], revokedUrls = [], requests = [];
-  const historyEntries = [], scrolls = [];
+  const historyEntries = [], scrolls = [], submissionTimings = [];
+  let clock = 0;
   let timerId = 0;
   function element() {
     const classes = new Set(), attributes = new Map(), events = new Map();
@@ -31,6 +32,7 @@ function harness(search = "") {
     let value = "";
     return {
       hidden: false, disabled: false, textContent: "", files: [], dataset: {}, style: {}, children: [], events,
+      dispatchEvent(event) { if (event.type === "wayline-submission-timing") submissionTimings.push(event.detail); },
       open: false, returnValue: "", pauseCount: 0, focusCount: 0,
       get value() { return value; },
       set value(next) { value = next; if (next === "") this.files = []; },
@@ -105,6 +107,8 @@ function harness(search = "") {
     }]));
   const context = vm.createContext({
     URL: TestURL, URLSearchParams, Headers, AbortController, DOMException, Date,
+    performance: { now: () => clock },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     crypto: { randomUUID: () => "request-id" }, location, history, setTimeout, clearTimeout,
     localStorage: { setItem() {}, removeItem() {} },
     FormData: class { append() {} },
@@ -155,10 +159,120 @@ function harness(search = "") {
     return documentEvents.get("click")({ target, preventDefault() {} });
   };
   return { context, state, node, select, submit, click, videos, createdUrls, revokedUrls, timers,
-    requests, windowEvents, historyEntries, scrolls, renderRealJobDetail };
+    requests, windowEvents, historyEntries, scrolls, renderRealJobDetail, submissionTimings,
+    advance: (milliseconds) => { clock += milliseconds; } };
 }
 
 async function main() {
+  for (const failRefresh of [false, true]) {
+    const h = harness();
+    let checks = 0;
+    h.context.respond = async (path) => {
+      if (path === "/api/me") {
+        h.advance(++checks === 1 ? 2000 : 9000);
+        if (failRefresh && checks === 2) throw new Error("Post-queue refresh failed");
+        return account("available");
+      }
+      if (path === "/api/assets") { h.advance(5000); return { id: "private-upload" }; }
+      if (path === "/api/jobs/research") { h.advance(3000); return { id: "private-job" }; }
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      throw new Error(path);
+    };
+    h.select({ name: "private-location.mp4", size: 1024 }).onerror();
+    await h.submit();
+    assert.ok(h.state.submissionTiming, "The browser must expose the missing submission measurement");
+    assert.deepEqual(JSON.parse(JSON.stringify(h.state.submissionTiming)), {
+      preflightSeconds: 2, uploadRequestSeconds: 5, queueRequestSeconds: 3,
+      totalSeconds: 10, outcome: "queued", endedAtStage: "queueRequest",
+    }, "Submission timings separate preflight, upload and queue and exclude post-queue refreshes");
+    assert.equal(h.submissionTimings.length, 1);
+    assert.equal(h.state.submissionTiming.outcome, "queued", "A failed UI refresh cannot reclassify an acknowledged submission");
+    assert.equal(h.submissionTimings[0], h.state.submissionTiming);
+    assert.equal(Object.isFrozen(h.state.submissionTiming), true);
+    assert.equal(h.requests.filter(request => request.method === "POST").length, 2, "Timing adds no telemetry requests");
+    assert.doesNotMatch(JSON.stringify(h.state.submissionTiming), /private-|csrf|request-id/);
+    h.context.secureReset();
+    assert.equal(h.state.submissionTiming, null, "Sign-out clears local diagnostic state");
+  }
+  {
+    const h = harness();
+    h.context.respond = async () => { h.advance(2500); return account("used"); };
+    h.select().onerror();
+    await h.submit();
+    assert.equal(h.state.submissionTiming.outcome, "blocked");
+    assert.equal(h.state.submissionTiming.endedAtStage, "preflight");
+    assert.equal(h.state.submissionTiming.preflightSeconds, 2.5);
+    assert.equal(h.state.submissionTiming.uploadRequestSeconds, null, "An unattempted stage is unknown, not zero");
+    assert.equal(h.state.submissionTiming.queueRequestSeconds, null);
+  }
+  for (const failure of ["uploadRequest", "queueRequest"]) {
+    const h = harness(), fetch = h.context.fetch;
+    let checks = 0;
+    h.context.respond = async (path) => {
+      if (path === "/api/me") { h.advance(++checks === 1 ? 1000 : 9000); return account("available"); }
+      if (path === "/api/assets") { h.advance(4000); return { id: "private-upload" }; }
+      if (path === "/api/assets/private-upload") { h.advance(7000); return null; }
+      throw new Error(path);
+    };
+    h.context.fetch = async (path, options) => {
+      const target = failure === "uploadRequest" ? "/api/assets" : "/api/jobs/research";
+      if (path !== target) return fetch(path, options);
+      h.advance(failure === "uploadRequest" ? 4000 : 3000);
+      return { ok: false, status: 503, headers: new Headers(), json: async () => ({ detail: "Private error details" }) };
+    };
+    h.select().onerror();
+    await h.submit();
+    const timing = h.state.submissionTiming;
+    assert.equal(timing.outcome, "failed");
+    assert.equal(timing.endedAtStage, failure);
+    assert.equal(timing.uploadRequestSeconds, 4);
+    assert.equal(timing.queueRequestSeconds, failure === "uploadRequest" ? null : 3);
+    assert.equal(timing.totalSeconds, failure === "uploadRequest" ? 5 : 8, "Cleanup and recovery requests are outside the measured submission");
+    assert.equal(h.submissionTimings.length, 1);
+    assert.doesNotMatch(JSON.stringify(timing), /private|Private/);
+  }
+  {
+    const h = harness(), upload = deferred();
+    h.context.respond = async (path) => path === "/api/me" ? account("available") : upload.promise;
+    h.select().onerror();
+    const submitting = h.submit();
+    await new Promise(setImmediate);
+    h.context.secureReset();
+    h.state.submissionTiming = { outcome: "new-session" };
+    h.advance(5000);
+    upload.resolve({ id: "old-private-upload" });
+    await submitting;
+    assert.equal(h.state.submissionTiming.outcome, "new-session", "A late old upload cannot overwrite the current account's diagnostics");
+    assert.equal(h.submissionTimings.length, 0, "Stale sessions publish no diagnostic event");
+  }
+  {
+    const h = harness(), fetch = h.context.fetch;
+    let attempts = 0;
+    h.context.respond = async (path) => {
+      if (path === "/api/me") return account("available");
+      if (path === "/api/assets") { h.advance(1000); return { id: "upload" }; }
+      if (path === "/api/jobs/research") return { id: "job" };
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      throw new Error(path);
+    };
+    h.context.fetch = async (path, options) => {
+      if (path === "/api/assets" && ++attempts === 1) { h.advance(2000); throw new Error("Connection interrupted"); }
+      return fetch(path, options);
+    };
+    h.select().onerror();
+    const submitting = h.submit();
+    await new Promise(setImmediate);
+    const retry = [...h.timers.values()].find(timer => timer.delay === 250);
+    assert.ok(retry);
+    h.advance(250);
+    retry.callback();
+    await submitting;
+    assert.equal(attempts, 2);
+    assert.equal(h.state.submissionTiming.uploadRequestSeconds, 3.25, "Upload timing includes existing transport retry and backoff");
+    assert.equal(h.submissionTimings.length, 1, "A transport retry still produces one submission receipt");
+  }
   {
     const h = harness();
     const retention = { terminalJobSeconds: 7 * 86400, unattachedUploadSeconds: 3600, workspaceExpiresAt: null };

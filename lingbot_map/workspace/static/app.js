@@ -8,7 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
-  capturePreviewUrl: null, retention: null,
+  capturePreviewUrl: null, retention: null, submissionTiming: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -267,6 +267,7 @@ function secureReset() {
   releaseCapturePreview();
   state.reconstructionAllowance = null;
   state.retention = null;
+  state.submissionTiming = null;
   state.accountRefresh = null;
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
@@ -1019,28 +1020,47 @@ byId("researchForm").addEventListener("submit", async (event) => {
     if (epoch !== state.epoch || state.captureCheck !== selection) throw new DOMException("Capture changed", "AbortError");
   };
   const params = { extractFps: Number(byId("sampleFps").value), maxFrames: Number(byId("frameLimit").value) };
+  const started = performance.now();
+  const timings = { preflightSeconds: null, uploadRequestSeconds: null, queueRequestSeconds: null };
+  let phase = "preflight", recorded = false;
+  state.submissionTiming = null;
+  const measure = async (stage, operation) => {
+    phase = stage;
+    const stageStarted = performance.now();
+    try { return await operation(); }
+    finally { timings[`${stage}Seconds`] = (performance.now() - stageStarted) / 1000; }
+  };
+  const recordTiming = (outcome) => {
+    if (recorded || epoch !== state.epoch) return;
+    recorded = true;
+    state.submissionTiming = Object.freeze({ ...timings,
+      totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
+    byId("researchForm").dispatchEvent(new CustomEvent("wayline-submission-timing", { detail: state.submissionTiming }));
+  };
   let asset = null;
   state.uploading = true;
   renderReconstructionStatus();
   byId("researchMessage").textContent = "Checking your account before upload…";
   try {
-    await refreshAccount({ fresh: true });
+    await measure("preflight", () => refreshAccount({ fresh: true }));
     assertCurrent();
     if (state.accountType === "google" && state.reconstructionAllowance?.state !== "available") {
       byId("researchMessage").textContent = state.reconstructionAllowance?.message || "Your video allowance could not be checked. Refresh to try again.";
+      recordTiming("blocked");
       return;
     }
     if (state.accountType === "trial" || !state.engine?.available) {
       byId("researchMessage").textContent = "";
+      recordTiming("blocked");
       return;
     }
     byId("researchMessage").textContent = "Uploading video…";
     const body = new FormData();
     body.append("file", file);
-    asset = await api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 });
+    asset = await measure("uploadRequest", () => api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 }));
     assertCurrent();
     byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
-    const job = await api("/api/jobs/research", {
+    const job = await measure("queueRequest", () => api("/api/jobs/research", {
       method: "POST",
       idempotent: true,
       json: {
@@ -1051,10 +1071,11 @@ byId("researchForm").addEventListener("submit", async (event) => {
         memoryGuard: true,
         mode: "streaming",
       },
-    });
+    }));
     assertCurrent();
     state.selectedId = job.id;
     asset = null;
+    recordTiming("queued");
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();
     byId("researchMessage").textContent = "Reconstruction queued.";
@@ -1065,6 +1086,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     releaseCapturePreview();
     byId("detailTitle").focus({ preventScroll: true });
   } catch (error) {
+    recordTiming(error?.name === "AbortError" ? "cancelled" : "failed");
     if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (asset) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }

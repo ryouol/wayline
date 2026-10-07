@@ -78,6 +78,7 @@ jobs:
           node --check lingbot_map/workspace/static/theme.js
           node --check lingbot_map/workspace/static/landing.js
           node --check lingbot_map/workspace/static/site.js
+          node --check scripts/benchmark_viewer.cjs
           node tests/session-events.test.js
           node tests/inventory-selection.test.js
           node tests/capture-onboarding.test.js

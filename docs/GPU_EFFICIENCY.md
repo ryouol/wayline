@@ -66,6 +66,9 @@ Compare these browser stages with the existing worker and viewer measurements
 without subtracting timestamps from different clocks. This instrumentation does
 not by itself establish a bottleneck or a speed improvement.
 
+The [October 7 viewer comparison](VIEWER_PERFORMANCE.md) measures packed-accessor
+parsing improvements with identical scene bytes and unchanged output arrays.
+
 Provider queue and container startup are **unresolved separately**: the installed
 Modal public call-graph contract supplies state/identity, not reliable lifecycle
 timestamps. Preserve null fields until a provider trace/export supplies both

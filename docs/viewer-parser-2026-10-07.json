@@ -1,0 +1,166 @@
+{
+  "date": "2026-10-07",
+  "baselineCommit": "a7ad874b82ef40f3c02a47df41cba87365887b86",
+  "fullScene": {
+    "checkedAt": "2026-10-07T13:10:14.569Z",
+    "context": "Node V8 parser CPU only; warmup 3, 12 paired iterations with alternating order. Not browser readiness, mobile, or field latency.",
+    "node": "v20.11.0",
+    "bytes": 12358492,
+    "points": 749979,
+    "sceneSha256": "a2e4f5ce573112a5caddcab8ff77c39895c650827b990d9dc165a7f0e1137989",
+    "beforeSourceSha256": "d5dad80e655b88b507bb55755dfdf9e4544e4d75132f2d6a24c1844d16a8ebaf",
+    "afterSourceSha256": "61c70ee7aeac17013e3ef7a70058455512f4af2e64efbacaa9839a7dede93f3f",
+    "positionsByteIdentical": true,
+    "colorsByteIdentical": true,
+    "traceIdentical": true,
+    "artifactUnchanged": true,
+    "milliseconds": {
+      "before": [
+        135.5992090000001,
+        133.566417,
+        131.24458300000015,
+        206.067,
+        141.1617920000001,
+        135.94491599999992,
+        134.28812500000004,
+        130.1558339999997,
+        128.95104200000014,
+        130.5609159999999,
+        147.125,
+        131.83833300000015
+      ],
+      "after": [
+        32.480542000000014,
+        29.362957999999935,
+        31.55208300000004,
+        28.675291000000016,
+        30.236541999999872,
+        28.538332999999966,
+        30.27995800000008,
+        29.66833399999996,
+        28.780874999999924,
+        28.242749999999887,
+        30.070250000000215,
+        29.081375000000207
+      ]
+    },
+    "beforeMedianMs": 133.92727100000002,
+    "afterMedianMs": 29.515645999999947,
+    "medianReductionPercent": 77.96143699515841
+  },
+  "landingScene": {
+    "checkedAt": "2026-10-07T13:10:14.946Z",
+    "context": "Node V8 parser CPU only; warmup 3, 12 paired iterations with alternating order. Not browser readiness, mobile, or field latency.",
+    "node": "v20.11.0",
+    "bytes": 1411016,
+    "points": 75000,
+    "sceneSha256": "490a377e854bbd89eb61702032bb4a9d2657efa4af09a0cd8d277247c4bfd4c8",
+    "beforeSourceSha256": "d5dad80e655b88b507bb55755dfdf9e4544e4d75132f2d6a24c1844d16a8ebaf",
+    "afterSourceSha256": "61c70ee7aeac17013e3ef7a70058455512f4af2e64efbacaa9839a7dede93f3f",
+    "positionsByteIdentical": true,
+    "colorsByteIdentical": true,
+    "traceIdentical": true,
+    "artifactUnchanged": true,
+    "milliseconds": {
+      "before": [
+        16.295333,
+        16.467750000000024,
+        14.457750000000004,
+        13.90900000000002,
+        13.308750000000003,
+        13.790582999999998,
+        13.73920799999999,
+        15.047875000000005,
+        13.544291999999984,
+        13.74616599999996,
+        14.000207999999986,
+        13.89691700000003
+      ],
+      "after": [
+        4.286667000000008,
+        3.252541999999977,
+        5.824375000000003,
+        3.6789579999999944,
+        3.833416999999997,
+        3.349209000000002,
+        3.2264160000000004,
+        3.5743339999999932,
+        5.5404589999999985,
+        3.160874999999976,
+        3.3863339999999766,
+        3.6268340000000308
+      ]
+    },
+    "beforeMedianMs": 13.902958500000025,
+    "afterMedianMs": 3.600584000000012,
+    "medianReductionPercent": 74.10203015422935
+  },
+  "browser": {
+    "context": "Local browser, prefetched identical GLB, 4 alternating paired loads; not production network or mobile timing.",
+    "points": 749979,
+    "geometryBoundsIdentical": true,
+    "cameraTraceIdentical": true,
+    "samples": {
+      "before": [
+        {
+          "downloadSeconds": 0.00020000004768371582,
+          "parseUploadDrawSeconds": 0.10909999990463257,
+          "browserReadySeconds": 0.10979999995231629,
+          "browserReadyAt": "2026-10-07T13:09:05.216Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00020000004768371582,
+          "parseUploadDrawSeconds": 0.12910000002384187,
+          "browserReadySeconds": 0.13310000002384187,
+          "browserReadyAt": "2026-10-07T13:09:05.454Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00010000002384185791,
+          "parseUploadDrawSeconds": 0.13239999997615814,
+          "browserReadySeconds": 0.1467999999523163,
+          "browserReadyAt": "2026-10-07T13:09:05.601Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00010000002384185791,
+          "parseUploadDrawSeconds": 0.132,
+          "browserReadySeconds": 0.13339999997615815,
+          "browserReadyAt": "2026-10-07T13:09:05.871Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        }
+      ],
+      "after": [
+        {
+          "downloadSeconds": 0,
+          "parseUploadDrawSeconds": 0.04480000007152558,
+          "browserReadySeconds": 0.05330000007152557,
+          "browserReadyAt": "2026-10-07T13:09:05.271Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00030000007152557374,
+          "parseUploadDrawSeconds": 0.0415,
+          "browserReadySeconds": 0.049800000071525574,
+          "browserReadyAt": "2026-10-07T13:09:05.321Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00030000007152557374,
+          "parseUploadDrawSeconds": 0.05369999992847443,
+          "browserReadySeconds": 0.0615,
+          "browserReadyAt": "2026-10-07T13:09:05.663Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        },
+        {
+          "downloadSeconds": 0.00010000002384185791,
+          "parseUploadDrawSeconds": 0.07010000002384185,
+          "browserReadySeconds": 0.07479999995231629,
+          "browserReadyAt": "2026-10-07T13:09:05.737Z",
+          "definition": "first draw plus two animation frames; not GPU presentation confirmation"
+        }
+      ]
+    }
+  }
+}

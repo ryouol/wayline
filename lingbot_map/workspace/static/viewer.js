@@ -10,6 +10,7 @@
     5126: { bytes: 4, getter: "getFloat32" },
   };
   const componentCount = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+  const littleEndian = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
   function parseGlb(buffer) {
     const view = new DataView(buffer);
@@ -81,6 +82,19 @@
         throw new Error("Artifact accessor exceeds its binary buffer.");
       }
       const result = new Float32Array(accessor.count * width);
+      const byteOffset = binary.byteOffset + base;
+      // Exported scenes use packed float positions and normalized byte colors.
+      // Copy into owned arrays: sample orientation may later mutate positions.
+      if (stride === elementBytes && accessor.componentType === 5126
+          && littleEndian && byteOffset % 4 === 0) {
+        result.set(new Float32Array(binary.buffer, byteOffset, result.length));
+        return { values: result, width, count: accessor.count };
+      }
+      if (stride === elementBytes && accessor.componentType === 5121 && accessor.normalized) {
+        const bytes = new Uint8Array(binary.buffer, byteOffset, result.length);
+        for (let index = 0; index < result.length; index += 1) result[index] = bytes[index] / 255;
+        return { values: result, width, count: accessor.count };
+      }
       const data = new DataView(binary.buffer, binary.byteOffset, binary.byteLength);
       for (let row = 0; row < accessor.count; row += 1) {
         for (let column = 0; column < width; column += 1) {

@@ -19,29 +19,83 @@ function glb(change = () => {}) {
     accessors:[{bufferView:0,componentType:5126,count:6,type:"VEC3"}],
     extras:{wayline:{version:1,kind:"reconstruction",coordinateSystem:"gltf-y-up",pointCount:6,frames}}};
   change(doc);
-  let json=JSON.stringify(doc); while(json.length%4) json+=" ";
   const binary=Buffer.alloc(72);
   for(let i=0;i<18;i++) binary.writeFloatLE(i/10,i*4);
+  return encodeGlb(doc, binary);
+}
+function encodeGlb(doc, binary) {
+  let json=JSON.stringify(doc); while(json.length%4) json+=" ";
   const result=Buffer.alloc(12+8+json.length+8+binary.length);
   result.writeUInt32LE(0x46546c67,0); result.writeUInt32LE(2,4); result.writeUInt32LE(result.length,8);
   result.writeUInt32LE(json.length,12); result.writeUInt32LE(0x4e4f534a,16); result.write(json,20);
   result.writeUInt32LE(binary.length,20+json.length); result.writeUInt32LE(0x004e4942,24+json.length); binary.copy(result,28+json.length);
   return result.buffer.slice(result.byteOffset,result.byteOffset+result.length);
 }
+function accessorGlb({ interleaved = false, unaligned = false, floatColors = false, rgb = false,
+  change = () => {} } = {}) {
+  const width = rgb ? 3 : 4, colorBytes = floatColors ? 4 : 1;
+  const positionOffset = unaligned ? 1 : 4, colorOffset = floatColors ? 4 : 3;
+  const positionStride = interleaved ? 16 : 12;
+  const colorStride = width * colorBytes + (interleaved ? 4 : 0);
+  const binary = Buffer.alloc(128);
+  [-1, 2, 3, 4, -5, 6].forEach((value, index) =>
+    binary.writeFloatLE(value, 4 + positionOffset + Math.floor(index / 3) * positionStride + index % 3 * 4));
+  const colors = [[0, 128, 255, 255], [255, 64, 32, 128]];
+  colors.forEach((row, index) => row.slice(0, width).forEach((value, column) => {
+    const offset = 64 + colorOffset + index * colorStride + column * colorBytes;
+    if (floatColors) binary.writeFloatLE(value / 255, offset); else binary[offset] = value;
+  }));
+  const doc = { asset: { version: "2.0" }, nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ mode: 0, attributes: { POSITION: 0, COLOR_0: 1 } }] }],
+    buffers: [{ byteLength: binary.length }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 4, byteLength: positionOffset + positionStride + 12, byteStride: positionStride },
+      { buffer: 0, byteOffset: 64, byteLength: colorOffset + colorStride + width * colorBytes, byteStride: colorStride },
+    ],
+    accessors: [
+      { bufferView: 0, byteOffset: positionOffset, componentType: 5126, count: 2, type: "VEC3" },
+      { bufferView: 1, byteOffset: colorOffset, componentType: floatColors ? 5126 : 5121,
+        count: 2, type: rgb ? "VEC3" : "VEC4", normalized: !floatColors },
+    ],
+  };
+  change(doc, binary);
+  return encodeGlb(doc, binary);
+}
 async function load(buffer, options) {
   let request;
   scope.fetch=async (url, init) => {request={url,init}; return {ok:true,arrayBuffer:async()=>buffer};};
   const viewer=Object.create(scope.window.PointCloudViewer.prototype);
-  Object.assign(viewer,{status:{},loadSequence:0,gl:{bindBuffer(){},bufferData(){},isContextLost(){return false;}},draw(){},canvas:{dispatchEvent(){}}});
+  const uploads = [];
+  Object.assign(viewer,{status:{},loadSequence:0,gl:{bindBuffer(){},bufferData(_target, values){uploads.push([...values]);},isContextLost(){return false;}},draw(){},canvas:{dispatchEvent(){}}});
   await viewer.load("/api/public/share/content", options);
   assert.equal(viewer.readiness, null, "Download and draw do not imply browser readiness");
   animationFrames.splice(0).forEach(callback => callback());
   assert.equal(viewer.readiness, null, "Wait for the second animation frame");
   animationFrames.splice(0).forEach(callback => callback());
   assert.ok(viewer.readiness.browserReadySeconds >= viewer.readiness.downloadSeconds);
-  return {viewer,request};
+  return {viewer,request,uploads};
 }
 (async()=>{
+  const expectedPositions = [...new Float32Array([-5/7, 1, -3/7, 5/7, -1, 3/7])];
+  const expectedColors = [...new Float32Array([0, 128/255, 1, 1, 64/255, 32/255])];
+  for (const layout of [{}, { interleaved: true }, { unaligned: true }, { floatColors: true }, { rgb: true }]) {
+    const bytes = accessorGlb(layout), original = Buffer.from(bytes).toString("hex");
+    const { uploads } = await load(bytes);
+    assert.deepEqual(uploads[0], expectedPositions, "Coordinate normalization is identical for every supported layout");
+    assert.deepEqual(uploads[1], expectedColors, "RGB/RGBA byte and float colors retain exact Float32 values");
+    assert.equal(Buffer.from(bytes).toString("hex"), original, "Parsing never mutates the downloaded artifact");
+  }
+  const sampleBytes = accessorGlb({ change(doc) { doc.extras = { sampleVersion: "synthetic-studio-v1" }; } });
+  const sampleOriginal = Buffer.from(sampleBytes).toString("hex");
+  await load(sampleBytes);
+  assert.equal(Buffer.from(sampleBytes).toString("hex"), sampleOriginal, "Sample orientation mutates only owned coordinates");
+  await assert.rejects(load(accessorGlb({ change(doc) { doc.bufferViews[0].byteLength--; } })), /exceeds/);
+  await assert.rejects(load(accessorGlb({ change(doc) { doc.bufferViews[1].byteLength--; } })), /exceeds/);
+  await assert.rejects(load(accessorGlb({ change(doc) { doc.accessors[1].count = 1; } })), /match the scene/);
+  await assert.rejects(load(accessorGlb({ change(doc) { doc.accessors[1].normalized = false; } })), /finite normalized/);
+  await assert.rejects(load(accessorGlb({ change(doc) { doc.accessors[0].count = 2_000_001; } })), /unsupported accessor/);
+  await assert.rejects(load(accessorGlb({ change(_doc, bytes) { bytes.writeFloatLE(NaN, 8); } })), /non-finite coordinate/);
+  await assert.rejects(load(accessorGlb({ floatColors: true, change(_doc, bytes) { bytes.writeFloatLE(2, 80); } })), /finite normalized/);
   const {viewer,request}=await load(glb(),{headers:{Authorization:"Bearer private-capability"}});
   assert.equal(request.url.includes("private-capability"),false);
   assert.equal(request.init.headers.Authorization,"Bearer private-capability");

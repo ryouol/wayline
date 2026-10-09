@@ -233,7 +233,11 @@ body:has(#logoutButton:disabled) > .request-status { display: none; }
 .viewport-tools { position: absolute; z-index: 2; right: 20px; bottom: 18px; display: flex; flex-direction: column; padding: 2px; background: var(--glass); border: 1px solid var(--line); border-radius: 9px; backdrop-filter: blur(16px); }
 .viewport-tool { display: grid; place-items: center; width: 44px; height: 44px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); }
 .viewport-tool:hover { background: var(--surface-2); }
-.viewport-wrap:fullscreen .scene-canvas { width: 100vw; height: 100svh; min-height: 0; }
+.viewer-section:fullscreen { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: auto; background: var(--surface); }
+.viewer-section:fullscreen .viewport-wrap { flex: 1 0 200px; }
+.viewer-section:fullscreen .scene-canvas { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; }
+.viewer-section:fullscreen .timeline, .viewer-section:fullscreen .viewer-status-row { flex: none; }
+.viewer-section:fullscreen .scene-info { display: none; }
 .timeline { padding: 16px 24px 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); }
 .timeline-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .playback-actions { display: flex; gap: 8px; }

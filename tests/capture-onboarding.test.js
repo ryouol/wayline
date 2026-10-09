@@ -159,11 +159,71 @@ function harness(search = "") {
     return documentEvents.get("click")({ target, preventDefault() {} });
   };
   return { context, state, node, select, submit, click, videos, createdUrls, revokedUrls, timers,
-    requests, windowEvents, historyEntries, scrolls, renderRealJobDetail, submissionTimings,
+    requests, windowEvents, documentEvents, historyEntries, scrolls, renderRealJobDetail, submissionTimings,
     advance: (milliseconds) => { clock += milliseconds; } };
 }
 
 async function main() {
+  {
+    const h = harness(), section = h.node("viewerSection"), button = h.node("fullScreen");
+    const doc = h.context.document;
+    const changed = () => h.documentEvents.get("fullscreenchange")();
+    section.hidden = false;
+    let entries = 0, exits = 0;
+    section.requestFullscreen = async () => { entries++; doc.fullscreenElement = section; changed(); };
+    doc.exitFullscreen = async () => { exits++; doc.fullscreenElement = null; changed(); };
+    await button.events.get("click")();
+    assert.equal(entries, 1, "Fullscreen targets the complete viewer section, including its timeline");
+    assert.equal(button.getAttribute("aria-label"), "Exit full screen");
+    assert.equal(button.getAttribute("title"), "Exit full screen");
+    assert.equal(h.node("fullScreenIcon").getAttribute("src"), "/static/icons/x.svg");
+    await button.events.get("click")();
+    assert.equal(exits, 1);
+    assert.equal(button.getAttribute("aria-label"), "Full screen");
+    assert.equal(h.node("fullScreenIcon").getAttribute("src"), "/static/icons/arrows-out.svg");
+    assert.equal(button.focusCount, 1, "Exiting returns keyboard focus to the fullscreen control");
+    await button.events.get("click")();
+    doc.fullscreenElement = null;
+    changed();
+    assert.equal(button.getAttribute("aria-label"), "Full screen", "Browser Escape updates the control too");
+    assert.equal(button.focusCount, 2);
+    doc.fullscreenElement = {};
+    changed();
+    assert.equal(button.focusCount, 2, "Other fullscreen changes do not move viewer focus");
+    await button.events.get("click")();
+    assert.equal(entries, 3, "An unrelated fullscreen element is not mistaken for the viewer");
+    h.context.clearDetail();
+    assert.equal(doc.fullscreenElement, null, "Removing the selected scene exits fullscreen");
+    assert.equal(button.focusCount, 2, "Clearing private content does not focus its hidden controls");
+  }
+  {
+    const h = harness(), section = h.node("viewerSection"), button = h.node("fullScreen");
+    section.hidden = false;
+    await button.events.get("click")();
+    assert.match(h.node("toast").textContent, /unavailable/, "Unsupported browsers get a useful message");
+    section.requestFullscreen = async () => { throw new Error("User activation denied"); };
+    await button.events.get("click")();
+    assert.match(h.node("toast").textContent, /unavailable/, "Denied fullscreen requests leave the viewer usable");
+  }
+  {
+    const h = harness(), section = h.node("viewerSection"), waiting = deferred();
+    section.hidden = false;
+    section.requestFullscreen = async () => {
+      await waiting.promise;
+      h.context.document.fullscreenElement = section;
+      h.documentEvents.get("fullscreenchange")();
+    };
+    h.context.document.exitFullscreen = async () => {
+      h.context.document.fullscreenElement = null;
+      h.documentEvents.get("fullscreenchange")();
+    };
+    const entering = h.node("fullScreen").events.get("click")();
+    h.context.secureReset();
+    waiting.resolve();
+    await entering;
+    assert.equal(h.context.document.fullscreenElement, null, "Late entry cannot reopen a reset session in fullscreen");
+    assert.equal(h.node("fullScreen").focusCount, 0);
+  }
   for (const failRefresh of [false, true]) {
     const h = harness();
     let checks = 0;

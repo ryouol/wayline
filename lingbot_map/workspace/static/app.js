@@ -239,6 +239,7 @@ function clearDetail() {
   byId("jobDetail").hidden = true;
   byId("emptyDetail").hidden = false;
   byId("viewerSection").hidden = true;
+  if (document.fullscreenElement === byId("viewerSection")) document.exitFullscreen().catch(() => {});
   byId("downloadLink").removeAttribute("href");
   byId("downloadLink").hidden = true;
   byId("shareButton").hidden = true;
@@ -1188,11 +1189,25 @@ function wholeSpace() { timeline.wholeSpace(); }
 byId("resetView").addEventListener("click", wholeSpace);
 byId("zoomIn").addEventListener("click", () => { stopPlayback(); state.viewer?.zoom(0.8); });
 byId("zoomOut").addEventListener("click", () => { stopPlayback(); state.viewer?.zoom(1.25); });
+let viewerFullscreen = false;
+document.addEventListener("fullscreenchange", () => {
+  const active = document.fullscreenElement === byId("viewerSection");
+  const button = byId("fullScreen");
+  const label = active ? "Exit full screen" : "Full screen";
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+  byId("fullScreenIcon").setAttribute("src", active ? "/static/icons/x.svg" : "/static/icons/arrows-out.svg");
+  if (viewerFullscreen && !active && !byId("viewerSection").hidden) button.focus({ preventScroll: true });
+  viewerFullscreen = active;
+});
 byId("fullScreen").addEventListener("click", async () => {
+  const section = byId("viewerSection"), epoch = state.epoch;
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else if (document.querySelector(".viewport-wrap").requestFullscreen) await document.querySelector(".viewport-wrap").requestFullscreen();
-    else toast("Full screen is unavailable in this browser. Rotate your phone for a wider view.");
+    if (document.fullscreenElement === section) await document.exitFullscreen();
+    else if (section.requestFullscreen) {
+      await section.requestFullscreen();
+      if ((epoch !== state.epoch || section.hidden) && document.fullscreenElement === section) await document.exitFullscreen();
+    } else toast("Full screen is unavailable in this browser. Rotate your phone for a wider view.");
   } catch (_) { toast("Full screen is unavailable in this browser."); }
 });
 byId("video").addEventListener("change", validateSelectedCapture);

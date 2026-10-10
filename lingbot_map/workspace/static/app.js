@@ -3,7 +3,7 @@
 const byId = (id) => document.getElementById(id);
 const state = {
   csrf: "", jobs: [], assets: [], shares: [], selectedId: null, engine: null, viewer: null,
-  viewerArtifact: null, pollTimer: null, toastTimer: null, epoch: 0, controllers: new Set(),
+  viewerArtifact: null, pollTimer: null, pollRefresh: null, toastTimer: null, epoch: 0, controllers: new Set(),
   principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
@@ -232,7 +232,8 @@ window.addEventListener("storage", (event) => {
 });
 window.addEventListener("focus", () => revalidateSession());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") revalidateSession();
+  if (document.visibilityState !== "visible") stopPolling();
+  else return Promise.all([revalidateSession(), pollJobs()]);
 });
 
 function clearDetail() {
@@ -273,8 +274,8 @@ function secureReset() {
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
   state.controllers.clear();
-  if (state.pollTimer) clearTimeout(state.pollTimer);
-  state.pollTimer = null;
+  stopPolling();
+  state.pollRefresh = null;
   state.csrf = "";
   state.jobs = [];
   state.jobsRenderKey = "";
@@ -683,12 +684,43 @@ async function revokeShare(share) {
   } catch (error) { toast(error.message); }
 }
 
-function schedulePoll() {
+function stopPolling() {
   if (state.pollTimer) clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+}
+
+function pollJobs() {
+  if (document.visibilityState !== "visible" || byId("appView").hidden) return;
+  if (state.pollRefresh) return state.pollRefresh;
+  stopPolling();
+  const epoch = state.epoch;
+  const pending = (async () => {
+    let failed = false;
+    try {
+      await loadJobs({ preserveLoaded: true });
+    } catch (error) {
+      if (epoch === state.epoch) { failed = true; report(error); }
+    } finally {
+      if (state.pollRefresh === pending) {
+        state.pollRefresh = null;
+        if (epoch === state.epoch) schedulePoll({ retry: failed });
+      }
+    }
+  })();
+  state.pollRefresh = pending;
+  return pending;
+}
+
+function schedulePoll({ retry = false } = {}) {
+  stopPolling();
+  if (document.visibilityState !== "visible" || byId("appView").hidden || state.pollRefresh) return;
   const hasActive = state.jobs.some((job) => !terminalStates.has(job.state));
-  state.pollTimer = window.setTimeout(
-    () => loadJobs({ preserveLoaded: true }).catch(report), hasActive ? 900 : 5000,
-  );
+  const timer = window.setTimeout(() => {
+    if (state.pollTimer !== timer) return;
+    state.pollTimer = null;
+    return pollJobs();
+  }, hasActive && !retry ? 900 : 5000);
+  state.pollTimer = timer;
 }
 
 async function selectJob(jobId) {

@@ -116,7 +116,7 @@ function harness(search = "") {
       scrollTo: (options) => scrolls.push(options),
       SceneTimeline: class { attach() {} stop() {} wholeSpace() {} },
       WorkspaceSessionEvents: { dispatch() {} } },
-    document: { getElementById: node, body: element(), addEventListener: (name, callback) => documentEvents.set(name, callback),
+    document: { visibilityState: "visible", getElementById: node, body: element(), addEventListener: (name, callback) => documentEvents.set(name, callback),
       querySelectorAll(selector) {
         assert.equal(selector, "dialog[open]");
         return [...nodes].filter(([id, target]) => id.endsWith("Dialog") && target.open)
@@ -164,6 +164,109 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const jobState of ["running", "ready"]) {
+    const h = harness();
+    h.state.jobs = [{ id: "scene", state: jobState }];
+    h.context.schedulePoll();
+    const scheduled = h.timers.get(h.state.pollTimer);
+    assert.equal(scheduled.delay, jobState === "running" ? 900 : 5000);
+    h.context.document.visibilityState = "hidden";
+    await h.documentEvents.get("visibilitychange")();
+    assert.equal(h.state.pollTimer, null, "Hiding the workspace cancels its scheduled refresh");
+    assert.equal(h.timers.size, 0);
+    await scheduled.callback();
+    assert.equal(h.requests.length, 0, "An already queued timer cannot start a hidden refresh");
+    h.context.schedulePoll();
+    assert.equal(h.timers.size, 0, "Hidden workspaces never schedule scene polling");
+  }
+  {
+    const h = harness(), waiting = deferred();
+    h.state.jobs = [{ id: "older", state: "ready" }];
+    h.state.selectedId = "older";
+    h.state.jobCursor = "older-page";
+    h.context.respond = async (path) => path.startsWith("/api/jobs?") ? waiting.promise : account("available");
+    h.context.document.visibilityState = "hidden";
+    await h.documentEvents.get("visibilitychange")();
+    h.context.document.visibilityState = "visible";
+    const resumed = h.documentEvents.get("visibilitychange")();
+    const repeated = h.documentEvents.get("visibilitychange")();
+    assert.equal(h.requests.filter(r => r.path.startsWith("/api/jobs?")).length, 1,
+      "Returning starts one immediate refresh, even across repeated visibility events");
+    assert.equal(h.requests.filter(r => r.path === "/api/me").length, 1, "Session revalidation is retained");
+    waiting.resolve({ jobs: [{ id: "new", state: "ready" }], nextCursor: "new-page" });
+    await Promise.all([resumed, repeated]);
+    assert.deepEqual(Array.from(h.state.jobs, job => job.id), ["new", "older"]);
+    assert.equal(h.state.selectedId, "older", "Returning preserves the selected older scene");
+    assert.equal(h.state.jobCursor, "older-page");
+    assert.equal(h.timers.size, 1, "One polling timer remains after the refresh");
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
+  }
+  {
+    const h = harness(), waiting = deferred();
+    h.context.respond = async () => waiting.promise;
+    h.context.schedulePoll();
+    const timer = h.timers.get(h.state.pollTimer);
+    h.timers.delete(h.state.pollTimer);
+    const polling = timer.callback();
+    h.context.document.visibilityState = "hidden";
+    await h.documentEvents.get("visibilitychange")();
+    waiting.resolve({ jobs: [], nextCursor: null });
+    await polling;
+    assert.equal(h.state.pollTimer, null, "A refresh that finishes hidden does not restart polling");
+    assert.equal(h.timers.size, 0);
+  }
+  {
+    const h = harness();
+    let attempts = 0;
+    h.state.jobs = [{ id: "active", state: "running" }];
+    h.context.respond = async () => {
+      if (++attempts === 1) throw new Error("Temporary network failure");
+      return { jobs: [{ id: "active", state: "running" }], nextCursor: null };
+    };
+    h.context.schedulePoll();
+    let timer = h.timers.get(h.state.pollTimer);
+    h.timers.delete(h.state.pollTimer);
+    await timer.callback();
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 5000, "A failed refresh retries at a slower pace");
+    timer = h.timers.get(h.state.pollTimer);
+    h.timers.delete(h.state.pollTimer);
+    await timer.callback();
+    assert.equal(attempts, 2);
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 900, "Successful processing refresh restores the active cadence");
+  }
+  {
+    const h = harness(), waiting = deferred();
+    h.context.respond = async () => waiting.promise;
+    h.context.schedulePoll();
+    const timer = h.timers.get(h.state.pollTimer);
+    h.timers.delete(h.state.pollTimer);
+    const polling = timer.callback();
+    h.context.showLogin();
+    waiting.resolve({ jobs: [{ id: "private", state: "ready" }], nextCursor: null });
+    await polling;
+    assert.equal(h.state.jobs.length, 0, "A late polling response cannot restore signed-out private data");
+    assert.equal(h.state.pollTimer, null);
+    assert.equal(h.timers.size, 0);
+    await h.documentEvents.get("visibilitychange")();
+    assert.equal(h.requests.length, 1, "Returning to a signed-out page does not poll or revalidate");
+  }
+  {
+    const h = harness(), oldResponse = deferred(), newResponse = deferred();
+    h.context.respond = async () => oldResponse.promise;
+    const oldPoll = h.context.pollJobs();
+    h.context.secureReset();
+    h.context.showApp(user, "new-csrf", allowance("available"));
+    h.context.respond = async () => newResponse.promise;
+    const newPoll = h.context.pollJobs();
+    oldResponse.resolve({ jobs: [{ id: "old-private", state: "ready" }], nextCursor: null });
+    await oldPoll;
+    assert.equal(h.state.pollRefresh, newPoll, "Old cleanup cannot clear a new session's refresh");
+    assert.equal(h.state.pollTimer, null);
+    newResponse.resolve({ jobs: [{ id: "new-private", state: "ready" }], nextCursor: null });
+    await newPoll;
+    assert.deepEqual(Array.from(h.state.jobs, job => job.id), ["new-private"]);
+    assert.equal(h.timers.size, 1);
+  }
   {
     const h = harness(), section = h.node("viewerSection"), button = h.node("fullScreen");
     const doc = h.context.document;

@@ -164,6 +164,62 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const background of [true, false]) {
+    const h = harness(), list = deferred(), detail = deferred();
+    const job = { id: "processing", displayName: "Studio", engineId: "lingbot-research-v1",
+      state: "running", stage: "reconstructing", progress: 0.3, provenance: {}, artifacts: [],
+      usedUnits: 0, reservedUnits: 0 };
+    h.state.jobs = [job];
+    h.state.selectedId = job.id;
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = (path) => path.startsWith("/api/jobs?") ? list.promise : detail.promise;
+    const refresh = background ? h.context.pollJobs() : h.context.loadJobs();
+    const assertFeedback = () => {
+      assert.equal(h.node("requestStatus").hidden, background, "Only foreground scene reads show Working feedback");
+      assert.equal(h.context.document.body.getAttribute("aria-busy"), String(!background));
+    };
+    assertFeedback();
+    list.resolve({ jobs: [job], nextCursor: null });
+    await new Promise(setImmediate);
+    assert.equal(h.requests.at(-1).path, "/api/jobs/processing");
+    assertFeedback();
+    detail.resolve({ ...job, progress: 0.7 });
+    await refresh;
+    assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), "70", "Quiet detail reads still update progress");
+    assert.equal(h.node("requestStatus").hidden, true);
+    assert.equal(h.context.document.body.getAttribute("aria-busy"), "false");
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 900);
+  }
+  for (const backgroundFinishesFirst of [true, false]) {
+    const h = harness(), jobs = deferred(), accountResult = deferred();
+    h.context.respond = (path) => path.startsWith("/api/jobs?") ? jobs.promise : accountResult.promise;
+    const polling = h.context.pollJobs();
+    const foreground = h.context.api("/api/me");
+    assert.equal(h.node("requestStatus").hidden, false, "Foreground work remains visible alongside polling");
+    const finishPoll = async () => { jobs.resolve({ jobs: [], nextCursor: null }); await polling; };
+    const finishForeground = async () => { accountResult.resolve(account("available")); await foreground; };
+    await (backgroundFinishesFirst ? finishPoll() : finishForeground());
+    assert.equal(h.node("requestStatus").hidden, !backgroundFinishesFirst, "Only outstanding foreground work owns feedback");
+    assert.equal(h.context.document.body.getAttribute("aria-busy"), String(backgroundFinishesFirst));
+    await (backgroundFinishesFirst ? finishForeground() : finishPoll());
+    assert.equal(h.node("requestStatus").hidden, true);
+  }
+  {
+    const h = harness(), oldJobs = deferred(), newAccount = deferred();
+    h.context.respond = () => oldJobs.promise;
+    const polling = h.context.pollJobs();
+    h.context.secureReset();
+    assert.equal(h.requests[0].options.signal.aborted, true, "Quiet requests remain abortable on session reset");
+    h.context.respond = () => newAccount.promise;
+    const foreground = h.context.api("/api/me");
+    oldJobs.resolve({ jobs: [{ id: "private", state: "ready" }], nextCursor: null });
+    await polling;
+    assert.equal(h.state.jobs.length, 0);
+    assert.equal(h.node("requestStatus").hidden, false, "Late quiet cleanup cannot hide new foreground work");
+    newAccount.resolve(account("available"));
+    await foreground;
+    assert.equal(h.node("requestStatus").hidden, true);
+  }
   for (const jobState of ["running", "ready"]) {
     const h = harness();
     h.state.jobs = [{ id: "scene", state: jobState }];
@@ -227,6 +283,7 @@ async function main() {
     let timer = h.timers.get(h.state.pollTimer);
     h.timers.delete(h.state.pollTimer);
     await timer.callback();
+    assert.equal(h.node("toast").textContent, "Temporary network failure", "Quiet polling still reports failures");
     assert.equal(h.timers.get(h.state.pollTimer).delay, 5000, "A failed refresh retries at a slower pace");
     timer = h.timers.get(h.state.pollTimer);
     h.timers.delete(h.state.pollTimer);

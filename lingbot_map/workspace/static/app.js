@@ -4,7 +4,7 @@ const byId = (id) => document.getElementById(id);
 const state = {
   csrf: "", jobs: [], assets: [], shares: [], selectedId: null, engine: null, viewer: null,
   viewerArtifact: null, pollTimer: null, pollRefresh: null, toastTimer: null, epoch: 0, controllers: new Set(),
-  principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
+  foregroundRequests: new Set(), principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
@@ -72,7 +72,9 @@ async function api(path, options = {}) {
     body = JSON.stringify(options.json);
   }
   const controller = new AbortController();
+  // Background polling stays abortable without marking the whole page busy.
   state.controllers.add(controller);
+  if (!options.background) state.foregroundRequests.add(controller);
   renderRequestStatus();
   let timedOut = false;
   const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 60000);
@@ -132,6 +134,7 @@ async function api(path, options = {}) {
   } finally {
     window.clearTimeout(timeout);
     state.controllers.delete(controller);
+    state.foregroundRequests.delete(controller);
     renderRequestStatus();
   }
 }
@@ -159,8 +162,8 @@ function renderRequestStatus() {
     if (dialog) host.prepend(node); else host.append(node);
   }
   node.classList.toggle("dialog-request-status", Boolean(dialog));
-  node.hidden = state.controllers.size === 0;
-  document.body.setAttribute("aria-busy", String(state.controllers.size > 0));
+  node.hidden = state.foregroundRequests.size === 0;
+  document.body.setAttribute("aria-busy", String(state.foregroundRequests.size > 0));
 }
 
 function broadcastSession(type) {
@@ -274,6 +277,7 @@ function secureReset() {
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
   state.controllers.clear();
+  state.foregroundRequests.clear();
   stopPolling();
   state.pollRefresh = null;
   state.csrf = "";
@@ -489,7 +493,7 @@ function renderManagedJobs() {
   })));
 }
 
-async function loadJobs({ selectNewest = false, append = false, preserveLoaded = false } = {}) {
+async function loadJobs({ selectNewest = false, append = false, preserveLoaded = false, background = false } = {}) {
   const epoch = state.epoch;
   const activeResearch = new Set(state.jobs.filter((job) => job.engineId === "lingbot-research-v1"
     && !terminalStates.has(job.state)).map((job) => job.id));
@@ -497,7 +501,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   const loadedCursor = state.jobCursor;
   const query = new URLSearchParams({ limit: "25" });
   if (cursor) query.set("cursor", cursor);
-  const result = await api(`/api/jobs?${query}`);
+  const result = await api(`/api/jobs?${query}`, { background });
   if (append) {
     const seen = new Set(state.jobs.map((job) => job.id));
     state.jobs.push(...result.jobs.filter((job) => !seen.has(job.id)));
@@ -523,7 +527,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
     await revalidateSession({ fresh: true });
   }
   if (epoch !== state.epoch) return;
-  if (state.selectedId) await renderJobDetail(); else clearDetail();
+  if (state.selectedId) await renderJobDetail({ background }); else clearDetail();
   if (epoch === state.epoch) schedulePoll();
 }
 
@@ -697,7 +701,7 @@ function pollJobs() {
   const pending = (async () => {
     let failed = false;
     try {
-      await loadJobs({ preserveLoaded: true });
+      await loadJobs({ preserveLoaded: true, background: true });
     } catch (error) {
       if (epoch === state.epoch) { failed = true; report(error); }
     } finally {
@@ -781,10 +785,10 @@ function updateProgress(job) {
   });
 }
 
-async function renderJobDetail() {
+async function renderJobDetail({ background = false } = {}) {
   if (!state.selectedId) { clearDetail(); return; }
   const selected = state.selectedId;
-  const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
+  const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { background });
   if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;

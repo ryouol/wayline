@@ -527,7 +527,9 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
     await revalidateSession({ fresh: true });
   }
   if (epoch !== state.epoch) return;
-  if (state.selectedId) await renderJobDetail({ background }); else clearDetail();
+  if (state.selectedId) {
+    await renderJobDetail({ background, summary: result.jobs.find((job) => job.id === state.selectedId) });
+  } else clearDetail();
   if (epoch === state.epoch) schedulePoll();
 }
 
@@ -785,10 +787,15 @@ function updateProgress(job) {
   });
 }
 
-async function renderJobDetail({ background = false } = {}) {
+async function renderJobDetail({ background = false, summary = null } = {}) {
   if (!state.selectedId) { clearDetail(); return; }
   const selected = state.selectedId;
-  const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`, { background });
+  // Only ready jobs expose artifacts. Other states have complete details in the
+  // fresh list response; never substitute an older entry from loaded pages.
+  const useSummary = background && summary?.id === selected
+    && ["queued", "running", "failed", "cancelled"].includes(summary.state);
+  const job = useSummary ? { ...summary, artifacts: [] }
+    : await api(`/api/jobs/${encodeURIComponent(selected)}`, { background });
   if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;

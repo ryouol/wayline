@@ -164,10 +164,114 @@ function harness(search = "") {
 }
 
 async function main() {
+  {
+    const h = harness();
+    let job = { id: "processing", displayName: "Studio", engineId: "synthetic-sample-v1",
+      state: "queued", stage: "queued", progress: 0, provenance: {}, createdAt: 100,
+      expiresAt: null, usedUnits: 0, reservedUnits: 1 };
+    h.state.selectedId = job.id;
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async (path) => {
+      assert.ok(path.startsWith("/api/jobs?"), "Non-ready polling needs only the fresh list response");
+      return { jobs: [{ ...job }], nextCursor: null };
+    };
+    for (const update of [
+      {}, { state: "running", stage: "generating", progress: 0.3 },
+      { progress: 0.7 }, { cancellationRequested: true },
+      { state: "cancelled", stage: "cancelled", expiresAt: 200 },
+      { state: "failed", stage: "failed", error: { message: "Capture could not be processed." } },
+    ]) {
+      job = { ...job, ...update };
+      const before = h.requests.length;
+      await h.context.pollJobs();
+      assert.equal(h.requests.length - before, 1, "Each non-ready refresh uses one request");
+      assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), String(job.progress * 100));
+      assert.equal(h.node("cancelButton").hidden, ["cancelled", "failed"].includes(job.state));
+      assert.equal(h.node("requestStatus").hidden, true);
+      assert.equal(h.node("toast").textContent, "");
+      if (job.cancellationRequested && job.state === "running") assert.equal(h.node("progressTitle").textContent, "Stopping safely");
+      if (job.expiresAt) assert.match(h.node("detailMeta").textContent, /Removal due/);
+    }
+    assert.equal(h.node("jobMessage").textContent, "Capture could not be processed.");
+  }
+  {
+    const h = harness();
+    const job = { id: "selected", displayName: "Studio", engineId: "synthetic-sample-v1",
+      state: "running", stage: "generating", progress: 0.3, provenance: {}, createdAt: 100,
+      expiresAt: null, usedUnits: 0, reservedUnits: 1 };
+    let rows = [job];
+    h.state.jobs = rows;
+    h.state.selectedId = job.id;
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async (path) => path.startsWith("/api/jobs?")
+      ? { jobs: rows, nextCursor: null } : { ...job, progress: 0.8, artifacts: [] };
+    await h.context.loadJobs();
+    assert.equal(h.requests.length, 2, "Manual refresh always fetches current selected details");
+    assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), "80");
+    rows = [];
+    await h.context.pollJobs();
+    assert.equal(h.requests.length, 4, "An older selected scene outside the refreshed page still needs details");
+    assert.equal(h.state.selectedId, job.id);
+    h.context.respond = async (path) => {
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      throw new Error("Job not found.");
+    };
+    await h.context.pollJobs();
+    assert.equal(h.node("toast").textContent, "Job not found.", "A missing selected scene is revalidated, not reused from loaded pages");
+  }
+  {
+    const h = harness();
+    let job = { id: "transition", displayName: "Studio", engineId: "synthetic-sample-v1",
+      state: "running", stage: "generating", progress: 0.3, provenance: {}, createdAt: 100,
+      expiresAt: null, usedUnits: 0, reservedUnits: 1 };
+    const scene = { id: "scene", kind: "scene", filename: "scene.glb", sizeBytes: 100, metadata: {},
+      viewUrl: "/scene", downloadUrl: "/download" };
+    let published = [scene], loads = 0, destroyed = 0;
+    h.context.window.PointCloudViewer = class {
+      async load() { loads++; }
+      destroy() { destroyed++; }
+    };
+    h.context.renderTimeline = () => {};
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.selectedId = job.id;
+    h.context.respond = async (path) => path.startsWith("/api/jobs?")
+      ? { jobs: [job], nextCursor: null } : { ...job, artifacts: published };
+    await h.context.pollJobs();
+    assert.equal(h.requests.length, 1);
+    job = { ...job, state: "ready", stage: "ready", progress: 1, expiresAt: 200 };
+    await h.context.pollJobs();
+    assert.equal(h.requests.length, 3, "Completion fetches newly published artifacts immediately");
+    assert.equal(loads, 1);
+    assert.equal(h.node("viewerSection").hidden, false);
+    published = [];
+    await h.context.pollJobs();
+    assert.equal(h.requests.length, 5, "Ready details refresh even with an unchanged summary");
+    assert.equal(h.node("viewerSection").hidden, true);
+    assert.equal(destroyed, 1, "Artifact cleanup is reflected without a job-version change");
+  }
+  {
+    const h = harness(), list = deferred();
+    const previous = { id: "previous", state: "running" };
+    const selected = { id: "selected", displayName: "Selected scene", state: "running",
+      stage: "generating", progress: 0.6, provenance: {}, artifacts: [] };
+    h.state.jobs = [previous, selected];
+    h.state.selectedId = previous.id;
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async (path) => {
+      if (path.startsWith("/api/jobs?")) return list.promise;
+      assert.equal(path, "/api/jobs/selected");
+      return selected;
+    };
+    const polling = h.context.pollJobs();
+    h.state.selectedId = selected.id;
+    list.resolve({ jobs: [previous], nextCursor: null });
+    await polling;
+    assert.equal(h.node("detailTitle").textContent, "Selected scene", "Selection changes during a refresh never render another scene's summary");
+  }
   for (const background of [true, false]) {
     const h = harness(), list = deferred(), detail = deferred();
     const job = { id: "processing", displayName: "Studio", engineId: "lingbot-research-v1",
-      state: "running", stage: "reconstructing", progress: 0.3, provenance: {}, artifacts: [],
+      state: "ready", stage: "ready", progress: 1, provenance: {}, artifacts: [],
       usedUnits: 0, reservedUnits: 0 };
     h.state.jobs = [job];
     h.state.selectedId = job.id;
@@ -183,12 +287,12 @@ async function main() {
     await new Promise(setImmediate);
     assert.equal(h.requests.at(-1).path, "/api/jobs/processing");
     assertFeedback();
-    detail.resolve({ ...job, progress: 0.7 });
+    detail.resolve(job);
     await refresh;
-    assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), "70", "Quiet detail reads still update progress");
+    assert.equal(h.node("detailTitle").textContent, "Studio", "Quiet detail reads still render completed scenes");
     assert.equal(h.node("requestStatus").hidden, true);
     assert.equal(h.context.document.body.getAttribute("aria-busy"), "false");
-    assert.equal(h.timers.get(h.state.pollTimer).delay, 900);
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
   }
   for (const backgroundFinishesFirst of [true, false]) {
     const h = harness(), jobs = deferred(), accountResult = deferred();
@@ -298,6 +402,8 @@ async function main() {
     const timer = h.timers.get(h.state.pollTimer);
     h.timers.delete(h.state.pollTimer);
     const polling = timer.callback();
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.selectedId = "private";
     h.context.showLogin();
     waiting.resolve({ jobs: [{ id: "private", state: "ready" }], nextCursor: null });
     await polling;

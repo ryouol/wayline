@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from lingbot_map.workspace.app import create_app
@@ -251,6 +252,23 @@ def test_production_disables_schema_validates_host_and_leaves_hsts_to_edge(setti
         assert (
             production_client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
         )
+
+
+@pytest.mark.parametrize("state", ["queued", "running", "failed", "cancelled"])
+def test_non_ready_list_has_complete_detail_fields(authenticated_client, service, tenant_id, state):
+    job_id = service.submit_sample(tenant_id)["id"]
+    assert service.process_next_job()
+    assert service.database.get_job(tenant_id, job_id)["artifacts"]
+    # Keep stored artifacts to verify that they are only published in ready state.
+    with service.database.transaction() as connection:
+        connection.execute(
+            "UPDATE jobs SET state=?,stage=? WHERE id=? AND tenant_id=?",
+            (state, state, job_id, tenant_id),
+        )
+    summary = authenticated_client.get("/api/jobs").json()["jobs"][0]
+    detail = authenticated_client.get(f"/api/jobs/{job_id}").json()
+    assert summary["id"] == job_id
+    assert detail == {**summary, "artifacts": []}
 
 
 def test_complete_sample_view_download_share_and_delete(authenticated_client, service, tenant_id):

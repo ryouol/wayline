@@ -57,7 +57,8 @@ def app_page(name: str, title: str, description: str, origin: str = "") -> HTMLR
     return HTMLResponse(
         version_assets(
             document.replace("<!-- PAGE_METADATA -->", metadata(title, description, origin))
-        )
+        ),
+        headers={"Cache-Control": "no-cache"},
     )
 
 
@@ -80,6 +81,7 @@ width="48" height="36">wayline</a>
 <p><a class="primary" href="/">Return to Wayline</a></p></main>
 <script src="/static/site.js"></script></body></html>"""),
         status_code=status,
+        headers={"Cache-Control": "no-cache"},
     )
 
 

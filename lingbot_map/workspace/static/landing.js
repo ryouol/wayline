@@ -65,7 +65,7 @@
       current = new window.PointCloudViewer(document.getElementById("landingCanvas"), status,
         { interactive: false, pointSize: 2.2, showPath: true });
       viewer = current;
-      await current.load("/static/landing-scene.glb");
+      await current.load(scene.dataset.sceneUrl);
       if (viewer !== current || current.destroyed) return;
       progress = scrollProgress();
       draw();

@@ -30,7 +30,6 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
@@ -56,6 +55,7 @@ from .pages import SUPPORT_PAGES, app_page, support_page
 from .request_limits import RequestBodyLimitMiddleware
 from .runtime_lock import workspace_lock
 from .service import InvalidEngineParameters, UploadRejected, WorkspaceService
+from .static_files import VersionedStaticFiles
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -1115,7 +1115,7 @@ def create_app(
             media_type="application/xml",
         )
 
-    application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    application.mount("/static", VersionedStaticFiles(directory=STATIC_DIR), name="static")
     return application
 
 

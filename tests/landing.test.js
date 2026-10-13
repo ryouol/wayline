@@ -18,7 +18,7 @@ function fixture({ reduced = false, saveData = false, fail = false } = {}) {
   let intersection, mutation, nextFrame = 0, top = 100;
   const animation = new Map();
   const instances = [];
-  const scene = { dataset: {}, clientHeight: 600, getBoundingClientRect: () => ({ top }) };
+  const scene = { dataset: { sceneUrl: "/static/landing-scene.glb?v=123456789abc" }, clientHeight: 600, getBoundingClientRect: () => ({ top }) };
   const landing = { hidden: false };
   const toggle = eventTarget({ attrs: {}, setAttribute(key, value) { this.attrs[key] = value; } });
   const elements = { landingScene: scene, loginView: landing, motionToggle: toggle, landingCanvas: {}, landingStatus: {} };
@@ -34,7 +34,7 @@ function fixture({ reduced = false, saveData = false, fail = false } = {}) {
       instances.push(this);
     }
     load(url) {
-      assert.equal(url, "/static/landing-scene.glb");
+      assert.equal(url, "/static/landing-scene.glb?v=123456789abc", "Use the current scene fingerprint supplied by the page");
       return new Promise((resolve, reject) => {
         this.finish = () => { this.count = 30_000; resolve(); };
         this.reject = reject;

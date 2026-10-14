@@ -122,7 +122,7 @@ async function api(path, options = {}) {
         if (typeof value === "string") detail = value;
         else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
       } catch (_) { /* response was not JSON */ }
-      throw new Error(detail);
+      throw Object.assign(new Error(detail), { status: response.status });
     }
     if (response.status === 204) return null;
     const result = await response.json();
@@ -730,9 +730,11 @@ function schedulePoll({ retry = false } = {}) {
 }
 
 async function selectJob(jobId) {
+  const epoch = state.epoch;
   state.selectedId = jobId;
   renderJobs();
   await renderJobDetail();
+  if (epoch !== state.epoch || state.selectedId !== jobId) return;
   byId("detailTitle").focus({ preventScroll: true });
   if (window.matchMedia("(max-width: 860px)").matches) byId("workspaceMain").scrollIntoView({ block: "start" });
 }
@@ -789,13 +791,29 @@ function updateProgress(job) {
 
 async function renderJobDetail({ background = false, summary = null } = {}) {
   if (!state.selectedId) { clearDetail(); return; }
-  const selected = state.selectedId;
+  const selected = state.selectedId, epoch = state.epoch;
   // Only ready jobs expose artifacts. Other states have complete details in the
   // fresh list response; never substitute an older entry from loaded pages.
   const useSummary = background && summary?.id === selected
     && ["queued", "running", "failed", "cancelled"].includes(summary.state);
-  const job = useSummary ? { ...summary, artifacts: [] }
-    : await api(`/api/jobs/${encodeURIComponent(selected)}`, { background });
+  let job;
+  try {
+    job = useSummary ? { ...summary, artifacts: [] }
+      : await api(`/api/jobs/${encodeURIComponent(selected)}`, { background });
+  } catch (error) {
+    if (epoch !== state.epoch || selected !== state.selectedId) return;
+    if (error.status !== 404) throw error;
+    // A paginated refresh alone cannot prove removal. A current detail 404 can.
+    state.jobs = state.jobs.filter((item) => item.id !== selected);
+    state.selectedJobs.delete(selected);
+    state.selectedId = null;
+    clearDetail();
+    renderJobs();
+    updateSelectionSummary();
+    toast("This scene is no longer available. It may have expired or been deleted.");
+    if (!background && !activeDialog()) byId("emptyTitle").focus({ preventScroll: true });
+    return;
+  }
   if (selected !== state.selectedId) return;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;

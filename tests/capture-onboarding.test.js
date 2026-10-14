@@ -127,6 +127,7 @@ function harness(search = "") {
     fetch: async (path, options = {}) => {
       requests.push({ path, method: options.method || "GET", options });
       const result = await (path === "/api/engines" ? context.engineResponse() : context.respond(path, options));
+      if (result instanceof Response) return result;
       return { ok: true, status: 200, headers: new Headers(), json: async () => result };
     },
     engineResponse: async () => engines(),
@@ -164,6 +165,103 @@ function harness(search = "") {
 }
 
 async function main() {
+  {
+    const h = harness();
+    const job = { id: "expired", displayName: "Old scene", engineId: "synthetic-sample-v1",
+      state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 };
+    const other = { ...job, id: "other", displayName: "Other scene" };
+    const artifact = { id: "artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      viewUrl: "/scene", downloadUrl: "/download", metadata: {} };
+    let missing = false, destroyed = 0, exits = 0;
+    h.context.window.PointCloudViewer = class {
+      async load() {}
+      destroy() { destroyed++; }
+    };
+    h.context.document.exitFullscreen = async () => { exits++; };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.jobs = [job, other];
+    h.state.selectedId = job.id;
+    h.state.selectedJobs = new Set([job.id, other.id]);
+    h.state.jobCursor = "older-page";
+    h.context.respond = async (path) => {
+      if (path.startsWith("/api/jobs?")) return { jobs: [other], nextCursor: "fresh-page" };
+      assert.equal(path, "/api/jobs/expired");
+      return missing ? new Response(JSON.stringify({ detail: "Job not found." }), { status: 404 })
+        : { ...job, artifacts: [artifact] };
+    };
+    await h.renderRealJobDetail();
+    h.context.document.fullscreenElement = h.node("viewerSection");
+    missing = true;
+    await h.context.pollJobs();
+    assert.equal(h.state.selectedId, null, "A confirmed missing scene is no longer selected");
+    assert.deepEqual(Array.from(h.state.jobs, item => item.id), [other.id]);
+    assert.deepEqual(Array.from(h.state.selectedJobs), [other.id], "Only the missing bulk selection is removed");
+    assert.equal(h.state.jobCursor, "older-page", "Older-page navigation remains intact");
+    assert.equal(destroyed, 1);
+    assert.equal(exits, 1, "Unavailable scene leaves full screen");
+    assert.equal(h.state.viewer, null);
+    assert.equal(h.state.viewerArtifact, null);
+    assert.equal(h.node("jobDetail").hidden, true);
+    assert.equal(h.node("emptyDetail").hidden, false);
+    assert.equal(h.node("downloadLink").href, "");
+    assert.equal(h.node("shareButton").dataset.artifactId, undefined);
+    assert.equal(h.node("selectionSummary").textContent, "1 scene selected");
+    assert.equal(h.state.reconstructionAllowance.remaining, 2, "Removal does not change processing credits");
+    assert.match(h.node("toast").textContent, /no longer available/);
+    const noticeTimer = h.state.toastTimer, before = h.requests.length;
+    await h.context.pollJobs();
+    assert.equal(h.requests.length - before, 1, "Following polls no longer fetch missing details");
+    assert.equal(h.state.toastTimer, noticeTimer, "The missing-scene notice is not repeated");
+    assert.equal(h.node("emptyTitle").focusCount, 0, "Background removal does not steal focus");
+  }
+  for (const status of [403, 500]) {
+    const h = harness();
+    const job = { id: "existing", state: "ready", displayName: "Existing" };
+    const viewer = { destroy() { assert.fail("A temporary failure must not discard the viewer"); } };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.jobs = [job];
+    h.state.selectedId = job.id;
+    h.state.viewer = viewer;
+    h.context.respond = async path => path.startsWith("/api/jobs?") ? { jobs: [job], nextCursor: null }
+      : new Response(JSON.stringify({ detail: "Try again later." }), { status });
+    await h.context.pollJobs();
+    assert.equal(h.state.selectedId, job.id);
+    assert.equal(h.state.jobs.length, 1);
+    assert.equal(h.state.viewer, viewer);
+    assert.equal(h.node("toast").textContent, "Try again later.");
+    assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
+  }
+  for (const resetSession of [false, true]) {
+    const h = harness(), pending = deferred();
+    h.state.jobs = [{ id: "old", state: "ready" }];
+    h.state.selectedId = "old";
+    h.context.respond = () => pending.promise;
+    const detail = h.renderRealJobDetail();
+    if (resetSession) h.context.secureReset();
+    const current = { id: resetSession ? "old" : "new", state: "ready" };
+    const viewer = { destroy() { assert.fail("A late 404 cannot dispose a different scene"); } };
+    h.state.selectedId = current.id;
+    h.state.jobs = [current];
+    h.state.viewer = viewer;
+    pending.resolve(new Response(JSON.stringify({ detail: "Job not found." }), { status: 404 }));
+    await detail;
+    assert.equal(h.state.selectedId, current.id);
+    assert.equal(h.state.jobs[0], current);
+    assert.equal(h.state.viewer, viewer);
+    assert.equal(h.node("toast").textContent, "", "Late errors do not report a stale selection");
+  }
+  {
+    const h = harness();
+    h.state.jobs = [{ id: "gone", state: "ready" }];
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async () => new Response(JSON.stringify({ detail: "Job not found." }), { status: 404 });
+    await h.context.selectJob("gone");
+    assert.equal(h.state.selectedId, null);
+    assert.equal(h.node("emptyTitle").focusCount, 1, "A failed direct selection focuses the visible empty state");
+    assert.equal(h.node("detailTitle").focusCount, 0, "Do not focus a hidden scene heading");
+    assert.match(markup.match(/<h1\b[^>]*\bid="emptyTitle"[^>]*>/)?.[0] || "", /tabindex="-1"/,
+      "The visible recovery heading can receive keyboard focus");
+  }
   {
     const h = harness();
     let job = { id: "processing", displayName: "Studio", engineId: "synthetic-sample-v1",

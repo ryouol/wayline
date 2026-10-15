@@ -167,6 +167,65 @@ function harness(search = "") {
 async function main() {
   {
     const h = harness();
+    const job = id => ({ id, state: "ready", displayName: id });
+    const newest = job("new"), older = job("older"), gone = job("gone");
+    h.state.jobs = [older, gone];
+    h.state.selectedJobs = new Set([older.id, gone.id]);
+    h.state.jobCursor = "older-page";
+    let checked;
+    h.context.respond = async path => {
+      const query = new URL(path, "https://example.test").searchParams;
+      checked = query.getAll("knownId");
+      return { jobs: [newest], nextCursor: "first-page", missingIds: [gone.id] };
+    };
+    await h.context.pollJobs();
+    assert.deepEqual(Array.from(h.state.jobs, item => item.id), [newest.id, older.id]);
+    assert.deepEqual(checked, [older.id, gone.id]);
+    assert.deepEqual(Array.from(h.state.selectedJobs), [older.id]);
+    assert.equal(h.state.jobCursor, "older-page");
+    assert.equal(h.node("selectionSummary").textContent, "1 scene selected");
+    assert.equal(h.requests.length, 1, "Presence checks ride on the existing list request");
+    assert.equal(h.node("toast").textContent, "", "Unselected removals stay quiet");
+  }
+  {
+    const h = harness(), checked = [];
+    const jobs = Array.from({ length: 250 }, (_, index) => ({ id: `scene-${index}`, state: "ready" }));
+    h.state.jobs = jobs;
+    h.context.respond = async path => {
+      const ids = new URL(path, "https://example.test").searchParams.getAll("knownId");
+      assert.ok(ids.length <= 100 && ids.length > 0);
+      checked.push(...ids);
+      return { jobs: jobs.slice(0, 25), nextCursor: "more", missingIds: [] };
+    };
+    for (let poll = 0; poll < 3; poll++) await h.context.pollJobs();
+    assert.equal(new Set(checked).size, 250, "Larger libraries rotate through every loaded row");
+    assert.equal(checked.length, 250);
+    const offset = h.state.jobCheckOffset;
+    h.context.respond = async () => { throw new Error("Connection lost."); };
+    await h.context.pollJobs();
+    assert.equal(h.state.jobCheckOffset, offset, "Failed polls do not skip a batch");
+    assert.equal(h.state.jobs.length, 250);
+    h.context.secureReset();
+    assert.equal(h.state.jobCheckOffset, 0);
+  }
+  {
+    const h = harness(), pending = deferred();
+    const job = { id: "selected-during-refresh", state: "ready", displayName: "Scene" };
+    h.state.jobs = [job];
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async path => path.startsWith("/api/jobs?") ? pending.promise
+      : new Response(JSON.stringify({ detail: "Job not found." }), { status: 404 });
+    const polling = h.context.pollJobs();
+    h.state.selectedId = job.id;
+    pending.resolve({ jobs: [], nextCursor: null, missingIds: [job.id] });
+    await polling;
+    assert.equal(h.requests.length, 2, "A newly selected missing row still uses detail confirmation");
+    assert.equal(h.state.selectedId, null);
+    assert.equal(h.state.jobs.length, 0);
+    assert.match(h.node("toast").textContent, /no longer available/);
+  }
+  {
+    const h = harness();
     const job = { id: "expired", displayName: "Old scene", engineId: "synthetic-sample-v1",
       state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 };
     const other = { ...job, id: "other", displayName: "Other scene" };

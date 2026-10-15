@@ -6,7 +6,7 @@ const state = {
   viewerArtifact: null, pollTimer: null, pollRefresh: null, toastTimer: null, epoch: 0, controllers: new Set(),
   foregroundRequests: new Set(), principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
-  jobsRenderKey: "", accountType: "operator", config: null,
+  jobsRenderKey: "", jobCheckOffset: 0, accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
   capturePreviewUrl: null, retention: null, submissionTiming: null,
 };
@@ -283,6 +283,7 @@ function secureReset() {
   state.csrf = "";
   state.jobs = [];
   state.jobsRenderKey = "";
+  state.jobCheckOffset = 0;
   state.assets = [];
   state.shares = [];
   state.jobCursor = null;
@@ -501,15 +502,26 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   const loadedCursor = state.jobCursor;
   const query = new URLSearchParams({ limit: "25" });
   if (cursor) query.set("cursor", cursor);
+  // Rotate bounded presence checks through loaded rows without extra requests.
+  // Keep the selected scene on its existing detail-confirmation path.
+  const candidates = preserveLoaded && background
+    ? state.jobs.filter((job) => job.id !== state.selectedId) : [];
+  const checkOffset = candidates.length ? state.jobCheckOffset % candidates.length : 0;
+  const checkedIds = candidates.slice(checkOffset, checkOffset + 100).map((job) => job.id);
+  checkedIds.forEach((id) => query.append("knownId", id));
   const result = await api(`/api/jobs?${query}`, { background });
+  if (candidates.length) state.jobCheckOffset = (checkOffset + checkedIds.length) % candidates.length;
+  const missing = new Set((result.missingIds || []).filter((id) => checkedIds.includes(id)));
+  const freshJobs = result.jobs.filter((job) => !missing.has(job.id));
   if (append) {
     const seen = new Set(state.jobs.map((job) => job.id));
-    state.jobs.push(...result.jobs.filter((job) => !seen.has(job.id)));
+    state.jobs.push(...freshJobs.filter((job) => !seen.has(job.id)));
   } else if (preserveLoaded) {
-    const refreshed = new Set(result.jobs.map((job) => job.id));
-    state.jobs = [...result.jobs, ...state.jobs.filter((job) => !refreshed.has(job.id))];
+    const refreshed = new Set(freshJobs.map((job) => job.id));
+    state.jobs = [...freshJobs, ...state.jobs.filter((job) => !refreshed.has(job.id)
+      && (!missing.has(job.id) || job.id === state.selectedId))];
   } else {
-    state.jobs = result.jobs;
+    state.jobs = freshJobs;
   }
   state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
   byId("loadMoreJobs").hidden = !state.jobCursor;
@@ -523,12 +535,12 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   const unobservedCompletion = state.reconstructionAllowance?.state === "processing"
     && !state.jobs.some((job) => job.engineId === "lingbot-research-v1" && !terminalStates.has(job.state));
   if (state.accountType !== "trial" && (unobservedCompletion
-      || result.jobs.some((job) => activeResearch.has(job.id) && terminalStates.has(job.state)))) {
+      || freshJobs.some((job) => activeResearch.has(job.id) && terminalStates.has(job.state)))) {
     await revalidateSession({ fresh: true });
   }
   if (epoch !== state.epoch) return;
   if (state.selectedId) {
-    await renderJobDetail({ background, summary: result.jobs.find((job) => job.id === state.selectedId) });
+    await renderJobDetail({ background, summary: freshJobs.find((job) => job.id === state.selectedId) });
   } else clearDetail();
   if (epoch === state.epoch) schedulePoll();
 }

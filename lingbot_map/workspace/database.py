@@ -1167,6 +1167,23 @@ class Database:
         )
         return values, next_cursor
 
+    def missing_job_ids(self, tenant_id: str, job_ids: list[str]) -> list[str]:
+        if len(job_ids) > 100:
+            raise ValueError("at most 100 scene IDs can be checked at once")
+        unique_ids = list(dict.fromkeys(job_ids))
+        if not unique_ids:
+            return []
+        placeholders = ",".join("?" for _ in unique_ids)
+        with self.connect() as connection:
+            present = {
+                row["id"]
+                for row in connection.execute(
+                    f"SELECT id FROM jobs WHERE tenant_id=? AND id IN ({placeholders})",
+                    [tenant_id, *unique_ids],
+                )
+            }
+        return [job_id for job_id in unique_ids if job_id not in present]
+
     def claim_next_job(
         self,
         *,

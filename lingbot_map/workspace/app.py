@@ -212,6 +212,7 @@ class JobDetailResponse(JobResponse):
 class JobsResponse(BaseModel):
     jobs: list[JobResponse]
     nextCursor: str | None
+    missingIds: list[str]
 
 
 class AssetsResponse(BaseModel):
@@ -841,8 +842,13 @@ def create_app(
         current: CurrentPrincipal,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         cursor: Annotated[str | None, Query(max_length=512)] = None,
+        known_ids: Annotated[
+            list[Annotated[str, Field(pattern=r"^job_[0-9a-f]{32}$")]] | None,
+            Query(alias="knownId", max_length=100),
+        ] = None,
     ):
         try:
+            missing_ids = workspace.database.missing_job_ids(current.tenant_id, known_ids or [])
             jobs, next_cursor = workspace.database.page_jobs(
                 current.tenant_id, limit=limit, cursor=cursor
             )
@@ -859,6 +865,7 @@ def create_app(
                 for item in jobs
             ],
             "nextCursor": next_cursor,
+            "missingIds": missing_ids,
         }
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetailResponse)

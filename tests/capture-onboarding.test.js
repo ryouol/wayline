@@ -165,13 +165,19 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const [sent, received] of [['W/"same"', '"same"'], ['"same"', 'W/"same"']]) {
+    const h = harness(), value = { id: "same-scene" };
+    h.context.respond = async () => new Response(null, { status: 304, headers: { ETag: received } });
+    assert.equal(await h.context.api("/api/jobs/same-scene", { conditional: { etag: sent, value } }), value,
+      "GET validation compares opaque tags independently of a proxy's weak prefix");
+  }
   {
     const h = harness();
     const scene = { id: "scene", kind: "scene", filename: "scene.glb", sizeBytes: 100,
       metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
     let job = { id: "validated", state: "ready", stage: "ready", displayName: "Studio",
       provenance: {}, createdAt: 100, expiresAt: Date.now() / 1000 + 100, artifacts: [scene] };
-    let etag = '"first"', loads = 0, destroyed = 0, unchanged = 0;
+    let etag = 'W/"first"', loads = 0, destroyed = 0, unchanged = 0;
     h.context.window.PointCloudViewer = class {
       async load() { loads++; if (loads === 1) throw new Error("Temporary artifact failure"); }
       destroy() { destroyed++; }
@@ -181,7 +187,7 @@ async function main() {
     h.context.respond = async (_path, options) => {
       if (options.headers.get("If-None-Match") === etag) {
         unchanged++;
-        return new Response(null, { status: 304, headers: { ETag: etag } });
+        return new Response(null, { status: 304, headers: { ETag: etag.replace(/^W\//, "") } });
       }
       return new Response(JSON.stringify(job), { headers: { ETag: etag } });
     };

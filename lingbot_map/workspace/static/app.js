@@ -117,8 +117,10 @@ async function api(path, options = {}) {
       showLogin();
       throw new Error("Your session ended. Sign in again.");
     }
+    // Intermediaries can weaken the full response's ETag. GET validation uses
+    // weak comparison, so the same opaque tag remains valid on a strong 304.
     if (response.status === 304 && conditional?.value && conditional.etag
-        && response.headers.get("ETag") === conditional.etag) return conditional.value;
+        && response.headers.get("ETag")?.replace(/^W\//, "") === conditional.etag.replace(/^W\//, "")) return conditional.value;
     if (!response.ok) {
       let detail = `Request failed (${response.status}).`;
       try {

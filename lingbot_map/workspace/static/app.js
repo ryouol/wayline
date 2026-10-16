@@ -8,7 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", jobCheckOffset: 0, accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
-  capturePreviewUrl: null, retention: null, submissionTiming: null,
+  capturePreviewUrl: null, retention: null, submissionTiming: null, detailCache: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -60,6 +60,8 @@ async function api(path, options = {}) {
   const requestEpoch = state.epoch;
   const method = options.method || "GET";
   const headers = new Headers(options.headers || {});
+  const conditional = method === "GET" ? options.conditional : null;
+  if (conditional?.etag && conditional.value) headers.set("If-None-Match", conditional.etag);
   if (method !== "GET" && method !== "HEAD" && state.csrf) headers.set("X-CSRF-Token", state.csrf);
   if (options.idempotent && !headers.has("Idempotency-Key")) {
     // This header instance is reused by transport and in-progress retries. A
@@ -115,6 +117,8 @@ async function api(path, options = {}) {
       showLogin();
       throw new Error("Your session ended. Sign in again.");
     }
+    if (response.status === 304 && conditional?.value && conditional.etag
+        && response.headers.get("ETag") === conditional.etag) return conditional.value;
     if (!response.ok) {
       let detail = `Request failed (${response.status}).`;
       try {
@@ -127,6 +131,10 @@ async function api(path, options = {}) {
     if (response.status === 204) return null;
     const result = await response.json();
     if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+    if (conditional) {
+      conditional.etag = response.headers.get("ETag");
+      conditional.value = result;
+    }
     return result;
   } catch (error) {
     if (timedOut) throw new Error("The request timed out. Refresh to check its status before trying again.");
@@ -240,6 +248,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function clearDetail() {
+  state.detailCache = null;
   byId("jobDetail").hidden = true;
   byId("emptyDetail").hidden = false;
   byId("viewerSection").hidden = true;
@@ -743,6 +752,7 @@ function schedulePoll({ retry = false } = {}) {
 
 async function selectJob(jobId) {
   const epoch = state.epoch;
+  state.detailCache = null;
   state.selectedId = jobId;
   renderJobs();
   await renderJobDetail();
@@ -808,10 +818,14 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
   // fresh list response; never substitute an older entry from loaded pages.
   const useSummary = background && summary?.id === selected
     && ["queued", "running", "failed", "cancelled"].includes(summary.state);
+  // Keep one in-memory detail snapshot; every reuse still checks the server.
+  // Copy it so late responses cannot mutate a newer request's snapshot.
+  const conditional = background && state.detailCache?.id === selected
+    ? { ...state.detailCache } : { id: selected, etag: null, value: null };
   let job;
   try {
     job = useSummary ? { ...summary, artifacts: [] }
-      : await api(`/api/jobs/${encodeURIComponent(selected)}`, { background });
+      : await api(`/api/jobs/${encodeURIComponent(selected)}`, { background, conditional });
   } catch (error) {
     if (epoch !== state.epoch || selected !== state.selectedId) return;
     if (error.status !== 404) throw error;
@@ -826,7 +840,8 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
     if (!background && !activeDialog()) byId("emptyTitle").focus({ preventScroll: true });
     return;
   }
-  if (selected !== state.selectedId) return;
+  if (epoch !== state.epoch || selected !== state.selectedId) return;
+  state.detailCache = !useSummary && job.state === "ready" ? conditional : null;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;
   byId("detailEngine").textContent = job.engineId === "synthetic-sample-v1" ? "Synthetic sample" : "Research reconstruction";

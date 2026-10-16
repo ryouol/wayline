@@ -167,6 +167,86 @@ function harness(search = "") {
 async function main() {
   {
     const h = harness();
+    const scene = { id: "scene", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
+    let job = { id: "validated", state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, expiresAt: Date.now() / 1000 + 100, artifacts: [scene] };
+    let etag = '"first"', loads = 0, destroyed = 0, unchanged = 0;
+    h.context.window.PointCloudViewer = class {
+      async load() { loads++; if (loads === 1) throw new Error("Temporary artifact failure"); }
+      destroy() { destroyed++; }
+    };
+    h.context.renderTimeline = () => {};
+    h.state.selectedId = job.id;
+    h.context.respond = async (_path, options) => {
+      if (options.headers.get("If-None-Match") === etag) {
+        unchanged++;
+        return new Response(null, { status: 304, headers: { ETag: etag } });
+      }
+      return new Response(JSON.stringify(job), { headers: { ETag: etag } });
+    };
+    await h.renderRealJobDetail();
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(unchanged, 1, "A ready scene is revalidated without retransferring its details");
+    assert.equal(loads, 2, "An unchanged detail still retries an unsuccessful viewer load");
+    assert.equal(h.node("downloadLink").href, "/download");
+    assert.equal(h.node("requestStatus").hidden, true);
+    h.context.Date = class extends Date { static now() { return (job.expiresAt + 1) * 1000; } };
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(unchanged, 2);
+    assert.match(h.node("detailMeta").textContent, /Removal due/, "Time-based labels advance even on 304");
+    job = { ...job, expiresAt: 100 };
+    etag = '"deadline-changed"';
+    await h.renderRealJobDetail({ background: true });
+    assert.match(h.node("detailMeta").textContent, /Removal due/);
+    job = { ...job, artifacts: [] };
+    etag = '"artifacts-removed"';
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(h.node("viewerSection").hidden, true);
+    assert.equal(h.node("downloadLink").href, "");
+    assert.equal(destroyed, 1);
+    await h.renderRealJobDetail();
+    assert.equal(h.requests.at(-1).options.headers.has("If-None-Match"), false, "Direct refresh fetches full details");
+    h.context.secureReset();
+    assert.equal(h.state.detailCache, null);
+  }
+  for (const changed of ["selection", "session", "principal"]) {
+    const h = harness(), pending = deferred();
+    const job = { id: "private", state: "ready", stage: "ready", displayName: "Private",
+      provenance: {}, createdAt: 100, artifacts: [] };
+    h.state.selectedId = job.id;
+    h.context.respond = async () => new Response(JSON.stringify(job), { headers: { ETag: '"private"', "X-Workspace-Principal": "old" } });
+    await h.renderRealJobDetail();
+    h.context.respond = async () => pending.promise;
+    const refresh = h.renderRealJobDetail({ background: true });
+    if (changed === "selection") {
+      h.state.selectedId = "another";
+      h.node("detailTitle").textContent = "Another scene";
+    }
+    if (changed === "session") h.context.secureReset();
+    pending.resolve(new Response(null, { status: 304, headers: { ETag: '"private"',
+      "X-Workspace-Principal": changed === "principal" ? "new" : "old" } }));
+    await refresh;
+    if (changed !== "selection") {
+      assert.equal(h.state.detailCache, null);
+      assert.equal(h.node("jobDetail").hidden, true);
+    } else {
+      assert.equal(h.state.selectedId, "another");
+      assert.equal(h.node("detailTitle").textContent, "Another scene");
+    }
+  }
+  {
+    const h = harness();
+    const snapshot = { etag: '"old"', value: { private: true } };
+    h.context.respond = async () => new Response(null, { status: 304, headers: { ETag: '"different"' } });
+    await assert.rejects(h.context.api("/api/jobs/private", { conditional: snapshot }), /Request failed \(304\)/);
+    await assert.rejects(h.context.api("/api/jobs/private"), /Request failed \(304\)/);
+    h.context.respond = async () => new Response(null, { status: 401 });
+    await assert.rejects(h.context.api("/api/jobs/private", { conditional: snapshot }), /session ended/);
+    assert.equal(h.state.detailCache, null);
+  }
+  {
+    const h = harness();
     const job = id => ({ id, state: "ready", displayName: id });
     const newest = job("new"), older = job("older"), gone = job("gone");
     h.state.jobs = [older, gone];

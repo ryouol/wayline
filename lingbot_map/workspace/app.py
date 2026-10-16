@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -869,17 +870,34 @@ def create_app(
         }
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetailResponse)
-    def get_job(job_id: JobId, current: CurrentPrincipal):
+    def get_job(
+        job_id: JobId,
+        current: CurrentPrincipal,
+        if_none_match: Annotated[str | None, Header(max_length=4096)] = None,
+    ):
         try:
             value = workspace.database.get_job(current.tenant_id, job_id)
         except KeyError as error:
             raise HTTPException(404, "Job not found.") from error
-        return _job(
-            value,
-            retention_seconds=runtime.terminal_job_retention_seconds,
-            workspace_expires_at=identities.workspace_expires_at(current.user_id),
-            include_artifacts=True,
+        detail = JobDetailResponse.model_validate(
+            _job(
+                value,
+                retention_seconds=runtime.terminal_job_retention_seconds,
+                workspace_expires_at=identities.workspace_expires_at(current.user_id),
+                include_artifacts=True,
+            )
         )
+        response = JSONResponse(detail.model_dump(mode="json"))
+        # Validate the entire current representation: artifact cleanup need not
+        # change the job's updated_at. Authentication always precedes validation.
+        etag = f'"{sha256(response.body).hexdigest()}"'
+        response.headers["ETag"] = etag
+        if if_none_match and (
+            if_none_match.strip() == "*"
+            or any(tag.strip().removeprefix("W/") == etag for tag in if_none_match.split(","))
+        ):
+            return Response(status_code=304, headers={"ETag": etag})
+        return response
 
     @application.post("/api/jobs/{job_id}/cancel", status_code=202, response_model=CancelResponse)
     def cancel_job(

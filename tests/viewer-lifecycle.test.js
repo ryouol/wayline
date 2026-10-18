@@ -9,12 +9,19 @@ const path = require("node:path");
 // canvas until restoration. A new canvas receives an independent context.
 let mounted;
 function canvas(attributes = { id: "sceneCanvas", tabindex: "0", "aria-label": "3D scene" }) {
+  const events = new Map();
   const gl = {
     lost: false,
-    getExtension: () => ({ loseContext: () => { gl.lost = true; } }),
+    isContextLost: () => gl.lost,
+    getExtension: () => ({ loseContext: () => { gl.lost = true; events.get("webglcontextlost")?.(); } }),
   };
   return {
     attributes,
+    addEventListener(name, listener, { signal } = {}) {
+      events.set(name, listener);
+      signal?.addEventListener("abort", () => events.delete(name));
+    },
+    dispatchEvent(event) { events.get(event.type)?.(event); },
     ownerDocument: { documentElement: { dataset: {} } },
     getContext: () => gl,
     cloneNode: () => canvas({ ...attributes }),
@@ -27,7 +34,8 @@ const scope = {
     assert.equal(name, "wayline-theme-change");
     listeners.add(listener);
     signal.addEventListener("abort", () => listeners.delete(listener));
-  } }, AbortController,
+  } }, AbortController, performance,
+  CustomEvent: class { constructor(type) { this.type = type; } },
   ResizeObserver: class { observe() {} disconnect() {} },
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname,
@@ -67,4 +75,39 @@ second.destroy();
 assert.equal(listeners.size, 0, "Disposal removes global theme listeners");
 assert.doesNotThrow(() => new Viewer(mounted, status, { interactive: false, pointSize: 1.8 }));
 assert.equal(controlsBound, 2, "A presentation canvas never captures page scrolling or keyboard input");
-console.log("viewer lifecycle passed");
+
+(async () => {
+  const interrupted = new Viewer(canvas(), status);
+  interrupted.count = 100;
+  status.textContent = "100 points loaded.";
+  interrupted.readiness = { browserReadySeconds: 1 };
+  interrupted.loadController = new AbortController();
+  const pending = interrupted.loadController;
+  let unavailable = 0;
+  interrupted.canvas.addEventListener("wayline-viewer-unavailable", () => { unavailable += 1; });
+  interrupted.gl.getExtension("WEBGL_lose_context").loseContext();
+  assert.match(status.textContent, /interrupted.*Reload/i, "Lost graphics must not keep claiming points are loaded");
+  assert.equal(interrupted.count, 0);
+  assert.equal(interrupted.readiness, null);
+  assert.equal(pending.signal.aborted, true, "Stop a pending private scene download");
+  assert.equal(unavailable, 1);
+  assert.doesNotThrow(() => interrupted.draw(), "A lost context receives no graphics calls");
+  await assert.rejects(interrupted.load("/private-scene"), /interrupted.*Reload/i,
+    "Repeated polling cannot silently download the scene into a lost context");
+  assert.equal(unavailable, 1, "Repeated loss checks do not duplicate notifications");
+  const duringDownload = new Viewer(canvas(), status);
+  let completeBody;
+  const lateLoad = duringDownload.load("/private-scene", { prefetchedResponse: {
+    ok: true, arrayBuffer: () => new Promise(resolve => { completeBody = resolve; }),
+  } });
+  duringDownload.gl.getExtension("WEBGL_lose_context").loseContext();
+  completeBody(new ArrayBuffer(0));
+  await assert.rejects(lateLoad, /interrupted.*Reload/i,
+    "A late body cannot parse, upload, or report success after context loss");
+  assert.equal(duringDownload.count, 0);
+  duringDownload.destroy();
+  interrupted.destroy();
+  assert.equal(status.textContent, "Viewer closed.");
+  assert.doesNotThrow(() => new Viewer(mounted, status), "Selecting a new scene gets a fresh canvas");
+  console.log("viewer lifecycle and context loss passed");
+})().catch(error => { console.error(error); process.exitCode = 1; });

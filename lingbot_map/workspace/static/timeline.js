@@ -60,6 +60,7 @@
     attach(viewer) {
       this.stop();
       this.viewerEvents?.abort();
+      if (viewer?.contextLost) viewer = null;
       this.viewer = viewer;
       this.strip.replaceChildren();
       const frames = viewer?.trace?.frames;
@@ -69,6 +70,8 @@
       this.modes.forEach((button) => { button.disabled = !viewer || (button.dataset.viewMode !== "orbit" && !frames); });
       if (!viewer) return;
       this.viewerEvents = new AbortController();
+      viewer.canvas.addEventListener("wayline-viewer-unavailable", () => this.attach(null),
+        { signal: this.viewerEvents.signal });
       viewer.canvas.addEventListener("viewmode", (event) => {
         this.stop();
         this.setMode(event.detail === "WALK VIEW" ? "walk" : "orbit");

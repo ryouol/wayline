@@ -49,6 +49,16 @@
     if (viewer?.count && frame === null) frame = requestAnimationFrame(draw);
   }
 
+  function showPoster() {
+    failed = true;
+    stop();
+    toggle.disabled = true;
+    toggle.textContent = "Motion off";
+    toggle.setAttribute("aria-pressed", "false");
+    scene.dataset.motion = "paused";
+    status.textContent = "Example reconstruction shown as a still image.";
+  }
+
   async function sync() {
     const restricted = reducedMotion.matches || connection?.saveData;
     toggle.disabled = Boolean(restricted || failed);
@@ -65,6 +75,9 @@
       current = new window.PointCloudViewer(document.getElementById("landingCanvas"), status,
         { interactive: false, pointSize: 2.2, showPath: true });
       viewer = current;
+      current.canvas.addEventListener("wayline-viewer-unavailable", () => {
+        if (viewer === current) showPoster();
+      }, { signal: current.events.signal });
       await current.load(scene.dataset.sceneUrl);
       if (viewer !== current || current.destroyed) return;
       progress = scrollProgress();
@@ -72,13 +85,7 @@
       scene.dataset.loaded = "true";
     } catch (error) {
       if ((current && current !== viewer) || error.name === "AbortError") return;
-      failed = true;
-      stop();
-      toggle.disabled = true;
-      toggle.textContent = "Motion off";
-      toggle.setAttribute("aria-pressed", "false");
-      scene.dataset.motion = "paused";
-      status.textContent = "Example reconstruction shown as a still image.";
+      showPoster();
     }
   }
 

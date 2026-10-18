@@ -130,4 +130,18 @@ timeline.attach({ ...viewer, trace: null });
 assert.equal(modes[0].disabled, false);
 assert.equal(modes[1].disabled, true, "Synthetic scenes have no camera replay");
 assert.equal(modes[2].disabled, true, "Synthetic scenes have no captured viewpoint for walking");
+timeline.attach(viewer);
+timeline.toggle();
+assert.equal(scheduled.size, 1);
+viewer.canvas.listeners["wayline-viewer-unavailable"]();
+assert.equal(scheduled.size, 0, "Interrupted graphics stop camera playback");
+assert.equal(root.hidden, true);
+assert.equal(controls[".filmstrip"].children.length, 0);
+assert.ok(modes.every(button => button.disabled));
+assert.equal(viewer.canvas.listeners["wayline-viewer-unavailable"], undefined,
+  "Detaching also removes the graphics-failure listener");
+timeline.attach({ ...viewer, contextLost: true });
+assert.equal(root.hidden, true, "A late load cannot reattach controls to a lost context");
+timeline.attach(viewer);
+assert.equal(root.hidden, false, "A fresh scene restores playback controls");
 console.log("timeline behavior passed");

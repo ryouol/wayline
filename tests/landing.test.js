@@ -9,7 +9,10 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function eventTarget(values = {}) {
   return {
     ...values, listeners: {},
-    addEventListener(type, listener) { this.listeners[type] = listener; },
+    addEventListener(type, listener, options) {
+      this.listeners[type] = listener;
+      options?.signal?.addEventListener("abort", () => delete this.listeners[type]);
+    },
     fire(type) { this.listeners[type]?.(); },
   };
 }
@@ -29,6 +32,8 @@ function fixture({ reduced = false, saveData = false, fail = false } = {}) {
     constructor(canvas, status, options) {
       if (fail) throw new Error("WebGL unavailable");
       this.options = options;
+      this.canvas = eventTarget();
+      this.events = new AbortController();
       this.draws = [];
       this.count = 0;
       instances.push(this);
@@ -41,10 +46,10 @@ function fixture({ reduced = false, saveData = false, fail = false } = {}) {
       });
     }
     setOrbit(...camera) { this.draws.push(camera); }
-    destroy() { this.destroyed = true; }
+    destroy() { this.destroyed = true; this.events.abort(); }
   } });
   const scope = {
-    document, window, navigator: { connection },
+    document, window, AbortController, navigator: { connection },
     MutationObserver: class { constructor(callback) { mutation = callback; } observe() {} },
     IntersectionObserver: class { constructor(callback) { intersection = callback; } observe() {} },
     requestAnimationFrame(callback) { const id = ++nextFrame; animation.set(id, callback); return id; },
@@ -129,6 +134,24 @@ function fixture({ reduced = false, saveData = false, fail = false } = {}) {
   assert.equal(failed.instances[0].destroyed, true);
   assert.equal(failed.scene.dataset.loaded, "false");
   assert.equal(failed.toggle.disabled, true);
+
+  for (const loaded of [false, true]) {
+    const interrupted = fixture();
+    interrupted.visible(true);
+    const current = interrupted.instances[0];
+    if (loaded) { current.finish(); await settle(); interrupted.scroll(-300); }
+    current.canvas.fire("wayline-viewer-unavailable");
+    assert.equal(current.destroyed, true, "A lost landing context is released");
+    assert.equal(interrupted.scene.dataset.loaded, "false", "Context loss reveals the existing poster");
+    assert.equal(interrupted.scene.dataset.motion, "paused");
+    assert.equal(interrupted.toggle.disabled, true);
+    assert.equal(interrupted.animation.size, 0);
+    if (!loaded) { current.finish(); await settle(); }
+    interrupted.window.fire("resize");
+    interrupted.visible(true);
+    assert.equal(interrupted.instances.length, 1, "Loss does not trigger an automatic re-download loop");
+    assert.equal(interrupted.scene.dataset.loaded, "false", "A late response cannot cover the poster");
+  }
 
   const beyond = fixture();
   beyond.scroll(-800);

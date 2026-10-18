@@ -186,6 +186,11 @@
       this.destroyed = false;
       this.events = new AbortController();
       this.loadController = null;
+      this.contextLost = false;
+      // Recovery requires a fresh canvas. Do not silently repeat a private
+      // artifact download or retain another CPU copy of the scene buffers.
+      canvas.addEventListener("webglcontextlost", () => this.handleContextLoss(),
+        { signal: this.events.signal });
       this.initializeGraphics();
       if (interactive) this.bindControls();
       window.addEventListener("wayline-theme-change", (event) => {
@@ -328,8 +333,28 @@
       }, { signal });
     }
 
+    handleContextLoss() {
+      if (this.destroyed || this.contextLost) return;
+      this.contextLost = true;
+      this.loadSequence += 1;
+      this.loadController?.abort();
+      this.readiness = null;
+      this.count = 0;
+      this.drag = null;
+      this.status.textContent = "The 3D preview was interrupted. Reload this page to restore it.";
+      this.canvas.dispatchEvent(new CustomEvent("wayline-viewer-unavailable"));
+    }
+
+    requireGraphics() {
+      if (this.contextLost || this.gl.isContextLost()) {
+        this.handleContextLoss();
+        throw new Error("The 3D preview was interrupted. Reload this page to restore it.");
+      }
+    }
+
     async load(url, { headers = {}, prefetchedResponse = null } = {}) {
       if (this.destroyed) throw new Error("The viewer has been closed.");
+      this.requireGraphics();
       const loadStarted = performance.now();
       this.readiness = null;
       const sequence = ++this.loadSequence;
@@ -345,6 +370,9 @@
       if (!response.ok) throw new Error("The stored scene could not be loaded.");
       const bytes = await response.arrayBuffer();
       const downloadFinished = performance.now();
+      if (this.destroyed) return;
+      this.requireGraphics();
+      if (sequence !== this.loadSequence) return;
       const parsed = parseGlb(bytes);
       if (this.destroyed || sequence !== this.loadSequence) return;
       const raw = parsed.positions.values;
@@ -392,6 +420,7 @@
         colors.fill(0.78);
       }
       const gl = this.gl;
+      this.requireGraphics();
       gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
@@ -407,7 +436,8 @@
       this.draw();
       const drawSubmitted = performance.now();
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (this.destroyed || sequence !== this.loadSequence || this.gl.isContextLost()) return;
+        if (this.destroyed || sequence !== this.loadSequence) return;
+        if (this.gl.isContextLost()) { this.handleContextLoss(); return; }
         this.readiness = {
           downloadSeconds: (downloadFinished - loadStarted) / 1000,
           parseUploadDrawSeconds: (drawSubmitted - downloadFinished) / 1000,
@@ -536,6 +566,7 @@
     draw() {
       if (this.destroyed) return;
       const gl = this.gl;
+      if (this.contextLost || gl.isContextLost()) { this.handleContextLoss(); return; }
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const width = Math.max(1, Math.round(this.canvas.clientWidth * ratio));
       const height = Math.max(1, Math.round(this.canvas.clientHeight * ratio));

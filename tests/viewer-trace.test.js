@@ -6,7 +6,7 @@ const path = require("node:path");
 const animationFrames = [];
 const scope = {window: {}, AbortController, TextDecoder, performance,
   requestAnimationFrame: callback => animationFrames.push(callback),
-  CustomEvent: class { constructor(type, options) { this.type=type; this.detail=options.detail; } },
+  CustomEvent: class { constructor(type, options = {}) { this.type=type; this.detail=options.detail; } },
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/viewer.js"), "utf8"), scope);
 function glb(change = () => {}) {
@@ -137,5 +137,17 @@ async function load(buffer, options) {
   assert.equal(landing.count, 75_000);
   assert.equal(landing.trace.frames.length, 30);
   assert.equal(landing.trace.frames.at(-1).pointEnd, landing.count, "The reduced cloud still has a complete camera trace");
+  const interrupted = Object.create(scope.window.PointCloudViewer.prototype), events = [];
+  let lost = false;
+  Object.assign(interrupted, { status: {}, loadSequence: 0,
+    gl: { bindBuffer() {}, bufferData() {}, isContextLost: () => lost },
+    draw() {}, canvas: { dispatchEvent: event => events.push(event.type) } });
+  await interrupted.load("/scene", { prefetchedResponse: { ok: true, arrayBuffer: async () => glb() } });
+  lost = true;
+  animationFrames.splice(0).forEach(callback => callback());
+  animationFrames.splice(0).forEach(callback => callback());
+  assert.equal(interrupted.readiness, null, "Context loss before browser readiness cannot report a usable preview");
+  assert.deepEqual(events, ["wayline-viewer-unavailable"]);
+  assert.match(interrupted.status.textContent, /interrupted.*Reload/i);
   console.log("viewer trace contract passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

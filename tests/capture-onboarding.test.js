@@ -733,22 +733,30 @@ async function main() {
     assert.equal(h.context.document.fullscreenElement, null, "Late entry cannot reopen a reset session in fullscreen");
     assert.equal(h.node("fullScreen").focusCount, 0);
   }
-  for (const failRefresh of [false, true]) {
+  for (const failedRead of [null, "account", "scenes", "uploads"]) {
     const h = harness();
-    let checks = 0;
+    const failRefresh = Boolean(failedRead);
+    let checks = 0, recovering = false;
     h.context.respond = async (path) => {
       if (path === "/api/me") {
         h.advance(++checks === 1 ? 2000 : 9000);
-        if (failRefresh && checks === 2) throw new Error("Post-queue refresh failed");
+        if (failedRead === "account" && checks === 2) throw new Error("Post-queue refresh failed");
         return account("available");
       }
       if (path === "/api/assets") { h.advance(5000); return { id: "private-upload" }; }
       if (path === "/api/jobs/research") { h.advance(3000); return { id: "private-job" }; }
-      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
-      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/jobs?")) {
+        if (failedRead === "scenes" && !recovering) throw new Error("Scene refresh failed");
+        return { jobs: [{ id: "private-job", displayName: "Queued capture", state: "queued", createdAt: 1 }], nextCursor: null };
+      }
+      if (path.startsWith("/api/assets?")) {
+        if (failedRead === "uploads" && !recovering) throw new Error("Upload inventory refresh failed");
+        return { assets: [], nextCursor: null };
+      }
       throw new Error(path);
     };
     h.select({ name: "private-location.mp4", size: 1024 }).onerror();
+    h.context.openDialog(h.node("createDialog"));
     await h.submit();
     assert.ok(h.state.submissionTiming, "The browser must expose the missing submission measurement");
     assert.deepEqual(JSON.parse(JSON.stringify(h.state.submissionTiming)), {
@@ -760,6 +768,25 @@ async function main() {
     assert.equal(h.submissionTimings[0], h.state.submissionTiming);
     assert.equal(Object.isFrozen(h.state.submissionTiming), true);
     assert.equal(h.requests.filter(request => request.method === "POST").length, 2, "Timing adds no telemetry requests");
+    assert.equal(h.node("createDialog").open, false, "An accepted submission closes even if refresh fails");
+    assert.equal(h.node("video").files.length, 0, "An accepted video cannot remain ready to submit again");
+    assert.equal(h.state.captureCheck, null);
+    assert.equal(h.node("captureMessage").textContent, "", "Old readiness text is cleared with the video");
+    assert.equal(h.node("researchMessage").textContent, "", "Reopening cannot still claim the accepted scene is being queued");
+    assert.equal(h.node("researchButton").disabled, true);
+    if (failRefresh) {
+      assert.match(h.node("toast").textContent, /scene was queued.*Refresh scenes/);
+      assert.equal(h.node("toast").parentNode, h.context.document.body, "Recovery guidance stays outside the closed dialog");
+      assert.equal(h.node("refreshButton").focusCount, 1);
+    }
+    await h.submit();
+    assert.equal(h.requests.filter(request => request.method === "POST").length, 2,
+      "Submitting the cleared form cannot upload or queue another reconstruction");
+    recovering = true;
+    await h.node("refreshButton").events.get("click")();
+    assert.equal(h.state.selectedId, "private-job", "Refresh returns to the acknowledged scene");
+    assert.equal(h.requests.filter(request => request.method !== "GET").length, 2,
+      "Recovery performs only reads and never deletes the accepted asset");
     assert.doesNotMatch(JSON.stringify(h.state.submissionTiming), /private-|csrf|request-id/);
     h.context.secureReset();
     assert.equal(h.state.submissionTiming, null, "Sign-out clears local diagnostic state");
@@ -800,6 +827,33 @@ async function main() {
     assert.equal(timing.totalSeconds, failure === "uploadRequest" ? 5 : 8, "Cleanup and recovery requests are outside the measured submission");
     assert.equal(h.submissionTimings.length, 1);
     assert.doesNotMatch(JSON.stringify(timing), /private|Private/);
+    assert.equal(h.node("video").files.length, 1, "An unaccepted submission keeps the video for retry");
+  }
+  {
+    const h = harness(), refresh = deferred();
+    h.context.respond = async (path) => {
+      if (path === "/api/me") return account("available");
+      if (path === "/api/assets") return { id: "old-upload" };
+      if (path === "/api/jobs/research") return { id: "old-job" };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      throw new Error(path);
+    };
+    h.context.loadJobs = async () => refresh.promise;
+    h.select().onerror();
+    const submitting = h.submit();
+    await new Promise(setImmediate);
+    assert.equal(h.state.submissionTiming.outcome, "queued");
+    h.context.secureReset();
+    h.context.showApp(user, "new-session-csrf", allowance("available"));
+    h.select({ name: "new-session.mp4", size: 1024 }).onerror();
+    h.node("createDialog").showModal();
+    const selection = h.state.captureCheck;
+    refresh.reject(new Error("Old refresh failed"));
+    await submitting;
+    assert.equal(h.state.captureCheck, selection, "A late accepted submission cannot clear another session's capture");
+    assert.equal(h.node("createDialog").open, true);
+    assert.equal(h.node("refreshButton").focusCount, 0);
+    assert.equal(h.node("toast").textContent, "");
   }
   {
     const h = harness(), upload = deferred();

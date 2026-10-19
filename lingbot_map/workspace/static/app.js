@@ -1128,7 +1128,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
       totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
     byId("researchForm").dispatchEvent(new CustomEvent("wayline-submission-timing", { detail: state.submissionTiming }));
   };
-  let asset = null;
+  let asset = null, queued = false, refreshed = false;
   state.uploading = true;
   renderReconstructionStatus();
   byId("researchMessage").textContent = "Checking your account before upload…";
@@ -1166,19 +1166,15 @@ byId("researchForm").addEventListener("submit", async (event) => {
     assertCurrent();
     state.selectedId = job.id;
     asset = null;
+    queued = true;
     recordTiming("queued");
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();
-    byId("researchMessage").textContent = "Reconstruction queued.";
-    byId("createDialog").close();
-    byId("video").value = "";
-    byId("selectedFilename").textContent = "Choose a video";
-    cancelCaptureCheck();
-    releaseCapturePreview();
-    byId("detailTitle").focus({ preventScroll: true });
+    refreshed = true;
   } catch (error) {
     recordTiming(error?.name === "AbortError" ? "cancelled" : "failed");
     if (epoch !== state.epoch || error?.name === "AbortError") return;
+    if (queued) return;
     if (asset) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
@@ -1190,6 +1186,15 @@ byId("researchForm").addEventListener("submit", async (event) => {
     }
   } finally {
     if (epoch === state.epoch) {
+      // Acknowledgement is final even when a later account or inventory read
+      // fails. Never leave this accepted video ready for another submission.
+      if (queued) {
+        byId("video").value = "";
+        validateSelectedCapture();
+        byId("createDialog").close();
+        byId(refreshed ? "detailTitle" : "refreshButton").focus({ preventScroll: true });
+        if (!refreshed) toast("Your scene was queued, but the workspace couldn't refresh. Use Refresh scenes to check its progress.");
+      }
       state.uploading = false;
       renderReconstructionStatus();
     }

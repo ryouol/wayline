@@ -80,17 +80,36 @@ async function api(path, options = {}) {
   renderRequestStatus();
   let timedOut = false;
   const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 60000);
+  const retryTransport = async (error, attempt) => {
+    if (!options.idempotent || error?.name === "AbortError" || controller.signal.aborted
+        || requestEpoch !== state.epoch || attempt >= 1) throw error;
+    await pause(250);
+  };
   try {
-    let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (requestEpoch !== state.epoch || controller.signal.aborted) throw new DOMException("Request cancelled", "AbortError");
+      let response;
       try {
         response = await fetch(path, {
           method, headers, body, credentials: "same-origin", signal: controller.signal,
         });
       } catch (error) {
-        if (!options.idempotent || error?.name === "AbortError" || attempt >= 1) throw error;
-        await pause(250);
+        await retryTransport(error, attempt);
         continue;
+      }
+      if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+      const principalMarker = response.headers.get("X-Workspace-Principal");
+      if (principalMarker && state.principalMarker && principalMarker !== state.principalMarker) {
+        broadcastSession("account-changed");
+        secureReset();
+        window.location.reload();
+        throw new DOMException("Workspace account changed", "AbortError");
+      }
+      if (principalMarker) state.principalMarker = principalMarker;
+      if (response.status === 401) {
+        broadcastSession("signed-out");
+        showLogin();
+        throw new Error("Your session ended. Sign in again.");
       }
       if (options.idempotent && response.status === 409 && attempt < 2) {
         let code = "";
@@ -100,44 +119,36 @@ async function api(path, options = {}) {
           continue;
         }
       }
-      break;
+      // Intermediaries can weaken the full response's ETag. GET validation uses
+      // weak comparison, so the same opaque tag remains valid on a strong 304.
+      if (response.status === 304 && conditional?.value && conditional.etag
+          && response.headers.get("ETag")?.replace(/^W\//, "") === conditional.etag.replace(/^W\//, "")) return conditional.value;
+      if (!response.ok) {
+        let detail = `Request failed (${response.status}).`;
+        try {
+          const value = (await response.json()).detail;
+          if (typeof value === "string") detail = value;
+          else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
+        } catch (_) { /* response was not JSON */ }
+        throw Object.assign(new Error(detail), { status: response.status });
+      }
+      if (response.status === 204) return null;
+      let result;
+      try { result = await response.json(); }
+      catch (error) {
+        // Headers can arrive before the connection drops. Reconcile a lost or
+        // truncated success body using the same key, payload and retry budget.
+        await retryTransport(error, attempt);
+        continue;
+      }
+      if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
+      if (conditional) {
+        conditional.etag = response.headers.get("ETag");
+        conditional.value = result;
+      }
+      return result;
     }
-    if (!response) throw new Error("The request did not receive a response.");
-    if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
-    const principalMarker = response.headers.get("X-Workspace-Principal");
-    if (principalMarker && state.principalMarker && principalMarker !== state.principalMarker) {
-      broadcastSession("account-changed");
-      secureReset();
-      window.location.reload();
-      throw new DOMException("Workspace account changed", "AbortError");
-    }
-    if (principalMarker) state.principalMarker = principalMarker;
-    if (response.status === 401) {
-      broadcastSession("signed-out");
-      showLogin();
-      throw new Error("Your session ended. Sign in again.");
-    }
-    // Intermediaries can weaken the full response's ETag. GET validation uses
-    // weak comparison, so the same opaque tag remains valid on a strong 304.
-    if (response.status === 304 && conditional?.value && conditional.etag
-        && response.headers.get("ETag")?.replace(/^W\//, "") === conditional.etag.replace(/^W\//, "")) return conditional.value;
-    if (!response.ok) {
-      let detail = `Request failed (${response.status}).`;
-      try {
-        const value = (await response.json()).detail;
-        if (typeof value === "string") detail = value;
-        else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
-      } catch (_) { /* response was not JSON */ }
-      throw Object.assign(new Error(detail), { status: response.status });
-    }
-    if (response.status === 204) return null;
-    const result = await response.json();
-    if (requestEpoch !== state.epoch) throw new DOMException("Stale session response", "AbortError");
-    if (conditional) {
-      conditional.etag = response.headers.get("ETag");
-      conditional.value = result;
-    }
-    return result;
+    throw new Error("The request did not receive a response.");
   } catch (error) {
     if (timedOut) throw new Error("The request timed out. Refresh to check its status before trying again.");
     throw error;

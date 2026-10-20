@@ -165,6 +165,128 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const target of ["/api/assets", "/api/jobs/research"]) {
+    for (const failure of ["stream", "truncated"]) {
+      const h = harness(), accepted = new Map();
+      let attempts = 0, keys = 0;
+      h.context.crypto.randomUUID = () => `submission-key-${++keys}`;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account("available");
+        if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "accepted-job", state: "queued", createdAt: 1 }], nextCursor: null };
+        if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+        assert.ok(["/api/assets", "/api/jobs/research"].includes(path), "Recovery must not delete accepted assets");
+        const key = `${path}:${options.headers.get("Idempotency-Key")}`;
+        if (!accepted.has(key)) accepted.set(key, { id: path === "/api/assets" ? "accepted-upload" : "accepted-job" });
+        if (path === target && ++attempts === 1) {
+          return new Response(failure === "truncated" ? '{"id":' : new ReadableStream({
+            start(controller) { controller.enqueue(new TextEncoder().encode('{"id":')); },
+            pull(controller) { controller.error(new TypeError("Response connection interrupted")); },
+          }), { status: 201 });
+        }
+        return accepted.get(key);
+      };
+      h.select().onerror();
+      h.node("createDialog").showModal();
+      const submitting = h.submit();
+      await new Promise(setImmediate);
+      const retry = [...h.timers.values()].find(timer => timer.delay === 250);
+      assert.ok(retry, "An interrupted successful response body retries with the original request identity");
+      assert.equal(h.state.uploading, true, "The form remains locked during reconciliation");
+      retry.callback();
+      await submitting;
+      const replays = h.requests.filter(request => request.path === target);
+      assert.equal(replays.length, 2);
+      assert.equal(replays[0].options.headers.get("Idempotency-Key"), replays[1].options.headers.get("Idempotency-Key"));
+      assert.equal(replays[0].options.body, replays[1].options.body, "Replay uses the exact original request body");
+      assert.equal(keys, 2, "One key per upload and job, not per transport attempt");
+      assert.equal(accepted.size, 2, "Reconciliation creates one asset and one job");
+      assert.equal(h.state.selectedId, "accepted-job");
+      assert.equal(h.state.submissionTiming.outcome, "queued");
+      assert.equal(h.submissionTimings.length, 1);
+      assert.equal(h.node("createDialog").open, false);
+      assert.equal(h.node("video").files.length, 0);
+      assert.equal(h.node("researchButton").disabled, true);
+    }
+  }
+  for (const firstFailure of ["body", "transport"]) {
+    const h = harness();
+    h.context.respond = async () => {
+      if (firstFailure === "transport" && h.requests.length === 1) throw new TypeError("Disconnected");
+      return new Response('{"id":', { status: 202 });
+    };
+    const pending = h.context.api("/api/jobs/research", { method: "POST", idempotent: true, json: { assetId: "asset" } });
+    const rejected = assert.rejects(pending, { name: "SyntaxError" });
+    await new Promise(setImmediate);
+    [...h.timers.values()].find(timer => timer.delay === 250).callback();
+    await rejected;
+    assert.equal(h.requests.length, 2, "Body and connection failures share one transport retry budget");
+    assert.equal(h.state.controllers.size, 0);
+    assert.equal(h.state.foregroundRequests.size, 0);
+    assert.equal([...h.timers.values()].some(timer => timer.delay === 60000), false, "The request deadline is cleared after failure");
+  }
+  for (const firstResponse of ["in_progress", "body"]) {
+    const h = harness();
+    h.context.respond = async () => {
+      if (h.requests.length === 3) return { id: "replayed-job" };
+      if (h.requests.length === 1 && firstResponse === "body") return new Response('{"id":', { status: 202 });
+      return new Response(JSON.stringify({ code: "idempotency_in_progress" }), { status: 409 });
+    };
+    const pending = h.context.api("/api/jobs/research", { method: "POST", idempotent: true,
+      headers: { "Idempotency-Key": "existing-caller-key" } });
+    for (const delay of [firstResponse === "body" ? 250 : 500, 1000]) {
+      await new Promise(setImmediate);
+      const retry = [...h.timers.values()].find(timer => timer.delay === delay);
+      assert.ok(retry, "Existing in-progress recovery remains bounded and available");
+      retry.callback();
+    }
+    assert.equal((await pending).id, "replayed-job");
+    assert.equal(h.requests.length, 3);
+    assert.ok(h.requests.every(request => request.options.headers.get("Idempotency-Key") === "existing-caller-key"));
+  }
+  for (const scenario of ["get", "unkeyed", "rejected", "unauthorized", "conflict", "empty", "aborted", "principal"]) {
+    const h = harness();
+    const status = { rejected: 503, unauthorized: 401, conflict: 409, empty: 204 }[scenario] || 200;
+    h.state.principalMarker = "original";
+    h.context.respond = async () => {
+      const response = new Response(status === 204 ? null : '{"id":', {
+        status, headers: { "X-Workspace-Principal": scenario === "principal" ? "changed" : "original" },
+      });
+      if (scenario === "aborted") response.json = async () => { throw new DOMException("Cancelled", "AbortError"); };
+      return response;
+    };
+    const pending = h.context.api("/api/test", { method: scenario === "get" ? "GET" : "POST",
+      idempotent: !["get", "unkeyed"].includes(scenario) });
+    if (scenario === "empty") assert.equal(await pending, null);
+    else await assert.rejects(pending);
+    assert.equal(h.requests.length, 1, `${scenario} must not enter successful-body recovery`);
+    assert.equal([...h.timers.values()].some(timer => timer.delay === 250), false);
+    assert.equal(h.state.controllers.size, 0);
+  }
+  for (const cancelAt of ["reading", "backoff", "timeout"]) {
+    const h = harness(), body = deferred();
+    h.context.respond = async () => {
+      const response = new Response(null, { status: 202 });
+      response.json = () => body.promise;
+      return response;
+    };
+    const pending = h.context.api("/api/jobs/research", { method: "POST", idempotent: true });
+    const rejected = assert.rejects(pending);
+    await new Promise(setImmediate);
+    if (cancelAt === "reading") h.context.secureReset();
+    body.reject(new TypeError("Disconnected while reading"));
+    await new Promise(setImmediate);
+    if (cancelAt !== "reading") {
+      const retry = [...h.timers.values()].find(timer => timer.delay === 250);
+      assert.ok(retry);
+      if (cancelAt === "backoff") h.context.secureReset();
+      else [...h.timers.values()].find(timer => timer.delay === 60000).callback();
+      retry.callback();
+    }
+    await rejected;
+    assert.equal(h.requests.length, 1, "A session change or timeout cannot replay a mutation after backoff");
+    assert.equal(h.state.controllers.size, 0);
+    assert.equal(h.state.foregroundRequests.size, 0);
+  }
   for (const [sent, received] of [['W/"same"', '"same"'], ['"same"', 'W/"same"']]) {
     const h = harness(), value = { id: "same-scene" };
     h.context.respond = async () => new Response(null, { status: 304, headers: { ETag: received } });

@@ -171,6 +171,9 @@ async function main() {
       metadata: {}, viewUrl: "/old-scene", downloadUrl: "/old-download" };
     const jobs = Array.from({ length: 30 }, (_, i) => ({ id: `library-${i}`, displayName: `Scene ${i}`,
       state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 - i, artifacts: [scene] }));
+    jobs[28].id = "z-same-time";
+    jobs[29].id = "a-same-time";
+    jobs[29].createdAt = jobs[28].createdAt;
     const selected = jobs[29];
     let refreshing = false, loads = 0, destroyed = 0;
     h.context.window.PointCloudViewer = class {
@@ -224,6 +227,8 @@ async function main() {
       await h.context.loadJobs({ append: true });
       assert.equal(h.state.jobs.length, 30);
       assert.equal(new Set(h.state.jobs.map(job => job.id)).size, 30, "Loading the next page deduplicates the retained selection");
+      assert.deepEqual(Array.from(h.state.jobs, job => job.id), jobs.map(job => job.id),
+        "Loading more places the retained selection in server order, including equal creation times");
       await h.context.loadJobs({ selectNewest: true });
       assert.equal(h.state.selectedId, jobs[0].id, "An explicit newest-scene request still changes selection");
       assert.equal(h.state.jobs.length, 25);

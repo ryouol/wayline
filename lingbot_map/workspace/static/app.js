@@ -539,6 +539,8 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   if (append) {
     const seen = new Set(state.jobs.map((job) => job.id));
     state.jobs.push(...freshJobs.filter((job) => !seen.has(job.id)));
+    // A retained selection may belong after rows from this page.
+    state.jobs.sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   } else if (preserveLoaded) {
     const refreshed = new Set(freshJobs.map((job) => job.id));
     state.jobs = [...freshJobs, ...state.jobs.filter((job) => !refreshed.has(job.id)

@@ -165,6 +165,84 @@ function harness(search = "") {
 }
 
 async function main() {
+  for (const status of [200, 404, 500]) {
+    const h = harness();
+    const scene = { id: "old-artifact", kind: "scene", filename: "old.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/old-scene", downloadUrl: "/old-download" };
+    const jobs = Array.from({ length: 30 }, (_, i) => ({ id: `library-${i}`, displayName: `Scene ${i}`,
+      state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 - i, artifacts: [scene] }));
+    const selected = jobs[29];
+    let refreshing = false, loads = 0, destroyed = 0;
+    h.context.window.PointCloudViewer = class {
+      async load() { loads++; }
+      destroy() { destroyed++; }
+    };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.jobs = [...jobs];
+    h.state.selectedId = selected.id;
+    h.state.selectedJobs = new Set([selected.id, jobs[28].id]);
+    h.state.jobCursor = "previous-cursor";
+    h.context.respond = async path => {
+      if (path.startsWith("/api/jobs?")) {
+        const laterPage = new URL(path, "https://example.test").searchParams.has("cursor");
+        return { jobs: laterPage ? jobs.slice(25) : jobs.slice(0, 25), nextCursor: laterPage ? null : "refreshed-cursor" };
+      }
+      if (path === `/api/jobs/${selected.id}` && refreshing && status !== 200) {
+        return new Response(JSON.stringify({ detail: "Detail unavailable" }), { status });
+      }
+      return jobs.find(job => path === `/api/jobs/${job.id}`);
+    };
+    await h.renderRealJobDetail();
+    const viewer = h.state.viewer;
+    refreshing = true;
+    if (status === 500) await assert.rejects(h.context.loadJobs(), /Detail unavailable/);
+    else await h.context.loadJobs();
+    assert.equal(h.requests.at(-1).path, `/api/jobs/${selected.id}`,
+      "A selected scene outside the first page must be checked through its authenticated details");
+    assert.equal(h.state.jobCursor, "refreshed-cursor", "A full refresh still resets pagination to the fresh first page");
+    assert.equal(h.state.selectedJobs.has(jobs[28].id), false, "Unselected older rows are not retained by a full refresh");
+    if (status === 404) {
+      assert.equal(h.state.selectedId, null);
+      assert.equal(h.state.jobs.length, 25);
+      assert.equal(h.state.selectedJobs.has(selected.id), false);
+      assert.equal(destroyed, 1);
+      assert.equal(h.node("downloadLink").href, "");
+      assert.match(h.node("toast").textContent, /no longer available/);
+      assert.equal(h.node("emptyTitle").focusCount, 1);
+    } else {
+      assert.equal(h.state.selectedId, selected.id);
+      assert.equal(h.state.jobs.length, 26);
+      assert.equal(h.state.selectedJobs.has(selected.id), true);
+      assert.equal(h.state.viewer, viewer);
+      assert.equal(loads, 1, "Refreshing the same artifact preserves the current view without another download");
+      assert.equal(destroyed, 0);
+      assert.equal(h.node("detailTitle").textContent, selected.displayName);
+      assert.equal(h.node("downloadLink").href, scene.downloadUrl);
+      assert.equal(h.node("toast").textContent, "", "Pagination is not announced as deletion");
+    }
+    if (status === 200) {
+      await h.context.loadJobs({ append: true });
+      assert.equal(h.state.jobs.length, 30);
+      assert.equal(new Set(h.state.jobs.map(job => job.id)).size, 30, "Loading the next page deduplicates the retained selection");
+      await h.context.loadJobs({ selectNewest: true });
+      assert.equal(h.state.selectedId, jobs[0].id, "An explicit newest-scene request still changes selection");
+      assert.equal(h.state.jobs.length, 25);
+    }
+    assert.ok(h.requests.every(request => request.method === "GET"));
+  }
+  {
+    const h = harness(), list = deferred();
+    const old = { id: "old-selection", state: "ready" }, current = { id: "current-selection", state: "ready" };
+    h.state.jobs = [old, current];
+    h.state.selectedId = old.id;
+    h.context.respond = () => list.promise;
+    const refresh = h.context.loadJobs();
+    h.state.selectedId = current.id;
+    list.resolve({ jobs: [], nextCursor: null });
+    await refresh;
+    assert.equal(h.state.selectedId, current.id, "Refresh retains the selection at response time, not its starting selection");
+    assert.deepEqual(Array.from(h.state.jobs, job => job.id), [current.id]);
+  }
   for (const target of ["/api/assets", "/api/jobs/research"]) {
     for (const failure of ["stream", "truncated"]) {
       const h = harness(), accepted = new Map();

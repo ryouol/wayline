@@ -532,6 +532,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   const checkedIds = candidates.slice(checkOffset, checkOffset + 100).map((job) => job.id);
   checkedIds.forEach((id) => query.append("knownId", id));
   const result = await api(`/api/jobs?${query}`, { background });
+  const selectedJob = state.jobs.find((job) => job.id === state.selectedId);
   if (candidates.length) state.jobCheckOffset = (checkOffset + checkedIds.length) % candidates.length;
   const missing = new Set((result.missingIds || []).filter((id) => checkedIds.includes(id)));
   const freshJobs = result.jobs.filter((job) => !missing.has(job.id));
@@ -544,6 +545,11 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
       && (!missing.has(job.id) || job.id === state.selectedId))];
   } else {
     state.jobs = freshJobs;
+  }
+  // A first-page refresh cannot prove that a loaded selection was removed.
+  // Keep it until its authenticated detail request confirms availability.
+  if (!selectNewest && selectedJob && !state.jobs.some((job) => job.id === selectedJob.id)) {
+    state.jobs.push(selectedJob);
   }
   state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
   byId("loadMoreJobs").hidden = !state.jobCursor;

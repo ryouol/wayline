@@ -532,18 +532,26 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   const checkedIds = candidates.slice(checkOffset, checkOffset + 100).map((job) => job.id);
   checkedIds.forEach((id) => query.append("knownId", id));
   const result = await api(`/api/jobs?${query}`, { background });
+  const selectedJob = state.jobs.find((job) => job.id === state.selectedId);
   if (candidates.length) state.jobCheckOffset = (checkOffset + checkedIds.length) % candidates.length;
   const missing = new Set((result.missingIds || []).filter((id) => checkedIds.includes(id)));
   const freshJobs = result.jobs.filter((job) => !missing.has(job.id));
   if (append) {
     const seen = new Set(state.jobs.map((job) => job.id));
     state.jobs.push(...freshJobs.filter((job) => !seen.has(job.id)));
+    // A retained selection may belong after rows from this page.
+    state.jobs.sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   } else if (preserveLoaded) {
     const refreshed = new Set(freshJobs.map((job) => job.id));
     state.jobs = [...freshJobs, ...state.jobs.filter((job) => !refreshed.has(job.id)
       && (!missing.has(job.id) || job.id === state.selectedId))];
   } else {
     state.jobs = freshJobs;
+  }
+  // A first-page refresh cannot prove that a loaded selection was removed.
+  // Keep it until its authenticated detail request confirms availability.
+  if (!selectNewest && selectedJob && !state.jobs.some((job) => job.id === selectedJob.id)) {
+    state.jobs.push(selectedJob);
   }
   state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
   byId("loadMoreJobs").hidden = !state.jobCursor;

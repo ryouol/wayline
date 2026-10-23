@@ -114,6 +114,7 @@ function harness(search = "") {
     FormData: class { append() {} },
     window: { location, setTimeout, clearTimeout, addEventListener: (name, callback) => windowEvents.set(name, callback),
       scrollTo: (options) => scrolls.push(options),
+      matchMedia: () => ({ matches: false }),
       SceneTimeline: class { attach() {} stop() {} wholeSpace() {} },
       WorkspaceSessionEvents: { dispatch() {} } },
     document: { visibilityState: "visible", getElementById: node, body: element(), addEventListener: (name, callback) => documentEvents.set(name, callback),
@@ -165,6 +166,110 @@ function harness(search = "") {
 }
 
 async function main() {
+  // Private navigation must survive reload without depending on a loaded library page.
+  const navigationJobs = Array.from({ length: 30 }, (_, i) => ({ id: `nav-${i}`, displayName: `Scene ${i}`,
+    state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 - i, artifacts: [] }));
+  navigationJobs[29].id = "private / scene&30";
+  const navigationHarness = (hash = "") => {
+    const h = harness(hash);
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.respond = async path => {
+      if (path === "/api/me") return account("available");
+      if (path.startsWith("/api/jobs?")) return { jobs: navigationJobs.slice(0, 25), nextCursor: "page-two" };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/shares?")) return { shares: [], nextCursor: null };
+      const job = navigationJobs.find(item => path === `/api/jobs/${encodeURIComponent(item.id)}`);
+      return job || new Response(JSON.stringify({ detail: "Scene unavailable" }), { status: 404 });
+    };
+    return h;
+  };
+  {
+    const last = navigationJobs[29];
+    const h = navigationHarness();
+    await h.context.initialize();
+    assert.equal(h.state.selectedId, navigationJobs[0].id, "A bare workspace still opens its newest scene");
+    await h.context.selectJob(last.id);
+    const bookmark = `#scene=${encodeURIComponent(last.id)}`;
+    assert.equal(h.context.location.hash, bookmark);
+    assert.equal(h.historyEntries.at(-1).method, "pushState");
+    const reload = navigationHarness(bookmark);
+    await reload.context.initialize();
+    assert.equal(reload.state.selectedId, last.id);
+    assert.equal(reload.node("detailTitle").textContent, last.displayName);
+    assert.equal(reload.state.jobs.length, 26, "A confirmed off-page scene joins the list exactly once");
+    assert.equal(reload.state.jobs.at(-1).id, last.id);
+    assert.equal(reload.state.jobCursor, "page-two", "The bookmark doesn't consume or reset pagination");
+    assert.equal(reload.historyEntries.length, 0, "Reload does not append another history entry");
+    await reload.context.loadJobs();
+    assert.equal(reload.context.location.hash, bookmark);
+    assert.equal(reload.state.selectedId, last.id);
+    assert.equal(reload.state.jobs.length, 26);
+    assert.ok(reload.requests.every(request => request.method === "GET"));
+  }
+  {
+    const h = navigationHarness();
+    await h.context.initialize();
+    await h.context.selectJob("nav-1");
+    h.click({ workspaceHome: "" });
+    assert.equal(h.context.location.hash, "#scenes");
+    assert.equal(h.state.selectedId, null);
+    const historyCount = h.historyEntries.length;
+    h.context.location.hash = "#scene=nav-1"; // Back
+    await h.windowEvents.get("popstate")();
+    await h.windowEvents.get("hashchange")();
+    assert.equal(h.node("detailTitle").textContent, "Scene 1");
+    assert.equal(h.requests.filter(request => request.path === "/api/jobs/nav-1").length, 2,
+      "Back issues one request even when the browser also sends hashchange");
+    h.context.location.hash = "#scenes"; // Forward
+    await h.windowEvents.get("popstate")();
+    assert.equal(h.state.selectedId, null);
+    assert.equal(h.node("jobDetail").hidden, true);
+    assert.equal(h.historyEntries.length, historyCount, "History traversal never pushes another entry");
+    const reload = navigationHarness("#scenes");
+    await reload.context.initialize();
+    assert.equal(reload.state.selectedId, null, "An explicit home bookmark must not open the newest scene");
+    assert.equal(reload.requests.some(request => request.path.startsWith("/api/jobs/")), false);
+  }
+  for (const status of [404, 500]) {
+    const h = navigationHarness("#scene=unavailable");
+    const respond = h.context.respond;
+    h.context.respond = path => path === "/api/jobs/unavailable"
+      ? new Response(JSON.stringify({ detail: "Scene unavailable" }), { status }) : respond(path);
+    await h.context.initialize();
+    assert.equal(h.node("appView").hidden, false, "A scene request error does not sign out a valid session");
+    assert.equal(h.node("jobDetail").hidden, true);
+    assert.equal(h.node("createDialog").open, false);
+    assert.equal(h.requests.some(request => request.path === "/api/jobs/nav-0"), false,
+      "A missing or temporarily unavailable bookmark must never open an unrelated scene");
+    assert.equal(h.state.selectedId, status === 404 ? null : "unavailable");
+    assert.equal(h.context.location.hash, status === 404 ? "#scenes" : "#scene=unavailable");
+    assert.match(h.node("toast").textContent, status === 404 ? /no longer available/ : /Scene unavailable/);
+  }
+  {
+    const h = navigationHarness(), pending = deferred();
+    await h.context.initialize();
+    const respond = h.context.respond;
+    h.context.respond = path => path === "/api/jobs/nav-1" ? pending.promise : respond(path);
+    const first = h.context.selectJob("nav-1");
+    assert.equal(h.node("jobDetail").hidden, true, "Changing URL immediately removes the previous scene's actions");
+    await h.context.selectJob("nav-2");
+    pending.resolve(navigationJobs[1]);
+    await first;
+    assert.equal(h.node("detailTitle").textContent, "Scene 2");
+    assert.equal(h.context.location.hash, "#scene=nav-2");
+    h.context.secureReset();
+    assert.equal(h.context.location.hash, "#scenes", "Session reset drops the previous principal's route");
+    assert.equal(h.state.selectedId, null);
+    assert.equal(h.node("jobDetail").hidden, true);
+  }
+  {
+    const h = navigationHarness("#scene=private");
+    h.context.respond = async () => new Response(JSON.stringify({ detail: "Sign in required" }), { status: 401 });
+    await h.context.initialize();
+    assert.equal(h.node("appView").hidden, true);
+    assert.equal(h.requests.some(request => request.path.startsWith("/api/jobs")), false,
+      "A private fragment must never bypass account verification");
+  }
   for (const status of [200, 404, 500]) {
     const h = harness();
     const scene = { id: "old-artifact", kind: "scene", filename: "old.glb", sizeBytes: 100,

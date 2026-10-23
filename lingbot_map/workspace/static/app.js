@@ -288,7 +288,22 @@ function clearDetail() {
   state.viewerArtifact = null;
 }
 
+function sceneIdFromLocation() {
+  return new URLSearchParams(location.hash.slice(1)).get("scene") || null;
+}
+
+function updateSceneLocation(jobId, { replace = false } = {}) {
+  // A private bookmark carries no credential and stays out of HTTP requests/referrers.
+  const hash = jobId ? `#scene=${encodeURIComponent(jobId)}` : "#scenes";
+  if (location.hash !== hash) {
+    history[replace ? "replaceState" : "pushState"](null, "", `${location.pathname}${location.search}${hash}`);
+  }
+}
+
+const compareJobs = (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+
 function secureReset() {
+  if (state.principal && sceneIdFromLocation()) updateSceneLocation(null, { replace: true });
   state.epoch += 1;
   cancelCaptureCheck();
   releaseCapturePreview();
@@ -540,7 +555,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
     const seen = new Set(state.jobs.map((job) => job.id));
     state.jobs.push(...freshJobs.filter((job) => !seen.has(job.id)));
     // A retained selection may belong after rows from this page.
-    state.jobs.sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    state.jobs.sort(compareJobs);
   } else if (preserveLoaded) {
     const refreshed = new Set(freshJobs.map((job) => job.id));
     state.jobs = [...freshJobs, ...state.jobs.filter((job) => !refreshed.has(job.id)
@@ -556,8 +571,11 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   state.jobCursor = preserveLoaded && loadedCursor ? loadedCursor : result.nextCursor;
   byId("loadMoreJobs").hidden = !state.jobCursor;
   byId("loadMoreManagedJobs").hidden = !state.jobCursor;
-  if (selectNewest && state.jobs.length) state.selectedId = state.jobs[0].id;
-  if (state.selectedId && !state.jobs.some((job) => job.id === state.selectedId)) state.selectedId = null;
+  if (selectNewest) {
+    state.selectedId = state.jobs[0]?.id || null;
+    updateSceneLocation(state.selectedId, { replace: true });
+  }
+  // A bookmark can point beyond this page; its authenticated detail request decides availability.
   const jobIds = new Set(state.jobs.map((job) => job.id));
   state.selectedJobs.forEach((id) => { if (!jobIds.has(id) && !append) state.selectedJobs.delete(id); });
   renderJobs();
@@ -771,11 +789,18 @@ function schedulePoll({ retry = false } = {}) {
   state.pollTimer = timer;
 }
 
-async function selectJob(jobId) {
+async function selectJob(jobId, { fromLocation = false } = {}) {
   const epoch = state.epoch;
+  if (state.selectedId !== jobId) clearDetail();
   state.detailCache = null;
   state.selectedId = jobId;
+  if (!fromLocation) updateSceneLocation(jobId);
   renderJobs();
+  if (!jobId) {
+    clearDetail();
+    byId("workspaceMain").focus({ preventScroll: true });
+    return;
+  }
   await renderJobDetail();
   if (epoch !== state.epoch || state.selectedId !== jobId) return;
   byId("detailTitle").focus({ preventScroll: true });
@@ -854,6 +879,7 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
     state.jobs = state.jobs.filter((item) => item.id !== selected);
     state.selectedJobs.delete(selected);
     state.selectedId = null;
+    updateSceneLocation(null, { replace: true });
     clearDetail();
     renderJobs();
     updateSelectionSummary();
@@ -862,6 +888,11 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
     return;
   }
   if (epoch !== state.epoch || selected !== state.selectedId) return;
+  if (!state.jobs.some((item) => item.id === job.id)) {
+    state.jobs.push(job);
+    state.jobs.sort(compareJobs);
+    renderJobs();
+  }
   state.detailCache = !useSummary && job.state === "ready" ? conditional : null;
   byId("emptyDetail").hidden = true;
   byId("jobDetail").hidden = false;
@@ -1047,11 +1078,17 @@ function validateSelectedCapture() {
 async function initialize() {
   try {
     await refreshAccount();
-    await Promise.all([loadJobs({ selectNewest: true }), loadInventory()]);
-    if (state.accountType === "google" && !state.jobs.length) openCreateScene({ refresh: false });
   } catch (_) {
     showLogin();
+    return;
   }
+  const linkedScene = sceneIdFromLocation(), restoreHome = location.hash === "#scenes";
+  clearDetail();
+  state.selectedId = linkedScene;
+  try {
+    await Promise.all([loadJobs({ selectNewest: !linkedScene && !restoreHome }), loadInventory()]);
+    if (!linkedScene && !restoreHome && state.accountType === "google" && !state.jobs.length) openCreateScene({ refresh: false });
+  } catch (error) { report(error); }
 }
 
 byId("loginForm").addEventListener("submit", async (event) => {
@@ -1105,7 +1142,9 @@ byId("sampleButton").addEventListener("click", async () => {
   button.textContent = "Creating scene…";
   try {
     const job = await api("/api/jobs/sample", { method: "POST", idempotent: true });
+    clearDetail();
     state.selectedId = job.id;
+    updateSceneLocation(job.id);
     await loadJobs();
     byId("createDialog").close();
     toast("Synthetic scene queued.");
@@ -1183,7 +1222,9 @@ byId("researchForm").addEventListener("submit", async (event) => {
       },
     }));
     assertCurrent();
+    clearDetail();
     state.selectedId = job.id;
+    updateSceneLocation(job.id);
     asset = null;
     queued = true;
     recordTiming("queued");
@@ -1240,7 +1281,7 @@ async function deleteJob(jobId) {
     state.jobs = state.jobs.filter((job) => job.id !== jobId);
     state.selectedJobs.delete(jobId);
     const deletedSelection = state.selectedId === jobId;
-    if (deletedSelection) { state.selectedId = null; clearDetail(); }
+    if (deletedSelection) { state.selectedId = null; updateSceneLocation(null, { replace: true }); clearDetail(); }
     await Promise.all([loadJobs({ selectNewest: deletedSelection, preserveLoaded: true }), loadInventory()]);
     toast("Deletion accepted. Stored objects are being removed.");
   } catch (error) { toast(error.message); }
@@ -1396,10 +1437,7 @@ document.addEventListener("click", (event) => {
     history.pushState(null, "", location.pathname);
     renderPublicRoute({ focus: true });
   } else if (target.hasAttribute("data-workspace-home")) {
-    state.selectedId = null;
-    clearDetail();
-    renderJobs();
-    byId("workspaceMain").focus({ preventScroll: true });
+    selectJob(null).catch(report);
   } else if (target.hasAttribute("data-create-scene")) openCreateScene();
   else if (target.hasAttribute("data-manage-workspace")) {
     openDialog(byId("managementDialog"));
@@ -1414,8 +1452,14 @@ byId("skipLink").addEventListener("click", (event) => {
     : !byId("accountView").hidden ? "accountTitle" : "loginTitle");
   target.focus();
 });
-window.addEventListener("popstate", () => { if (byId("appView").hidden) renderPublicRoute({ focus: true }); });
-window.addEventListener("hashchange", () => { if (byId("appView").hidden) renderPublicRoute(); });
+function restoreLocation({ focus = false } = {}) {
+  if (byId("appView").hidden) { renderPublicRoute({ focus }); return; }
+  const jobId = sceneIdFromLocation();
+  // Browsers may emit both events for one history move. Fetch the scene once.
+  if (jobId !== state.selectedId) return selectJob(jobId, { fromLocation: true }).catch(report);
+}
+window.addEventListener("popstate", () => restoreLocation({ focus: true }));
+window.addEventListener("hashchange", () => restoreLocation());
 window.addEventListener("pagehide", () => { releaseCapturePreview(); cancelCaptureCheck(); });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted && byId("video").files[0] && !state.uploading) validateSelectedCapture();

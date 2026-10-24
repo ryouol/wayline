@@ -130,7 +130,14 @@ async function api(path, options = {}) {
           if (typeof value === "string") detail = value;
           else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
         } catch (_) { /* response was not JSON */ }
-        throw Object.assign(new Error(detail), { status: response.status });
+        const error = Object.assign(new Error(detail), { status: response.status });
+        // A gateway can lose the acknowledgement after the server commits.
+        // Reconcile with the original key, within the shared retry/deadline budget.
+        if (options.idempotent && [502, 504].includes(response.status) && attempt < 1) {
+          await retryTransport(error, attempt);
+          continue;
+        }
+        throw error;
       }
       if (response.status === 204) return null;
       let result;

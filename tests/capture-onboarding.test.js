@@ -2030,6 +2030,68 @@ async function main() {
     h.windowEvents.get("pageshow")({ persisted: true });
     assert.equal(h.videos.length, decoders + 1, "returning after logout cannot restore a private selection");
   }
+  for (const failedRefresh of [true, false]) {
+    const h = harness();
+    let recovering = false;
+    h.context.openCreateScene({ refresh: false });
+    h.context.respond = async (path) => {
+      if (path === "/api/jobs/sample") return { id: "accepted-sample" };
+      if (path.startsWith("/api/jobs?")) {
+        if (failedRefresh && !recovering) throw new Error("Scene refresh failed");
+        return { jobs: [{ id: "accepted-sample", displayName: "Synthetic studio", state: "queued" }], nextCursor: null };
+      }
+      throw new Error(path);
+    };
+    await h.node("sampleButton").events.get("click")();
+    assert.equal(h.node("createDialog").open, false, "An acknowledged sample closes even when library refresh fails");
+    assert.equal(h.state.selectedId, "accepted-sample");
+    assert.equal(h.context.location.hash, "#scene=accepted-sample");
+    assert.equal(h.state.uploading, false);
+    assert.equal(h.node("sampleButton").disabled, false);
+    assert.equal(h.node("sampleButton").textContent, "Create synthetic scene");
+    assert.equal(h.node(failedRefresh ? "refreshButton" : "detailTitle").focusCount, 1);
+    assert.match(h.node("toast").textContent, failedRefresh ? /Synthetic scene was queued.*Refresh scenes/ : /Synthetic scene queued/);
+    assert.equal(h.node("toast").parentNode, h.context.document.body);
+    recovering = true;
+    await h.node("refreshButton").events.get("click")();
+    assert.equal(h.state.selectedId, "accepted-sample");
+    assert.equal(h.requests.filter(request => request.method !== "GET").length, 1,
+      "Checking an acknowledged sample performs reads only, without creating or deleting another scene");
+  }
+  {
+    const h = harness();
+    h.context.openCreateScene({ refresh: false });
+    h.context.respond = async () => new Response(JSON.stringify({ detail: "Sample capacity is full" }), { status: 503 });
+    await h.node("sampleButton").events.get("click")();
+    assert.equal(h.node("createDialog").open, true, "A rejected sample remains available for a later deliberate attempt");
+    assert.match(h.node("toast").textContent, /Sample capacity is full/);
+    assert.equal(h.state.selectedId, null);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.state.uploading, false);
+  }
+  for (const waitingAt of ["queue", "refresh"]) {
+    const h = harness(), waiting = deferred(), started = deferred();
+    h.context.openCreateScene({ refresh: false });
+    h.context.respond = async (path) => {
+      if (path === "/api/jobs/sample" && waitingAt === "refresh") return { id: "old-sample" };
+      started.resolve();
+      return waiting.promise;
+    };
+    const sample = h.node("sampleButton").events.get("click")();
+    await started.promise;
+    h.context.showLogin();
+    h.context.showApp(user, "new-csrf", allowance("available"));
+    h.context.openCreateScene({ refresh: false });
+    h.context.toast("Current session feedback");
+    h.state.selectedId = "new-scene";
+    waiting.reject(new Error("Old session request failed"));
+    await sample;
+    assert.equal(h.node("createDialog").open, true, "An old sample cannot close the current session's dialog");
+    assert.equal(h.node("toast").textContent, "Current session feedback");
+    assert.equal(h.state.selectedId, "new-scene");
+    assert.equal(h.node("refreshButton").focusCount, 0);
+    assert.equal(h.node("detailTitle").focusCount, 0);
+  }
   {
     const h = harness(), queued = deferred();
     h.context.openCreateScene({ refresh: false });

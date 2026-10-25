@@ -1144,21 +1144,29 @@ byId("logoutButton").addEventListener("click", async () => {
 byId("sampleButton").addEventListener("click", async () => {
   const button = byId("sampleButton"), epoch = state.epoch;
   if (state.uploading || button.disabled) return;
+  let queued = false, refreshed = false;
   state.uploading = true;
   renderReconstructionStatus();
   button.textContent = "Creating scene…";
   try {
     const job = await api("/api/jobs/sample", { method: "POST", idempotent: true });
+    queued = true;
     clearDetail();
     state.selectedId = job.id;
     updateSceneLocation(job.id);
     await loadJobs();
-    byId("createDialog").close();
-    toast("Synthetic scene queued.");
+    refreshed = true;
   } catch (error) {
-    toast(error.message);
+    if (epoch === state.epoch && !queued && error?.name !== "AbortError") toast(error.message);
   } finally {
     if (epoch === state.epoch) {
+      // An accepted sample stays queued even when the following library read fails.
+      if (queued) {
+        byId("createDialog").close();
+        byId(refreshed ? "detailTitle" : "refreshButton").focus({ preventScroll: true });
+        toast(refreshed ? "Synthetic scene queued."
+          : "Synthetic scene was queued, but the workspace couldn't refresh. Use Refresh scenes to check its progress.");
+      }
       state.uploading = false;
       button.textContent = "Create synthetic scene";
       renderReconstructionStatus();

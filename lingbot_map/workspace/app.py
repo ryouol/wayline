@@ -838,6 +838,23 @@ def create_app(
             workspace_expires_at=identities.workspace_expires_at(current.user_id),
         )
 
+    @application.get("/api/submissions/research", response_model=JobResponse)
+    def research_submission(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
+        if idempotency_key is None:
+            raise HTTPException(422, "Idempotency-Key is required.")
+        try:
+            value = workspace.database.research_submission_job(current.tenant_id, idempotency_key)
+        except KeyError as error:
+            # An absent receipt does not establish that a request was rejected.
+            raise HTTPException(
+                404, "No accepted scene could be confirmed for this submission."
+            ) from error
+        return _job(
+            value,
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+        )
+
     @application.get("/api/jobs", response_model=JobsResponse)
     def list_jobs(
         current: CurrentPrincipal,

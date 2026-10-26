@@ -218,6 +218,77 @@ def test_research_idempotency_replays_after_capacity_is_exhausted(
     assert authenticated_client.post("/api/jobs/research", json=payload).status_code == 409
 
 
+def test_research_submission_lookup_is_current_and_read_only(
+    capacity_engine, capture, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "uncertain-research-key"}
+    created = authenticated_client.post(
+        "/api/jobs/research", json={"assetId": capture["id"], "maxFrames": 30}, headers=headers
+    ).json()
+    assert capacity_engine.capacity_unavailable_reason()
+    assert (
+        authenticated_client.get("/api/submissions/research", headers=headers).json()["id"]
+        == created["id"]
+    )
+    service.cancel_job(tenant_id, created["id"])
+    before = service.database.quota(tenant_id)
+    expiry = scalar(service, "SELECT expires_at FROM idempotency_keys")
+    for _ in range(2):
+        recovered = authenticated_client.get("/api/submissions/research", headers=headers)
+        assert recovered.status_code == 200
+        assert recovered.headers["cache-control"] == "no-store"
+        assert recovered.json()["id"] == created["id"]
+        assert recovered.json()["state"] == "cancelled", "Lookup returns current job state"
+    assert service.database.quota(tenant_id) == before
+    assert len(service.database.list_jobs(tenant_id)) == 1
+    assert scalar(service, "SELECT COUNT(*) FROM idempotency_keys") == 1
+    assert scalar(service, "SELECT expires_at FROM idempotency_keys") == expiry
+
+
+def test_research_submission_lookup_requires_a_valid_key(authenticated_client):
+    for headers in [{}, {"Idempotency-Key": "short"}, {"Idempotency-Key": "x" * 201}]:
+        response = authenticated_client.get("/api/submissions/research", headers=headers)
+        assert response.status_code == 422
+        assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "unavailable", ["missing", "expired", "pending", "scope", "tenant", "deleted"]
+)
+def test_research_submission_lookup_does_not_cross_identity_or_lifetime(
+    unavailable, capacity_engine, capture, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "scoped-research-key"}
+    created = authenticated_client.post(
+        "/api/jobs/research", json={"assetId": capture["id"], "maxFrames": 30}, headers=headers
+    ).json()
+    if unavailable == "missing":
+        headers = {"Idempotency-Key": "unknown-research-key"}
+    elif unavailable == "deleted":
+        service.cancel_job(tenant_id, created["id"])
+        service.delete_job(tenant_id, created["id"])
+    else:
+        other = service.database.provision_tenant(
+            token="other-submission-lookup-test-token",
+            tenant_name="Other workspace",
+            quota_units=100,
+        )["tenant_id"]
+        changes = {
+            "expired": ("expires_at", 0),
+            "pending": ("state", "in_progress"),
+            "scope": ("scope", "POST:/api/jobs/sample"),
+            "tenant": ("tenant_id", other),
+        }
+        column, value = changes[unavailable]
+        with service.database.connect() as connection:
+            connection.execute(f"UPDATE idempotency_keys SET {column}=?", (value,))
+    response = authenticated_client.get("/api/submissions/research", headers=headers)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    authenticated_client.cookies.clear()
+    assert authenticated_client.get("/api/submissions/research", headers=headers).status_code == 401
+
+
 def test_modal_capacity_does_not_gate_samples_or_local_engines(service, tenant_id, capacity_engine):
     capacity_engine.reserve_run("occupied", "another-workspace", time.time() + 30)
     sample = service.submit_sample(tenant_id)

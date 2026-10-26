@@ -49,6 +49,7 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 | DELETE `/api/assets/{asset_id}` | P+C; typed ID, ownership, attachment/retention rules and durable deletion. |
 | POST `/api/jobs/sample` | P+C; controlled synthetic engine, quota/rate/idempotency. |
 | POST `/api/jobs/research` | P+C; owned asset, strict parameters plus engine validation, rights/availability gates, one-video account limits. |
+| GET `/api/submissions/research` | P; read-only lookup of the current owned scene by an unexpired, completed research submission key supplied in a header. No job creation, allowance use or receipt renewal. |
 | GET `/api/jobs` | P; bounded tenant pagination. |
 | GET `/api/jobs/{job_id}` | P; typed owned job. |
 | POST `/api/jobs/{job_id}/cancel` | P+C; owned state transition/idempotency. |

@@ -1201,7 +1201,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
       totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
     byId("researchForm").dispatchEvent(new CustomEvent("wayline-submission-timing", { detail: state.submissionTiming }));
   };
-  let asset = null, queued = false, refreshed = false;
+  let asset = null, queued = false, refreshed = false, uncertainQueue = false;
   state.uploading = true;
   renderReconstructionStatus();
   byId("researchMessage").textContent = "Checking your account before upload…";
@@ -1224,18 +1224,27 @@ byId("researchForm").addEventListener("submit", async (event) => {
     asset = await measure("uploadRequest", () => api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 }));
     assertCurrent();
     byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
-    const job = await measure("queueRequest", () => api("/api/jobs/research", {
-      method: "POST",
-      idempotent: true,
-      json: {
-        assetId: asset.id,
-        ...params,
-        rotate: false,
-        maskSky: false,
-        memoryGuard: true,
-        mode: "streaming",
-      },
-    }));
+    const queueHeaders = { "Idempotency-Key": crypto.randomUUID() };
+    const job = await measure("queueRequest", async () => {
+      try {
+        return await api("/api/jobs/research", {
+          method: "POST", idempotent: true, headers: queueHeaders,
+          json: { assetId: asset.id, ...params, rotate: false, maskSky: false, memoryGuard: true, mode: "streaming" },
+        });
+      } catch (error) {
+        assertCurrent();
+        if (error?.name === "AbortError" || (error.status && ![500, 502, 504].includes(error.status))) throw error;
+        uncertainQueue = true;
+        byId("researchMessage").textContent = "Checking whether your scene was queued…";
+        try {
+          // Read the original receipt; never create a new operation to check acceptance.
+          return await api("/api/submissions/research", { headers: queueHeaders, timeoutMs: 10000 });
+        } catch (_) {
+          assertCurrent();
+          throw new Error("We couldn't confirm whether your scene was queued. Use Refresh scenes before submitting again.");
+        }
+      }
+    });
     assertCurrent();
     clearDetail();
     state.selectedId = job.id;
@@ -1250,7 +1259,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     recordTiming(error?.name === "AbortError" ? "cancelled" : "failed");
     if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (queued) return;
-    if (asset) {
+    if (asset && !uncertainQueue) {
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }

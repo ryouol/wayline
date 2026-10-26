@@ -2203,6 +2203,19 @@ class Database:
         if changed != 1:
             raise KeyError(share_id)
 
+    def research_submission_job(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
+        """Resolve an accepted research request without replaying or renewing it."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT response_json FROM idempotency_keys WHERE tenant_id=? "
+                "AND scope='POST:/api/jobs/research' AND key_hash=? "
+                "AND state='complete' AND expires_at>?",
+                (tenant_id, token_digest(raw_key), time.time()),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Research submission not found")
+        return self.get_job(tenant_id, json.loads(row["response_json"])["id"])
+
     def has_completed_idempotency(self, tenant_id: str, scope: str, raw_key: str | None) -> bool:
         """Identify a replay candidate without claiming a key or trusting its payload."""
         if not raw_key:

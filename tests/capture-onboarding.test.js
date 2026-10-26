@@ -399,6 +399,72 @@ async function main() {
       assert.equal(h.node("researchButton").disabled, true);
     }
   }
+  for (const failure of ["gateway", "transport", "body", "timeout"]) {
+    for (const recovery of ["found", "missing", "failed", "session"]) {
+      const h = harness(), lookup = deferred(), lookingUp = deferred();
+      let queueKey;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account("available");
+        if (path === "/api/assets") return { id: "accepted-upload" };
+        if (path === "/api/jobs/research") {
+          queueKey = options.headers.get("Idempotency-Key");
+          if (failure === "timeout") return new Promise((resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")));
+          });
+          if (failure === "transport") throw new TypeError("Connection lost");
+          return new Response(failure === "body" ? '{"id":' : "Bad gateway", { status: failure === "body" ? 202 : 502 });
+        }
+        if (path === "/api/submissions/research") {
+          assert.equal(options.method, "GET");
+          assert.equal(options.headers.get("Idempotency-Key"), queueKey);
+          lookingUp.resolve();
+          return lookup.promise;
+        }
+        if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "recovered-job", state: "queued", createdAt: 1 }], nextCursor: null };
+        if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+        assert.fail(`Recovery must not delete the uncertain upload: ${path}`);
+      };
+      h.select().onerror();
+      h.context.openDialog(h.node("createDialog"));
+      const submitting = h.submit();
+      await new Promise(setImmediate);
+      const timer = [...h.timers.values()].find(item => item.delay === (failure === "timeout" ? 60000 : 250));
+      assert.ok(timer);
+      timer.callback();
+      await new Promise(setImmediate);
+      assert.ok(h.requests.some(request => request.path === "/api/submissions/research"),
+        "Exhausted queue retries must check the original submission before treating it as failed");
+      await lookingUp.promise;
+      assert.equal(h.node("researchButton").disabled, true, "Keep the form locked while checking acceptance");
+      assert.ok([...h.timers.values()].some(item => item.delay === 10000), "Read-only recovery has a separate bounded deadline");
+      if (recovery === "session") {
+        h.context.showLogin();
+        h.context.showApp(user, "new-session-csrf", allowance("available"));
+        h.select({ name: "new.mp4", size: 1024 }).onerror();
+        h.context.openDialog(h.node("createDialog"));
+      }
+      lookup.resolve(recovery === "missing" || recovery === "failed"
+        ? new Response("Not confirmed", { status: recovery === "missing" ? 404 : 503 })
+        : { id: "recovered-job" });
+      await submitting;
+      assert.equal(h.requests.filter(request => request.path === "/api/jobs/research").length, failure === "timeout" ? 1 : 2);
+      assert.equal(h.requests.filter(request => request.path === "/api/submissions/research").length, 1);
+      assert.equal(h.requests.some(request => request.method === "DELETE"), false);
+      if (recovery === "found") {
+        assert.equal(h.state.selectedId, "recovered-job");
+        assert.equal(h.context.location.hash, "#scene=recovered-job");
+        assert.equal(h.node("createDialog").open, false);
+        assert.equal(h.node("video").files.length, 0);
+        assert.equal(h.state.submissionTiming.outcome, "queued");
+        assert.equal(h.submissionTimings.length, 1);
+      } else {
+        assert.equal(h.node("createDialog").open, true);
+        assert.equal(h.state.selectedId, null);
+        if (recovery === "session") assert.equal(h.node("video").files[0].name, "new.mp4");
+        else assert.match(h.node("researchMessage").textContent, /couldn't confirm.*Refresh scenes/);
+      }
+    }
+  }
   for (const [first, second] of [[502, 504], [504, "transport"], [502, "body"], ["transport", 502]]) {
     const h = harness();
     h.context.respond = async () => {

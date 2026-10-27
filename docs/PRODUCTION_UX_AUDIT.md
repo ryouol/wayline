@@ -46,6 +46,7 @@ Endpoint inventory (`P` = authenticated principal plus tenant ownership; `C` = C
 | GET `/api/engines` | P; safe capability descriptors, guest GPU disabled. |
 | GET `/api/assets` | P; bounded pagination. |
 | POST `/api/assets` | P+C; guest rejection, upload/container/duration/dimension/byte validation, quota/idempotency. |
+| GET `/api/submissions/upload` | P; read-only lookup of current owned asset metadata using a completed, unexpired upload key in a header. No upload replay, storage charge or receipt renewal. |
 | DELETE `/api/assets/{asset_id}` | P+C; typed ID, ownership, attachment/retention rules and durable deletion. |
 | POST `/api/jobs/sample` | P+C; controlled synthetic engine, quota/rate/idempotency. |
 | POST `/api/jobs/research` | P+C; owned asset, strict parameters plus engine validation, rights/availability gates, one-video account limits. |

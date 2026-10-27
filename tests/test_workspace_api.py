@@ -133,6 +133,85 @@ def test_upload_rejects_mismatched_content_and_removes_object(authenticated_clie
     assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
 
 
+def test_upload_submission_lookup_is_current_and_read_only(
+    authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "uncertain-upload-key"}
+    uploaded = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 201
+    asset = uploaded.json()
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).json() == asset
+    job = service.database.create_job(
+        tenant_id=tenant_id,
+        engine_id="synthetic-sample-v1",
+        source_asset_id=asset["id"],
+        params={},
+        provenance={"fixture": True},
+        reserve_units=0,
+    )
+    service.cancel_job(tenant_id, job["id"])
+    expected = authenticated_client.get("/api/assets").json()["assets"][0]
+    assert expected["linkedJobCount"] == 1 and not expected["deletable"]
+    with service.database.connect() as connection:
+        before = list(connection.iterdump())
+    for _ in range(2):
+        recovered = authenticated_client.get("/api/submissions/upload", headers=headers)
+        assert recovered.status_code == 200
+        assert recovered.headers["cache-control"] == "no-store"
+        assert recovered.json() == expected, "Return current asset metadata, not a stale receipt"
+        assert "object_key" not in recovered.json()
+    with service.database.connect() as connection:
+        assert list(connection.iterdump()) == before, "Lookup changes no receipt, quota or rate"
+    assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
+
+
+def test_upload_submission_lookup_requires_a_valid_key(authenticated_client):
+    for headers in [{}, {"Idempotency-Key": "short"}, {"Idempotency-Key": "x" * 201}]:
+        response = authenticated_client.get("/api/submissions/upload", headers=headers)
+        assert response.status_code == 422
+        assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "unavailable", ["missing", "expired", "pending", "scope", "tenant", "deleted"]
+)
+def test_upload_submission_lookup_respects_identity_and_lifetime(
+    unavailable, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "scoped-upload-key"}
+    asset = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        headers=headers,
+    ).json()
+    if unavailable == "missing":
+        headers = {"Idempotency-Key": "unknown-upload-key"}
+    elif unavailable == "deleted":
+        service.delete_asset(tenant_id, asset["id"])
+    else:
+        other = service.database.provision_tenant(
+            token="other-upload-lookup-test-token", tenant_name="Other", quota_units=100
+        )["tenant_id"]
+        column, value = {
+            "expired": ("expires_at", 0),
+            "pending": ("state", "in_progress"),
+            "scope": ("scope", "POST:/api/jobs/research"),
+            "tenant": ("tenant_id", other),
+        }[unavailable]
+        with service.database.connect() as connection:
+            connection.execute(f"UPDATE idempotency_keys SET {column}=?", (value,))
+    response = authenticated_client.get("/api/submissions/upload", headers=headers)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    authenticated_client.cookies.clear()
+    response = authenticated_client.get("/api/submissions/upload", headers=headers)
+    assert response.status_code == 401 and response.headers["cache-control"] == "no-store"
+
+
 def test_orphan_upload_can_be_deleted(authenticated_client, service):
     upload = authenticated_client.post(
         "/api/assets",

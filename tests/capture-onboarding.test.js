@@ -400,6 +400,82 @@ async function main() {
     }
   }
   for (const failure of ["gateway", "transport", "body", "timeout"]) {
+    for (const recovery of ["found", "missing", "failed", "session", "capture"]) {
+      const h = harness(), lookup = deferred();
+      let uploadKey, uploadBody, uuid = 0;
+      h.context.crypto.randomUUID = () => `upload-recovery-request-${++uuid}`;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account("available");
+        if (path === "/api/assets") {
+          const key = options.headers.get("Idempotency-Key");
+          if (uploadKey) {
+            assert.equal(key, uploadKey);
+            assert.equal(options.body, uploadBody);
+          } else { uploadKey = key; uploadBody = options.body; }
+          if (failure === "timeout") return new Promise((resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")));
+          });
+          if (failure === "transport") throw new TypeError("Connection lost");
+          return new Response(failure === "body" ? '{"id":' : "Bad gateway", { status: failure === "body" ? 201 : 504 });
+        }
+        if (path === "/api/submissions/upload") {
+          assert.equal(options.method, "GET");
+          assert.equal(options.headers.get("Idempotency-Key"), uploadKey);
+          return lookup.promise;
+        }
+        if (path === "/api/jobs/research") {
+          assert.equal(recovery, "found", "Only a current confirmed upload may queue");
+          assert.equal(JSON.parse(options.body).assetId, "recovered-upload");
+          assert.notEqual(options.headers.get("Idempotency-Key"), uploadKey);
+          return { id: "recovered-upload-job" };
+        }
+        if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "recovered-upload-job", state: "queued", createdAt: 1 }], nextCursor: null };
+        if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+        assert.fail(`Upload recovery must not guess an asset to delete: ${path}`);
+      };
+      h.select().onerror();
+      h.context.openDialog(h.node("createDialog"));
+      const submitting = h.submit();
+      await new Promise(setImmediate);
+      const timer = [...h.timers.values()].find(item => item.delay === (failure === "timeout" ? 900000 : 250));
+      assert.ok(timer);
+      timer.callback();
+      await new Promise(setImmediate);
+      assert.ok(h.requests.some(request => request.path === "/api/submissions/upload"),
+        "Exhausted upload retries must check the original receipt before failing");
+      assert.equal(h.node("researchButton").disabled, true);
+      assert.ok([...h.timers.values()].some(item => item.delay === 10000));
+      if (recovery === "session") {
+        h.context.showLogin();
+        h.context.showApp(user, "new-session-csrf", allowance("available"));
+        h.context.openDialog(h.node("createDialog"));
+      }
+      if (["session", "capture"].includes(recovery)) h.select({ name: "new.mp4", size: 1024 }).onerror();
+      lookup.resolve(recovery === "missing" || recovery === "failed"
+        ? new Response("Not confirmed", { status: recovery === "missing" ? 404 : 503 })
+        : { id: "recovered-upload" });
+      await submitting;
+      assert.equal(h.requests.filter(request => request.path === "/api/assets" && request.method === "POST").length, failure === "timeout" ? 1 : 2);
+      assert.equal(h.requests.filter(request => request.path === "/api/submissions/upload").length, 1);
+      assert.equal(h.requests.filter(request => request.path === "/api/jobs/research").length, recovery === "found" ? 1 : 0);
+      assert.equal(h.requests.some(request => request.method === "DELETE"), false);
+      if (recovery === "found") {
+        assert.equal(h.context.location.hash, "#scene=recovered-upload-job");
+        assert.equal(h.node("createDialog").open, false);
+        assert.equal(h.node("video").files.length, 0);
+        assert.equal(h.state.submissionTiming.outcome, "queued");
+        assert.equal(h.submissionTimings.length, 1);
+      } else {
+        assert.equal(h.node("createDialog").open, true);
+        if (["session", "capture"].includes(recovery)) assert.equal(h.node("video").files[0].name, "new.mp4");
+        else {
+          assert.match(h.node("researchMessage").textContent, /couldn't confirm.*video.*No scene was submitted/);
+          assert.equal(h.state.submissionTiming.endedAtStage, "uploadRequest");
+        }
+      }
+    }
+  }
+  for (const failure of ["gateway", "transport", "body", "timeout"]) {
     for (const recovery of ["found", "missing", "failed", "session"]) {
       const h = harness(), lookup = deferred(), lookingUp = deferred();
       let queueKey;

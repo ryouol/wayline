@@ -778,6 +778,18 @@ def create_app(
             upload_lock.release()
         return _asset(result)
 
+    @application.get("/api/submissions/upload", response_model=AssetResponse)
+    def upload_submission(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
+        if idempotency_key is None:
+            raise HTTPException(422, "Idempotency-Key is required.")
+        try:
+            value = workspace.database.upload_submission_asset(current.tenant_id, idempotency_key)
+        except KeyError as error:
+            raise HTTPException(
+                404, "No accepted video upload could be confirmed for this submission."
+            ) from error
+        return _asset(value)
+
     @application.get("/api/assets", response_model=AssetsResponse)
     def list_assets(
         current: CurrentPrincipal,

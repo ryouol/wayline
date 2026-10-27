@@ -1221,7 +1221,23 @@ byId("researchForm").addEventListener("submit", async (event) => {
     byId("researchMessage").textContent = "Uploading video…";
     const body = new FormData();
     body.append("file", file);
-    asset = await measure("uploadRequest", () => api("/api/assets", { method: "POST", body, idempotent: true, timeoutMs: 15 * 60 * 1000 }));
+    const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
+    asset = await measure("uploadRequest", async () => {
+      try {
+        return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
+      } catch (error) {
+        assertCurrent();
+        if (error?.name === "AbortError" || (error.status && ![500, 502, 504].includes(error.status))) throw error;
+        byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+        try {
+          // Resolve the saved upload without sending the video again.
+          return await api("/api/submissions/upload", { headers: uploadHeaders, timeoutMs: 10000 });
+        } catch (_) {
+          assertCurrent();
+          throw new Error("We couldn't confirm whether your video was uploaded. No scene was submitted. Check Storage & shares before trying again.");
+        }
+      }
+    });
     assertCurrent();
     byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     const queueHeaders = { "Idempotency-Key": crypto.randomUUID() };

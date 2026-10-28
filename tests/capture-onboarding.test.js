@@ -399,6 +399,100 @@ async function main() {
       assert.equal(h.node("researchButton").disabled, true);
     }
   }
+  for (const stage of ["upload", "queue"]) {
+    for (const [first, last] of [["gateway", 429], ["transport", 409], ["body", 503],
+      ["pending", 429], ["pending", "pending"], ["gateway", "pending"]]) {
+      for (const recovery of ["found", "missing", "failed", "session"]) {
+        const h = harness(), lookup = deferred();
+        const target = stage === "upload" ? "/api/assets" : "/api/jobs/research";
+        const receipt = `/api/submissions/${stage === "upload" ? "upload" : "research"}`;
+        let attempts = 0, originalKey, originalBody;
+        h.context.respond = async (path, options) => {
+          if (path === "/api/me") return account("available");
+          if (path === target) {
+            attempts++;
+            if (attempts === 1) {
+              originalKey = options.headers.get("Idempotency-Key"); originalBody = options.body;
+              if (first === "transport") throw new TypeError("Connection lost");
+              if (first === "body") return new Response('{"id":', { status: 201 });
+              if (first === "gateway") return new Response("Bad gateway", { status: 504 });
+            } else {
+              assert.equal(options.headers.get("Idempotency-Key"), originalKey);
+              assert.equal(options.body, originalBody);
+            }
+            const pending = attempts === 1 || last === "pending";
+            return new Response(JSON.stringify({ detail: "Retry not accepted",
+              code: pending ? "idempotency_in_progress" : "admission_rejected" }), { status: pending ? 409 : last });
+          }
+          if (path === receipt) {
+            assert.equal(options.method, "GET");
+            assert.equal(options.headers.get("Idempotency-Key"), originalKey);
+            return lookup.promise;
+          }
+          if (path === "/api/assets") return { id: "original-upload" };
+          if (path === "/api/jobs/research") {
+            assert.equal(recovery, "found");
+            assert.equal(JSON.parse(options.body).assetId, "original-upload");
+            return { id: "original-job" };
+          }
+          if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "original-job", state: "queued", createdAt: 1 }], nextCursor: null };
+          if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+          assert.fail(`An uncertain retry must not clean up its input: ${path}`);
+        };
+        h.select().onerror();
+        h.context.openDialog(h.node("createDialog"));
+        const submitting = h.submit();
+        for (const delay of [first === "pending" ? 500 : 250, ...(last === "pending" ? [1000] : [])]) {
+          await new Promise(setImmediate);
+          const retry = [...h.timers.values()].find(timer => timer.delay === delay);
+          assert.ok(retry); retry.callback();
+        }
+        await new Promise(setImmediate);
+        assert.ok(h.requests.some(request => request.path === receipt),
+          "A later rejection must not erase the original attempt's uncertain outcome");
+        assert.equal(h.node("researchButton").disabled, true);
+        assert.ok([...h.timers.values()].some(timer => timer.delay === 10000));
+        if (recovery === "session") {
+          h.context.showLogin();
+          h.context.showApp(user, "new-session-csrf", allowance("available"));
+          h.select({ name: "new.mp4", size: 1024 }).onerror();
+          h.context.openDialog(h.node("createDialog"));
+        }
+        lookup.resolve(recovery === "missing" || recovery === "failed"
+          ? new Response("Not confirmed", { status: recovery === "missing" ? 404 : 503 })
+          : { id: stage === "upload" ? "original-upload" : "original-job" });
+        await submitting;
+        assert.equal(attempts, last === "pending" ? 3 : 2, "Do not expand mutation retries");
+        assert.equal(h.requests.filter(request => request.path === receipt).length, 1);
+        assert.equal(h.requests.some(request => request.method === "DELETE"), false);
+        if (recovery === "found") {
+          assert.equal(h.context.location.hash, "#scene=original-job");
+          assert.equal(h.node("createDialog").open, false);
+          assert.equal(h.node("video").files.length, 0);
+          assert.equal(h.state.submissionTiming.outcome, "queued");
+          assert.equal(h.submissionTimings.length, 1);
+        } else {
+          assert.equal(h.node("createDialog").open, true);
+          if (recovery === "session") assert.equal(h.node("video").files[0].name, "new.mp4");
+          else assert.match(h.node("researchMessage").textContent, /couldn't confirm/);
+        }
+      }
+    }
+    for (const status of [409, 429, 503]) {
+      const h = harness();
+      h.context.respond = async path => {
+        if (path === "/api/me") return account("available");
+        if (path === (stage === "upload" ? "/api/assets" : "/api/jobs/research")) return new Response("Rejected", { status });
+        if (path === "/api/assets") return { id: "rejected-upload" };
+        if (path === "/api/assets/rejected-upload") return null;
+        assert.fail(`A definite first rejection needs no reconciliation: ${path}`);
+      };
+      h.select().onerror();
+      await h.submit();
+      assert.equal(h.requests.some(request => request.path.startsWith("/api/submissions/")), false);
+      assert.equal(h.requests.filter(request => request.method === "DELETE").length, stage === "queue" ? 1 : 0);
+    }
+  }
   for (const failure of ["gateway", "transport", "body", "timeout"]) {
     for (const recovery of ["found", "missing", "failed", "session", "capture"]) {
       const h = harness(), lookup = deferred();

@@ -78,9 +78,11 @@ async function api(path, options = {}) {
   state.controllers.add(controller);
   if (!options.background) state.foregroundRequests.add(controller);
   renderRequestStatus();
-  let timedOut = false;
+  let timedOut = false, outcomeUnknown = false;
   const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 60000);
   const retryTransport = async (error, attempt) => {
+    // A later admission error cannot establish what the original attempt did.
+    if (options.idempotent && error?.name !== "AbortError") outcomeUnknown = true;
     if (!options.idempotent || error?.name === "AbortError" || controller.signal.aborted
         || requestEpoch !== state.epoch || attempt >= 1) throw error;
     await pause(250);
@@ -111,12 +113,15 @@ async function api(path, options = {}) {
         showLogin();
         throw new Error("Your session ended. Sign in again.");
       }
-      if (options.idempotent && response.status === 409 && attempt < 2) {
+      if (options.idempotent && response.status === 409) {
         let code = "";
         try { code = (await response.clone().json()).code || ""; } catch (_) { /* not JSON */ }
         if (code === "idempotency_in_progress") {
-          await pause(500 * (attempt + 1));
-          continue;
+          outcomeUnknown = true;
+          if (attempt < 2) {
+            await pause(500 * (attempt + 1));
+            continue;
+          }
         }
       }
       // Intermediaries can weaken the full response's ETag. GET validation uses
@@ -130,7 +135,7 @@ async function api(path, options = {}) {
           if (typeof value === "string") detail = value;
           else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
         } catch (_) { /* response was not JSON */ }
-        const error = Object.assign(new Error(detail), { status: response.status });
+        const error = Object.assign(new Error(detail), { status: response.status, outcomeUnknown });
         // A gateway can lose the acknowledgement after the server commits.
         // Reconcile with the original key, within the shared retry/deadline budget.
         if (options.idempotent && [502, 504].includes(response.status) && attempt < 1) {
@@ -1227,7 +1232,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
         return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
       } catch (error) {
         assertCurrent();
-        if (error?.name === "AbortError" || (error.status && ![500, 502, 504].includes(error.status))) throw error;
+        if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
         byId("researchMessage").textContent = "Checking whether your video was uploaded…";
         try {
           // Resolve the saved upload without sending the video again.
@@ -1249,7 +1254,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
         });
       } catch (error) {
         assertCurrent();
-        if (error?.name === "AbortError" || (error.status && ![500, 502, 504].includes(error.status))) throw error;
+        if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
         uncertainQueue = true;
         byId("researchMessage").textContent = "Checking whether your scene was queued…";
         try {

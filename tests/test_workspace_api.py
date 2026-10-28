@@ -176,6 +176,34 @@ def test_upload_submission_lookup_requires_a_valid_key(authenticated_client):
         assert response.headers["cache-control"] == "no-store"
 
 
+def test_completed_upload_receipt_survives_rate_limited_replay(settings, service):
+    limited = replace(settings, upload_rate_per_minute=1)
+    service.settings = limited
+    headers = {
+        "Authorization": f"Bearer {BOOTSTRAP_TOKEN}",
+        "Idempotency-Key": "rate-limited-upload-replay",
+    }
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        first = client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert first.status_code == 201
+        retry = client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert retry.status_code == 429
+        assert retry.json()["code"] == "rate_limit_exceeded"
+        recovered = client.get("/api/submissions/upload", headers=headers)
+        assert recovered.status_code == 200 and recovered.json() == first.json()
+        assert recovered.headers["cache-control"] == "no-store"
+        assert len(client.get("/api/assets", headers=headers).json()["assets"]) == 1
+        assert client.get("/api/jobs", headers=headers).json()["jobs"] == []
+
+
 @pytest.mark.parametrize(
     "unavailable", ["missing", "expired", "pending", "scope", "tenant", "deleted"]
 )

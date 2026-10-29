@@ -8,7 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", jobCheckOffset: 0, accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
-  capturePreviewUrl: null, retention: null, submissionTiming: null, detailCache: null,
+  capturePreviewUrl: null, retention: null, submissionTiming: null, detailCache: null, pendingResearch: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -322,6 +322,7 @@ function secureReset() {
   state.reconstructionAllowance = null;
   state.retention = null;
   state.submissionTiming = null;
+  state.pendingResearch = null;
   state.accountRefresh = null;
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
@@ -968,6 +969,8 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
   }
 }
 
+const unconfirmedResearchMessage = "We couldn't confirm whether your scene was queued. Choose Check scene status to check again without resubmitting, or use Refresh scenes.";
+
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
   const google = state.accountType === "google";
@@ -981,7 +984,11 @@ function renderReconstructionStatus() {
   byId("sampleFps").disabled = !canChoose;
   byId("frameLimit").disabled = !canChoose;
   byId("capturePicker").classList.toggle("unavailable", !canChoose);
-  byId("researchButton").disabled = !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
+  const pending = state.pendingResearch && state.pendingResearch.file === byId("video").files[0];
+  byId("researchButton").disabled = pending ? state.uploading
+    : !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
+  byId("researchButton").textContent = pending
+    ? (state.uploading ? "Checking scene status…" : "Check scene status") : "Create scene";
   const titles = { available: `${allowance?.remaining ?? 2} of ${allowance?.limit ?? 2} videos remaining`, processing: "Reconstruction in progress",
     used: "Both videos used", retry_later: "Try again later" };
   const unavailableReason = state.engine?.unavailableReasons?.join(" ")
@@ -1033,7 +1040,8 @@ function validateSelectedCapture() {
   byId("selectedFilename").textContent = file ? file.name : "Choose a video";
   byId("video").removeAttribute("aria-invalid");
   byId("captureMessage").textContent = "";
-  byId("researchMessage").textContent = "";
+  if (state.pendingResearch?.file !== file) state.pendingResearch = null;
+  byId("researchMessage").textContent = state.pendingResearch ? unconfirmedResearchMessage : "";
   if (!file) { renderReconstructionStatus(); return; }
   const check = { file, status: "checking", cancel: null };
   state.captureCheck = check;
@@ -1184,6 +1192,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
   if (state.uploading || byId("researchButton").disabled) return;
   const file = byId("video").files[0];
   const selection = state.captureCheck, epoch = state.epoch;
+  const pending = state.pendingResearch?.file === file ? state.pendingResearch : null;
   if (!file || selection?.file !== file) return;
   const assertCurrent = () => {
     if (epoch !== state.epoch || state.captureCheck !== selection) throw new DOMException("Capture changed", "AbortError");
@@ -1192,7 +1201,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const started = performance.now();
   const timings = { preflightSeconds: null, uploadRequestSeconds: null, queueRequestSeconds: null };
   let phase = "preflight", recorded = false;
-  state.submissionTiming = null;
+  if (!pending) state.submissionTiming = null;
   const measure = async (stage, operation) => {
     phase = stage;
     const stageStarted = performance.now();
@@ -1200,70 +1209,75 @@ byId("researchForm").addEventListener("submit", async (event) => {
     finally { timings[`${stage}Seconds`] = (performance.now() - stageStarted) / 1000; }
   };
   const recordTiming = (outcome) => {
-    if (recorded || epoch !== state.epoch) return;
+    if (pending || recorded || epoch !== state.epoch) return;
     recorded = true;
     state.submissionTiming = Object.freeze({ ...timings,
       totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
     byId("researchForm").dispatchEvent(new CustomEvent("wayline-submission-timing", { detail: state.submissionTiming }));
   };
-  let asset = null, queued = false, refreshed = false, uncertainQueue = false;
+  let asset = null, queued = false, refreshed = false, uncertainQueue = Boolean(pending);
   state.uploading = true;
   renderReconstructionStatus();
-  byId("researchMessage").textContent = "Checking your account before upload…";
+  byId("researchMessage").textContent = pending ? "Checking whether your scene was queued…" : "Checking your account before upload…";
   try {
-    await measure("preflight", () => refreshAccount({ fresh: true }));
-    assertCurrent();
-    if (state.accountType === "google" && state.reconstructionAllowance?.state !== "available") {
-      byId("researchMessage").textContent = state.reconstructionAllowance?.message || "Your video allowance could not be checked. Refresh to try again.";
-      recordTiming("blocked");
-      return;
-    }
-    if (state.accountType === "trial" || !state.engine?.available) {
-      byId("researchMessage").textContent = "";
-      recordTiming("blocked");
-      return;
-    }
-    byId("researchMessage").textContent = "Uploading video…";
-    const body = new FormData();
-    body.append("file", file);
-    const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
-    asset = await measure("uploadRequest", async () => {
-      try {
-        return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
-      } catch (error) {
-        assertCurrent();
-        if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
-        byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+    if (!pending) {
+      await measure("preflight", () => refreshAccount({ fresh: true }));
+      assertCurrent();
+      if (state.accountType === "google" && state.reconstructionAllowance?.state !== "available") {
+        byId("researchMessage").textContent = state.reconstructionAllowance?.message || "Your video allowance could not be checked. Refresh to try again.";
+        recordTiming("blocked");
+        return;
+      }
+      if (state.accountType === "trial" || !state.engine?.available) {
+        byId("researchMessage").textContent = "";
+        recordTiming("blocked");
+        return;
+      }
+      byId("researchMessage").textContent = "Uploading video…";
+      const body = new FormData();
+      body.append("file", file);
+      const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
+      asset = await measure("uploadRequest", async () => {
         try {
-          // Resolve the saved upload without sending the video again.
-          return await api("/api/submissions/upload", { headers: uploadHeaders, timeoutMs: 10000 });
-        } catch (_) {
+          return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
+        } catch (error) {
           assertCurrent();
-          throw new Error("We couldn't confirm whether your video was uploaded. No scene was submitted. Check Storage & shares before trying again.");
+          if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
+          byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+          try {
+            // Resolve the saved upload without sending the video again.
+            return await api("/api/submissions/upload", { headers: uploadHeaders, timeoutMs: 10000 });
+          } catch (_) {
+            assertCurrent();
+            throw new Error("We couldn't confirm whether your video was uploaded. No scene was submitted. Check Storage & shares before trying again.");
+          }
+        }
+      });
+      assertCurrent();
+      byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
+    }
+    const queueHeaders = pending?.headers || { "Idempotency-Key": crypto.randomUUID() };
+    const job = await measure("queueRequest", async () => {
+      if (!pending) {
+        try {
+          return await api("/api/jobs/research", {
+            method: "POST", idempotent: true, headers: queueHeaders,
+            json: { assetId: asset.id, ...params, rotate: false, maskSky: false, memoryGuard: true, mode: "streaming" },
+          });
+        } catch (error) {
+          assertCurrent();
+          if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
+          uncertainQueue = true;
+          state.pendingResearch = { file, headers: queueHeaders };
         }
       }
-    });
-    assertCurrent();
-    byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
-    const queueHeaders = { "Idempotency-Key": crypto.randomUUID() };
-    const job = await measure("queueRequest", async () => {
+      byId("researchMessage").textContent = "Checking whether your scene was queued…";
       try {
-        return await api("/api/jobs/research", {
-          method: "POST", idempotent: true, headers: queueHeaders,
-          json: { assetId: asset.id, ...params, rotate: false, maskSky: false, memoryGuard: true, mode: "streaming" },
-        });
-      } catch (error) {
+        // Read the original receipt; never create a new operation to check acceptance.
+        return await api("/api/submissions/research", { headers: queueHeaders, timeoutMs: 10000 });
+      } catch (_) {
         assertCurrent();
-        if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
-        uncertainQueue = true;
-        byId("researchMessage").textContent = "Checking whether your scene was queued…";
-        try {
-          // Read the original receipt; never create a new operation to check acceptance.
-          return await api("/api/submissions/research", { headers: queueHeaders, timeoutMs: 10000 });
-        } catch (_) {
-          assertCurrent();
-          throw new Error("We couldn't confirm whether your scene was queued. Use Refresh scenes before submitting again.");
-        }
+        throw new Error(unconfirmedResearchMessage);
       }
     });
     assertCurrent();
@@ -1272,6 +1286,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     updateSceneLocation(job.id);
     asset = null;
     queued = true;
+    state.pendingResearch = null;
     recordTiming("queued");
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();

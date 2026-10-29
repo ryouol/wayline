@@ -635,6 +635,91 @@ async function main() {
       }
     }
   }
+  for (const gate of ["available", "used"]) {
+    for (const outcome of ["found", "refresh-failed", "missing", "failed", "session", "capture"]) {
+      const h = harness(), recheck = deferred();
+      let lookups = 0, queueKey, checkingAgain = false;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account(checkingAgain ? gate : "available");
+        if (path === "/api/assets" && !checkingAgain) return { id: "original-upload" };
+        if (path === "/api/jobs/research" && !checkingAgain) {
+          queueKey = options.headers.get("Idempotency-Key");
+          return new Response("Acknowledgement lost", { status: 500 });
+        }
+        if (path === "/api/submissions/research") {
+          assert.equal(options.method, "GET");
+          assert.equal(options.headers.get("Idempotency-Key"), queueKey);
+          lookups++;
+          return lookups === 1 ? new Response("Still pending", { status: 404 }) : recheck.promise;
+        }
+        if (path.startsWith("/api/jobs?")) {
+          if (outcome === "refresh-failed") return new Response("Unavailable", { status: 503 });
+          return { jobs: [{ id: "original-job", state: "queued", createdAt: 1 }], nextCursor: null };
+        }
+        if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+        assert.fail(`Status checks must not repeat or clean up a submission: ${path}`);
+      };
+      h.select().onerror();
+      h.context.openDialog(h.node("createDialog"));
+      await h.submit();
+      assert.equal(lookups, 1);
+      assert.equal(h.node("researchButton").textContent, "Check scene status",
+        "An unconfirmed scene must retain a read-only recovery action");
+      checkingAgain = true;
+      h.context.engineResponse = async () => engines(gate === "available");
+      await h.context.refreshAccount({ fresh: true });
+      // Configuration reloads and reopening the dialog must retain the original receipt.
+      h.context.validateSelectedCapture(); h.videos.at(-1).onerror();
+      h.node("createDialog").close();
+      await new Promise(setImmediate);
+      h.context.openDialog(h.node("createDialog"));
+      assert.equal(h.node("researchButton").disabled, false, "Read-only recovery needs no processing allowance");
+      h.node("frameLimit").value = "99";
+      const requestCount = h.requests.length, timingCount = h.submissionTimings.length;
+      const checking = h.submit();
+      await new Promise(setImmediate);
+      assert.equal(h.node("researchButton").disabled, true);
+      assert.equal(h.node("researchButton").textContent, "Checking scene status…");
+      assert.ok([...h.timers.values()].some(timer => timer.delay === 10000));
+      await h.submit();
+      assert.equal(lookups, 2, "Repeated clicks cannot overlap receipt checks");
+      if (outcome === "session") {
+        h.context.showLogin();
+        h.context.showApp(user, "new-csrf", allowance("available"));
+      }
+      if (["session", "capture"].includes(outcome)) {
+        h.select({ name: "different.mp4", size: 1024 }).onerror();
+        h.context.openDialog(h.node("createDialog"));
+      }
+      recheck.resolve(outcome === "missing" || outcome === "failed"
+        ? new Response("Not confirmed", { status: outcome === "missing" ? 404 : 503 })
+        : { id: "original-job" });
+      await checking;
+      assert.equal(h.requests.slice(requestCount).every(request => request.method === "GET"), true);
+      assert.equal(h.submissionTimings.length, timingCount, "A receipt check is not a new submission timing");
+      if (["found", "refresh-failed"].includes(outcome)) {
+        assert.equal(h.context.location.hash, "#scene=original-job");
+        assert.equal(h.node("createDialog").open, false);
+        assert.equal(h.node("video").files.length, 0);
+        assert.equal(h.node("researchButton").textContent, "Create scene");
+        if (outcome === "refresh-failed") assert.match(h.node("toast").textContent, /queued.*couldn't refresh/);
+      } else {
+        assert.equal(h.node("createDialog").open, true);
+        assert.equal(h.state.selectedId, null);
+        if (["session", "capture"].includes(outcome)) {
+          assert.equal(h.node("video").files[0].name, "different.mp4");
+          assert.equal(h.node("researchButton").textContent, "Create scene");
+        } else {
+          assert.equal(h.node("researchButton").textContent, "Check scene status");
+          assert.equal(h.node("researchButton").disabled, false);
+          assert.match(h.node("researchMessage").textContent, /Check scene status/);
+          await h.submit();
+          assert.equal(lookups, 3, "An unresolved receipt remains available for another bounded check");
+          assert.equal(h.requests.slice(requestCount).every(request => request.method === "GET"), true);
+        }
+      }
+    }
+  }
   for (const [first, second] of [[502, 504], [504, "transport"], [502, "body"], ["transport", 502]]) {
     const h = harness();
     h.context.respond = async () => {

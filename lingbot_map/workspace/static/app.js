@@ -8,7 +8,7 @@ const state = {
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", jobCheckOffset: 0, accountType: "operator", config: null,
   reconstructionAllowance: null, accountRefresh: null, uploading: false, captureCheck: null,
-  capturePreviewUrl: null, retention: null, submissionTiming: null, detailCache: null, pendingResearch: null,
+  capturePreviewUrl: null, retention: null, submissionTiming: null, detailCache: null, pendingResearch: null, pendingUpload: null,
 };
 const timeline = new window.SceneTimeline(byId("timeline"), byId("viewModeLabel"));
 const terminalStates = new Set(["ready", "failed", "cancelled"]);
@@ -323,6 +323,7 @@ function secureReset() {
   state.retention = null;
   state.submissionTiming = null;
   state.pendingResearch = null;
+  state.pendingUpload = null;
   state.accountRefresh = null;
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
@@ -970,6 +971,8 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
 }
 
 const unconfirmedResearchMessage = "We couldn't confirm whether your scene was queued. Choose Check scene status to check again without resubmitting, or use Refresh scenes.";
+const unconfirmedUploadMessage = "We couldn't confirm whether your video was uploaded. No scene was submitted. Choose Check upload status to check again without uploading.";
+const confirmedUploadMessage = "Video uploaded. Choose Create scene to continue without uploading again.";
 
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
@@ -985,10 +988,12 @@ function renderReconstructionStatus() {
   byId("frameLimit").disabled = !canChoose;
   byId("capturePicker").classList.toggle("unavailable", !canChoose);
   const pending = state.pendingResearch && state.pendingResearch.file === byId("video").files[0];
-  byId("researchButton").disabled = pending ? state.uploading
+  const pendingUpload = state.pendingUpload && state.pendingUpload.file === byId("video").files[0] && !state.pendingUpload.asset;
+  byId("researchButton").disabled = pending || pendingUpload ? state.uploading
     : !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
   byId("researchButton").textContent = pending
-    ? (state.uploading ? "Checking scene status…" : "Check scene status") : "Create scene";
+    ? (state.uploading ? "Checking scene status…" : "Check scene status")
+    : pendingUpload ? (state.uploading ? "Checking upload status…" : "Check upload status") : "Create scene";
   const titles = { available: `${allowance?.remaining ?? 2} of ${allowance?.limit ?? 2} videos remaining`, processing: "Reconstruction in progress",
     used: "Both videos used", retry_later: "Try again later" };
   const unavailableReason = state.engine?.unavailableReasons?.join(" ")
@@ -1041,7 +1046,9 @@ function validateSelectedCapture() {
   byId("video").removeAttribute("aria-invalid");
   byId("captureMessage").textContent = "";
   if (state.pendingResearch?.file !== file) state.pendingResearch = null;
-  byId("researchMessage").textContent = state.pendingResearch ? unconfirmedResearchMessage : "";
+  if (state.pendingUpload?.file !== file) state.pendingUpload = null;
+  byId("researchMessage").textContent = state.pendingResearch ? unconfirmedResearchMessage
+    : state.pendingUpload ? (state.pendingUpload.asset ? confirmedUploadMessage : unconfirmedUploadMessage) : "";
   if (!file) { renderReconstructionStatus(); return; }
   const check = { file, status: "checking", cancel: null };
   state.captureCheck = check;
@@ -1193,6 +1200,8 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const file = byId("video").files[0];
   const selection = state.captureCheck, epoch = state.epoch;
   const pending = state.pendingResearch?.file === file ? state.pendingResearch : null;
+  const savedUpload = state.pendingUpload?.file === file ? state.pendingUpload : null;
+  const checkingUpload = savedUpload && !savedUpload.asset;
   if (!file || selection?.file !== file) return;
   const assertCurrent = () => {
     if (epoch !== state.epoch || state.captureCheck !== selection) throw new DOMException("Capture changed", "AbortError");
@@ -1201,7 +1210,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const started = performance.now();
   const timings = { preflightSeconds: null, uploadRequestSeconds: null, queueRequestSeconds: null };
   let phase = "preflight", recorded = false;
-  if (!pending) state.submissionTiming = null;
+  if (!pending && !checkingUpload) state.submissionTiming = null;
   const measure = async (stage, operation) => {
     phase = stage;
     const stageStarted = performance.now();
@@ -1209,7 +1218,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     finally { timings[`${stage}Seconds`] = (performance.now() - stageStarted) / 1000; }
   };
   const recordTiming = (outcome) => {
-    if (pending || recorded || epoch !== state.epoch) return;
+    if (pending || checkingUpload || recorded || epoch !== state.epoch) return;
     recorded = true;
     state.submissionTiming = Object.freeze({ ...timings,
       totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
@@ -1220,6 +1229,20 @@ byId("researchForm").addEventListener("submit", async (event) => {
   renderReconstructionStatus();
   byId("researchMessage").textContent = pending ? "Checking whether your scene was queued…" : "Checking your account before upload…";
   try {
+    if (checkingUpload) {
+      byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+      try {
+        const recovered = await api("/api/submissions/upload", { headers: savedUpload.headers, timeoutMs: 10000 });
+        assertCurrent();
+        savedUpload.asset = recovered;
+        byId("researchMessage").textContent = confirmedUploadMessage;
+      } catch (_) {
+        assertCurrent();
+        throw new Error(unconfirmedUploadMessage);
+      }
+      // Checking status is read-only. Scene creation requires another explicit click.
+      return;
+    }
     if (!pending) {
       await measure("preflight", () => refreshAccount({ fresh: true }));
       assertCurrent();
@@ -1233,27 +1256,32 @@ byId("researchForm").addEventListener("submit", async (event) => {
         recordTiming("blocked");
         return;
       }
-      byId("researchMessage").textContent = "Uploading video…";
-      const body = new FormData();
-      body.append("file", file);
-      const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
-      asset = await measure("uploadRequest", async () => {
-        try {
-          return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
-        } catch (error) {
-          assertCurrent();
-          if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
-          byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+      if (savedUpload?.asset) asset = savedUpload.asset;
+      else {
+        byId("researchMessage").textContent = "Uploading video…";
+        const body = new FormData();
+        body.append("file", file);
+        const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
+        asset = await measure("uploadRequest", async () => {
           try {
-            // Resolve the saved upload without sending the video again.
-            return await api("/api/submissions/upload", { headers: uploadHeaders, timeoutMs: 10000 });
-          } catch (_) {
+            return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
+          } catch (error) {
             assertCurrent();
-            throw new Error("We couldn't confirm whether your video was uploaded. No scene was submitted. Check Storage & shares before trying again.");
+            if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
+            state.pendingUpload = { file, headers: uploadHeaders, asset: null };
+            byId("researchMessage").textContent = "Checking whether your video was uploaded…";
+            try {
+              // Resolve the saved upload without sending the video again.
+              return await api("/api/submissions/upload", { headers: uploadHeaders, timeoutMs: 10000 });
+            } catch (_) {
+              assertCurrent();
+              throw new Error(unconfirmedUploadMessage);
+            }
           }
-        }
-      });
+        });
+      }
       assertCurrent();
+      state.pendingUpload = null;
       byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     }
     const queueHeaders = pending?.headers || { "Idempotency-Key": crypto.randomUUID() };

@@ -636,6 +636,108 @@ async function main() {
     }
   }
   for (const gate of ["available", "used"]) {
+    for (const outcome of ["found", "queue-rejected", "queue-uncertain", "missing", "failed", "session", "capture"]) {
+      const h = harness(), recheck = deferred();
+      let lookups = 0, uploadKey, checkingAgain = false, canQueue = true, keys = 0;
+      h.context.crypto.randomUUID = () => `upload-check-${++keys}`;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account(canQueue ? "available" : "used");
+        if (path === "/api/assets" && !checkingAgain) {
+          uploadKey = options.headers.get("Idempotency-Key");
+          return new Response("Acknowledgement lost", { status: 500 });
+        }
+        if (path === "/api/submissions/upload") {
+          assert.equal(options.method, "GET");
+          assert.equal(options.headers.get("Idempotency-Key"), uploadKey);
+          lookups++;
+          return lookups === 1 ? new Response("Still pending", { status: 404 }) : recheck.promise;
+        }
+        if (path === "/api/jobs/research") {
+          assert.ok(canQueue);
+          assert.equal(JSON.parse(options.body).assetId, "original-upload");
+          assert.notEqual(options.headers.get("Idempotency-Key"), uploadKey);
+          if (outcome === "queue-rejected") return new Response("Rejected", { status: 422 });
+          if (outcome === "queue-uncertain") return new Response("Lost acknowledgement", { status: 500 });
+          return { id: "original-job" };
+        }
+        if (path === "/api/submissions/research") return new Response("Still pending", { status: 404 });
+        if (path === "/api/assets/original-upload" && options.method === "DELETE") {
+          assert.equal(outcome, "queue-rejected"); return {};
+        }
+        if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "original-job", state: "queued", createdAt: 1 }], nextCursor: null };
+        if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+        assert.fail(`Upload status checks must not upload again or submit a scene: ${path}`);
+      };
+      h.context.engineResponse = async () => engines(canQueue);
+      h.select().onerror();
+      h.context.openDialog(h.node("createDialog"));
+      await h.submit();
+      assert.equal(lookups, 1);
+      assert.equal(h.node("researchButton").textContent, "Check upload status",
+        "An unconfirmed upload must retain its original read-only receipt action");
+      checkingAgain = true; canQueue = gate === "available";
+      await h.context.refreshAccount({ fresh: true });
+      h.context.validateSelectedCapture(); h.videos.at(-1).onerror();
+      h.node("createDialog").close(); await new Promise(setImmediate);
+      h.context.openDialog(h.node("createDialog"));
+      assert.equal(h.node("researchButton").disabled, false);
+      assert.match(h.node("researchMessage").textContent, /Check upload status/);
+      const count = h.requests.length, timingCount = h.submissionTimings.length;
+      const checking = h.submit();
+      await new Promise(setImmediate);
+      assert.equal(h.node("researchButton").textContent, "Checking upload status…");
+      assert.equal(h.node("researchButton").disabled, true);
+      assert.ok([...h.timers.values()].some(timer => timer.delay === 10000));
+      await h.submit(); assert.equal(lookups, 2);
+      if (outcome === "session") {
+        h.context.showLogin(); h.context.showApp(user, "new-csrf", allowance("available"));
+      }
+      if (["session", "capture"].includes(outcome)) {
+        h.select({ name: "different.mp4", size: 1024 }).onerror();
+        h.context.openDialog(h.node("createDialog"));
+      }
+      recheck.resolve(["missing", "failed"].includes(outcome)
+        ? new Response("Not confirmed", { status: outcome === "missing" ? 404 : 503 }) : { id: "original-upload" });
+      await checking;
+      assert.equal(h.requests.slice(count).every(request => request.method === "GET"), true);
+      assert.equal(h.submissionTimings.length, timingCount, "Receipt checks are not new submissions");
+      assert.equal(h.node("createDialog").open, true);
+      assert.equal(h.state.selectedId, null);
+      if (["missing", "failed"].includes(outcome)) {
+        assert.equal(h.node("researchButton").textContent, "Check upload status");
+        await h.submit(); assert.equal(lookups, 3);
+        assert.equal(h.requests.slice(count).every(request => request.method === "GET"), true);
+      } else if (["session", "capture"].includes(outcome)) {
+        assert.equal(h.node("video").files[0].name, "different.mp4");
+        assert.equal(h.state.pendingUpload, null);
+      } else {
+        assert.equal(h.node("researchButton").textContent, "Create scene");
+        assert.equal(h.node("researchButton").disabled, gate !== "available");
+        h.context.validateSelectedCapture(); h.videos.at(-1).onerror();
+        assert.match(h.node("researchMessage").textContent, /Video uploaded.*Create scene/);
+        // Even a newly lost allowance must be rechecked before creating from a saved upload.
+        canQueue = false;
+        await h.submit();
+        assert.equal(h.requests.some(request => request.path === "/api/jobs/research"), false);
+        assert.equal(h.state.pendingUpload.asset.id, "original-upload");
+        canQueue = true; await h.context.refreshAccount({ fresh: true });
+        await h.submit();
+        assert.equal(h.requests.filter(request => request.path === "/api/assets" && request.method === "POST").length, 1);
+        assert.equal(h.requests.filter(request => request.path === "/api/jobs/research").length, 1);
+        assert.equal(h.state.pendingUpload, null);
+        if (outcome === "found") {
+          assert.equal(h.context.location.hash, "#scene=original-job");
+          assert.equal(h.node("createDialog").open, false);
+          assert.equal(h.node("video").files.length, 0);
+          assert.equal(h.state.submissionTiming.uploadRequestSeconds, null, "Reused bytes have no new upload duration");
+        } else {
+          assert.equal(h.requests.some(request => request.method === "DELETE"), outcome === "queue-rejected");
+          assert.equal(h.node("researchButton").textContent, outcome === "queue-rejected" ? "Create scene" : "Check scene status");
+        }
+      }
+    }
+  }
+  for (const gate of ["available", "used"]) {
     for (const outcome of ["found", "refresh-failed", "missing", "failed", "session", "capture"]) {
       const h = harness(), recheck = deferred();
       let lookups = 0, queueKey, checkingAgain = false;

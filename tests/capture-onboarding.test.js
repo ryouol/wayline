@@ -20,7 +20,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-function harness(search = "") {
+function harness(search = "", storage = new Map()) {
   const nodes = new Map(), timers = new Map(), windowEvents = new Map(), documentEvents = new Map();
   const videos = [], createdUrls = [], revokedUrls = [], requests = [];
   const historyEntries = [], scrolls = [], submissionTimings = [];
@@ -111,6 +111,8 @@ function harness(search = "") {
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     crypto: { randomUUID: () => "request-id" }, location, history, setTimeout, clearTimeout,
     localStorage: { setItem() {}, removeItem() {} },
+    sessionStorage: { getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) },
     FormData: class { append() {} },
     window: { location, setTimeout, clearTimeout, addEventListener: (name, callback) => windowEvents.set(name, callback),
       scrollTo: (options) => scrolls.push(options),
@@ -129,7 +131,7 @@ function harness(search = "") {
       requests.push({ path, method: options.method || "GET", options });
       const result = await (path === "/api/engines" ? context.engineResponse() : context.respond(path, options));
       if (result instanceof Response) return result;
-      return { ok: true, status: 200, headers: new Headers(), json: async () => result };
+      return { ok: true, status: 200, headers: new Headers(context.principalMarker ? { "X-Workspace-Principal": context.principalMarker } : {}), json: async () => result };
     },
     engineResponse: async () => engines(),
     respond: async (path) => {
@@ -166,6 +168,143 @@ function harness(search = "") {
 }
 
 async function main() {
+  const receiptStorageKey = "wayline-pending-research-v1";
+  const marker = "a".repeat(64);
+  const receiptRecord = { version: 1, principal: marker, key: "original-queue-key" };
+  const reloadHarness = (storage, gate = "available") => {
+    const h = harness("#scenes", storage);
+    h.context.principalMarker = marker;
+    h.context.engineResponse = async () => engines(gate === "available");
+    h.context.respond = async path => {
+      if (path === "/api/me") return account(gate);
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      if (path.startsWith("/api/shares?")) return { shares: [], nextCursor: null };
+      assert.fail(`Unexpected reload request: ${path}`);
+    };
+    return h;
+  };
+  for (const gate of ["available", "used"]) {
+    for (const outcome of ["found", "refresh-failed", "missing", "failed", "session", "capture", "unauthorized"]) {
+      const storage = new Map(), initial = harness("", storage);
+      initial.state.principalMarker = marker;
+      initial.context.crypto.randomUUID = () => "original-queue-key";
+      let savedBeforePost = false;
+      initial.context.respond = async path => {
+        if (path === "/api/me") return account("available");
+        if (path === "/api/assets") return { id: "accepted-upload" };
+        if (path === "/api/jobs/research") {
+          savedBeforePost = storage.get(receiptStorageKey) === JSON.stringify(receiptRecord);
+          return new Response("Lost queue acknowledgement", { status: 500 });
+        }
+        if (path === "/api/submissions/research") return new Response("Pending", { status: 404 });
+        assert.fail(`Unexpected initial request: ${path}`);
+      };
+      initial.select().onerror(); await initial.submit();
+      assert.ok(savedBeforePost, "Save the queue receipt before sending, so an in-flight reload is recoverable");
+      assert.deepEqual(JSON.parse(storage.get(receiptStorageKey)), receiptRecord,
+        "Persist only version, account marker and request identity, never video, filename or credentials");
+      const h = reloadHarness(storage, gate), lookup = deferred();
+      await h.context.initialize();
+      assert.equal(h.node("video").files.length, 0);
+      assert.equal(h.node("createDialog").open, true, "Reload should expose the retained status action");
+      assert.equal(h.node("researchButton").textContent, "Check scene status");
+      assert.equal(h.node("researchButton").disabled, false);
+      assert.match(h.node("researchMessage").textContent, /Check scene status/);
+      const before = h.requests.length;
+      const standard = h.context.respond;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/submissions/research") {
+          assert.equal(options.method, "GET");
+          assert.equal(options.headers.get("Idempotency-Key"), receiptRecord.key);
+          return lookup.promise;
+        }
+        if (path.startsWith("/api/jobs?") && outcome === "refresh-failed") return new Response("Unavailable", { status: 503 });
+        return standard(path, options);
+      };
+      const checking = h.submit(); await new Promise(setImmediate);
+      await h.submit();
+      assert.equal(h.requests.filter(r => r.path === "/api/submissions/research").length, 1);
+      assert.ok([...h.timers.values()].some(timer => timer.delay === 10000));
+      if (outcome === "session") h.context.showLogin();
+      if (outcome === "capture") h.select({ name: "another.mp4", size: 1024 }).onerror();
+      lookup.resolve(["missing", "failed", "unauthorized"].includes(outcome)
+        ? new Response("Not confirmed", { status: { missing: 404, failed: 503, unauthorized: 401 }[outcome] }) : { id: "recovered-after-reload" });
+      await checking;
+      assert.ok(h.requests.slice(before).every(r => r.method === "GET"));
+      assert.equal(h.submissionTimings.length, 0);
+      if (["found", "refresh-failed"].includes(outcome)) {
+        assert.equal(h.context.location.hash, "#scene=recovered-after-reload");
+        assert.equal(h.node("createDialog").open, false);
+        assert.equal(storage.has(receiptStorageKey), false);
+      } else if (["missing", "failed"].includes(outcome)) {
+        assert.equal(h.node("researchButton").textContent, "Check scene status");
+        assert.deepEqual(JSON.parse(storage.get(receiptStorageKey)), receiptRecord);
+        const again = reloadHarness(storage, gate); await again.context.initialize();
+        assert.equal(again.node("researchButton").textContent, "Check scene status");
+      } else {
+        assert.equal(storage.has(receiptStorageKey), false);
+        assert.equal(h.state.pendingResearch, null);
+        assert.equal(h.state.selectedId, null);
+      }
+    }
+  }
+  for (const invalid of ["{", "null", JSON.stringify({ ...receiptRecord, version: 2 }),
+    JSON.stringify({ ...receiptRecord, principal: "another-account" }),
+    JSON.stringify({ ...receiptRecord, key: "short" }), JSON.stringify({ ...receiptRecord, key: "x".repeat(201) }),
+    JSON.stringify({ ...receiptRecord, key: "invalid\\header" }), JSON.stringify({ ...receiptRecord, key: null })]) {
+    const storage = new Map([[receiptStorageKey, invalid]]), h = reloadHarness(storage);
+    await h.context.initialize();
+    assert.equal(h.state.pendingResearch, null);
+    assert.equal(storage.has(receiptStorageKey), false);
+    assert.equal(h.node("researchButton").textContent, "Create scene");
+    assert.ok(h.requests.every(r => r.method === "GET" && !r.path.startsWith("/api/submissions/")));
+  }
+  for (const failure of ["network", "unauthorized", "no-marker", "storage-unavailable"]) {
+    const storage = new Map([[receiptStorageKey, JSON.stringify(receiptRecord)]]), h = reloadHarness(storage);
+    const standard = h.context.respond;
+    if (failure === "no-marker") h.context.principalMarker = "";
+    if (failure === "storage-unavailable") h.context.sessionStorage.getItem = () => { throw new Error("Storage blocked"); };
+    h.context.respond = async (path, options) => {
+      if (path === "/api/me" && failure === "network") throw new TypeError("Offline");
+      if (path === "/api/me" && failure === "unauthorized") return new Response("Signed out", { status: 401 });
+      return standard(path, options);
+    };
+    await h.context.initialize();
+    assert.equal(h.state.pendingResearch, null);
+    assert.equal(h.node("researchButton").textContent, "Create scene");
+    if (failure === "network") {
+      assert.deepEqual(JSON.parse(storage.get(receiptStorageKey)), receiptRecord,
+        "A transient startup failure must not erase the unconfirmed operation");
+      h.context.respond = standard;
+      await h.context.initialize();
+      assert.equal(h.node("researchButton").textContent, "Check scene status");
+    } else assert.equal(storage.has(receiptStorageKey), false);
+  }
+  for (const outcome of ["accepted", "rejected", "storage-unavailable"]) {
+    const storage = new Map(), h = harness("", storage);
+    h.state.principalMarker = marker;
+    if (outcome === "storage-unavailable") {
+      h.context.sessionStorage.setItem = () => { throw new Error("Storage full"); };
+      h.context.sessionStorage.removeItem = () => { throw new Error("Storage blocked"); };
+    }
+    h.context.respond = async (path, options) => {
+      if (path === "/api/me") return account("available");
+      if (path === "/api/assets") return { id: "saved-upload" };
+      if (path === "/api/jobs/research") return outcome === "accepted" ? { id: "accepted-scene" }
+        : new Response("Not acknowledged", { status: outcome === "rejected" ? 422 : 500 });
+      if (path === "/api/submissions/research") return new Response("Pending", { status: 404 });
+      if (path === "/api/assets/saved-upload" && options.method === "DELETE") return {};
+      if (path.startsWith("/api/jobs?")) return { jobs: [], nextCursor: null };
+      if (path.startsWith("/api/assets?")) return { assets: [], nextCursor: null };
+      assert.fail(`Unexpected request: ${path}`);
+    };
+    h.select().onerror(); await h.submit();
+    assert.equal(storage.has(receiptStorageKey), false);
+    assert.equal(h.node("researchButton").textContent, outcome === "storage-unavailable" ? "Check scene status" : "Create scene");
+    if (outcome === "accepted") assert.equal(h.context.location.hash, "#scene=accepted-scene");
+    if (outcome === "rejected") assert.ok(h.requests.some(r => r.method === "DELETE"));
+  }
   // Private navigation must survive reload without depending on a loaded library page.
   const navigationJobs = Array.from({ length: 30 }, (_, i) => ({ id: `nav-${i}`, displayName: `Scene ${i}`,
     state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 - i, artifacts: [] }));

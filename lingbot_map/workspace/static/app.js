@@ -314,7 +314,7 @@ function updateSceneLocation(jobId, { replace = false } = {}) {
 
 const compareJobs = (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-function secureReset() {
+function secureReset({ preserveRecovery = false } = {}) {
   if (state.principal && sceneIdFromLocation()) updateSceneLocation(null, { replace: true });
   state.epoch += 1;
   cancelCaptureCheck();
@@ -322,7 +322,8 @@ function secureReset() {
   state.reconstructionAllowance = null;
   state.retention = null;
   state.submissionTiming = null;
-  state.pendingResearch = null;
+  if (preserveRecovery) state.pendingResearch = null;
+  else clearPendingResearch();
   state.pendingUpload = null;
   state.accountRefresh = null;
   state.uploading = false;
@@ -380,8 +381,8 @@ function secureReset() {
   clearDetail();
 }
 
-function showLogin() {
-  secureReset();
+function showLogin({ preserveRecovery = false } = {}) {
+  secureReset({ preserveRecovery });
   byId("appView").hidden = true;
   byId("mobileWorkspaceCta").hidden = true;
   renderPublicRoute();
@@ -973,6 +974,38 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
 const unconfirmedResearchMessage = "We couldn't confirm whether your scene was queued. Choose Check scene status to check again without resubmitting, or use Refresh scenes.";
 const unconfirmedUploadMessage = "We couldn't confirm whether your video was uploaded. No scene was submitted. Choose Check upload status to check again without uploading.";
 const confirmedUploadMessage = "Video uploaded. Choose Create scene to continue without uploading again.";
+const pendingResearchStorageKey = "wayline-pending-research-v1";
+
+function clearPendingResearch() {
+  state.pendingResearch = null;
+  try { sessionStorage.removeItem(pendingResearchStorageKey); } catch (_) { /* storage may be unavailable */ }
+}
+
+function rememberPendingResearch(file, headers) {
+  state.pendingResearch = { file, headers };
+  if (!state.principalMarker) return;
+  try {
+    // This tab retains only receipt identity, never video bytes or credentials.
+    sessionStorage.setItem(pendingResearchStorageKey, JSON.stringify({ version: 1,
+      principal: state.principalMarker, key: headers["Idempotency-Key"] }));
+  } catch (_) { /* same-page recovery remains available without browser storage */ }
+}
+
+function restorePendingResearch() {
+  if (state.pendingResearch) return;
+  try {
+    const raw = sessionStorage.getItem(pendingResearchStorageKey);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved?.version !== 1 || !state.principalMarker || saved.principal !== state.principalMarker
+        || typeof saved.key !== "string" || !/^[a-z0-9-]{8,200}$/i.test(saved.key)) {
+      clearPendingResearch();
+      return;
+    }
+    state.pendingResearch = { headers: { "Idempotency-Key": saved.key } };
+    validateSelectedCapture();
+  } catch (_) { clearPendingResearch(); }
+}
 
 function renderReconstructionStatus() {
   const trial = state.accountType === "trial";
@@ -1045,7 +1078,7 @@ function validateSelectedCapture() {
   byId("selectedFilename").textContent = file ? file.name : "Choose a video";
   byId("video").removeAttribute("aria-invalid");
   byId("captureMessage").textContent = "";
-  if (state.pendingResearch?.file !== file) state.pendingResearch = null;
+  if (state.pendingResearch && state.pendingResearch.file !== file) clearPendingResearch();
   if (state.pendingUpload?.file !== file) state.pendingUpload = null;
   byId("researchMessage").textContent = state.pendingResearch ? unconfirmedResearchMessage
     : state.pendingUpload ? (state.pendingUpload.asset ? confirmedUploadMessage : unconfirmedUploadMessage) : "";
@@ -1106,9 +1139,12 @@ async function initialize() {
   try {
     await refreshAccount();
   } catch (_) {
-    showLogin();
+    // A transient startup read failure must not erase a saved receipt. A 401
+    // already clears recovery through api() before reaching this catch.
+    showLogin({ preserveRecovery: true });
     return;
   }
+  restorePendingResearch();
   const linkedScene = sceneIdFromLocation(), restoreHome = location.hash === "#scenes";
   clearDetail();
   state.selectedId = linkedScene;
@@ -1116,6 +1152,7 @@ async function initialize() {
     await Promise.all([loadJobs({ selectNewest: !linkedScene && !restoreHome }), loadInventory()]);
     if (!linkedScene && !restoreHome && state.accountType === "google" && !state.jobs.length) openCreateScene({ refresh: false });
   } catch (error) { report(error); }
+  if (state.pendingResearch) openCreateScene({ refresh: false });
 }
 
 byId("loginForm").addEventListener("submit", async (event) => {
@@ -1202,9 +1239,10 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const pending = state.pendingResearch?.file === file ? state.pendingResearch : null;
   const savedUpload = state.pendingUpload?.file === file ? state.pendingUpload : null;
   const checkingUpload = savedUpload && !savedUpload.asset;
-  if (!file || selection?.file !== file) return;
+  if (!pending && (!file || selection?.file !== file)) return;
   const assertCurrent = () => {
-    if (epoch !== state.epoch || state.captureCheck !== selection) throw new DOMException("Capture changed", "AbortError");
+    if (epoch !== state.epoch || state.captureCheck !== selection
+        || (pending && !queued && state.pendingResearch !== pending)) throw new DOMException("Capture changed", "AbortError");
   };
   const params = { extractFps: Number(byId("sampleFps").value), maxFrames: Number(byId("frameLimit").value) };
   const started = performance.now();
@@ -1287,6 +1325,8 @@ byId("researchForm").addEventListener("submit", async (event) => {
     const queueHeaders = pending?.headers || { "Idempotency-Key": crypto.randomUUID() };
     const job = await measure("queueRequest", async () => {
       if (!pending) {
+        // Save before sending so a reload during the request can still check it.
+        rememberPendingResearch(file, queueHeaders);
         try {
           return await api("/api/jobs/research", {
             method: "POST", idempotent: true, headers: queueHeaders,
@@ -1296,7 +1336,6 @@ byId("researchForm").addEventListener("submit", async (event) => {
           assertCurrent();
           if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
           uncertainQueue = true;
-          state.pendingResearch = { file, headers: queueHeaders };
         }
       }
       byId("researchMessage").textContent = "Checking whether your scene was queued…";
@@ -1314,7 +1353,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     updateSceneLocation(job.id);
     asset = null;
     queued = true;
-    state.pendingResearch = null;
+    clearPendingResearch();
     recordTiming("queued");
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();
@@ -1324,6 +1363,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (queued) return;
     if (asset && !uncertainQueue) {
+      clearPendingResearch();
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }

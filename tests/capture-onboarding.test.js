@@ -209,6 +209,8 @@ async function main() {
       assert.equal(h.node("video").files.length, 0);
       assert.equal(h.node("createDialog").open, true, "Reload should expose the retained status action");
       assert.equal(h.node("researchButton").textContent, "Check scene status");
+      assert.equal(h.node("video").required, false);
+      assert.equal(h.node("researchButton").formNoValidate, true);
       assert.equal(h.node("researchButton").disabled, false);
       assert.match(h.node("researchMessage").textContent, /Check scene status/);
       const before = h.requests.length;
@@ -304,6 +306,159 @@ async function main() {
     assert.equal(h.node("researchButton").textContent, outcome === "storage-unavailable" ? "Check scene status" : "Create scene");
     if (outcome === "accepted") assert.equal(h.context.location.hash, "#scene=accepted-scene");
     if (outcome === "rejected") assert.ok(h.requests.some(r => r.method === "DELETE"));
+  }
+  const uploadStorageKey = "wayline-pending-upload-v1";
+  const uploadRecord = { version: 1, principal: marker, key: "original-upload-key" };
+  for (const gate of ["available", "used"]) {
+    for (const outcome of ["found", "queue-rejected", "queue-uncertain", "missing", "failed", "session", "capture", "unauthorized"]) {
+      const storage = new Map(), initial = harness("", storage);
+      initial.state.principalMarker = marker;
+      initial.context.crypto.randomUUID = () => uploadRecord.key;
+      let savedBeforePost = false;
+      initial.context.respond = async path => {
+        if (path === "/api/me") return account("available");
+        if (path === "/api/assets") {
+          savedBeforePost = storage.get(uploadStorageKey) === JSON.stringify(uploadRecord);
+          return new Response("Lost acknowledgement", { status: 500 });
+        }
+        if (path === "/api/submissions/upload") return new Response("Pending", { status: 404 });
+        assert.fail(`Unexpected initial upload request: ${path}`);
+      };
+      initial.select().onerror(); await initial.submit();
+      assert.ok(savedBeforePost, "Save the upload receipt before transfer, so an in-flight reload is recoverable");
+      assert.deepEqual(JSON.parse(storage.get(uploadStorageKey)), uploadRecord,
+        "Store receipt identity only, never file metadata, bytes, assets or credentials");
+      const h = reloadHarness(storage, gate), lookup = deferred();
+      await h.context.initialize();
+      assert.equal(h.node("video").files.length, 0);
+      assert.equal(h.node("createDialog").open, true);
+      assert.equal(h.node("researchButton").textContent, "Check upload status");
+      assert.equal(h.node("video").required, false);
+      assert.equal(h.node("researchButton").formNoValidate, true);
+      assert.equal(h.node("researchButton").disabled, false);
+      const standard = h.context.respond, before = h.requests.length;
+      let canQueue = gate === "available";
+      h.context.engineResponse = async () => engines(canQueue);
+      h.context.respond = async (path, options) => {
+        if (path === "/api/me") return account(canQueue ? "available" : "used");
+        if (path === "/api/submissions/upload") {
+          assert.equal(options.headers.get("Idempotency-Key"), uploadRecord.key);
+          return lookup.promise;
+        }
+        if (path === "/api/jobs/research") {
+          assert.ok(canQueue);
+          assert.equal(JSON.parse(options.body).assetId, "recovered-upload");
+          assert.notEqual(options.headers.get("Idempotency-Key"), uploadRecord.key);
+          assert.ok(storage.has(receiptStorageKey), "Persist queue identity before the queue POST");
+          assert.equal(storage.has(uploadStorageKey), false, "Queue identity supersedes upload recovery");
+          return outcome === "found" ? { id: "recovered-upload-scene" }
+            : new Response("Not acknowledged", { status: outcome === "queue-rejected" ? 422 : 500 });
+        }
+        if (path === "/api/submissions/research") return new Response("Pending", { status: 404 });
+        if (path === "/api/assets/recovered-upload" && options.method === "DELETE") {
+          assert.equal(outcome, "queue-rejected"); return {};
+        }
+        return standard(path, options);
+      };
+      const checking = h.submit(); await new Promise(setImmediate);
+      await h.submit();
+      assert.equal(h.requests.filter(r => r.path === "/api/submissions/upload").length, 1);
+      assert.ok([...h.timers.values()].some(timer => timer.delay === 10000));
+      if (outcome === "session") h.context.showLogin();
+      if (outcome === "capture") h.select({ name: "another.mp4", size: 1024 }).onerror();
+      lookup.resolve(["missing", "failed", "unauthorized"].includes(outcome)
+        ? new Response("Not confirmed", { status: { missing: 404, failed: 503, unauthorized: 401 }[outcome] })
+        : { id: "recovered-upload" });
+      await checking;
+      assert.ok(h.requests.slice(before).every(r => r.method === "GET"));
+      assert.equal(h.submissionTimings.length, 0, "Status checks cannot submit or emit new submission timing");
+      if (["found", "queue-rejected", "queue-uncertain"].includes(outcome)) {
+        assert.equal(h.node("researchButton").textContent, "Create scene");
+        assert.equal(h.node("researchButton").disabled, gate !== "available");
+        assert.equal(h.node("video").required, false);
+        assert.equal(h.node("researchButton").formNoValidate, false, "Creating a scene still validates settings");
+        assert.deepEqual(JSON.parse(storage.get(uploadStorageKey)), uploadRecord);
+        const again = reloadHarness(storage, gate); await again.context.initialize();
+        assert.equal(again.node("researchButton").textContent, "Check upload status",
+          "Another reload must revalidate the upload receipt before creating a scene");
+        canQueue = false; await h.submit();
+        assert.equal(h.requests.some(r => r.path === "/api/jobs/research"), false);
+        assert.equal(h.state.pendingUpload.asset.id, "recovered-upload");
+        canQueue = true; await h.context.refreshAccount({ fresh: true });
+        await h.submit();
+        assert.equal(h.requests.some(r => r.path === "/api/assets" && r.method === "POST"), false);
+        assert.equal(h.requests.filter(r => r.path === "/api/jobs/research").length, 1);
+        assert.equal(storage.has(uploadStorageKey), false);
+        assert.equal(storage.has(receiptStorageKey), outcome === "queue-uncertain");
+        assert.equal(h.requests.some(r => r.method === "DELETE"), outcome === "queue-rejected");
+        if (outcome === "found") {
+          assert.equal(h.context.location.hash, "#scene=recovered-upload-scene");
+          assert.equal(h.node("createDialog").open, false);
+          assert.equal(h.state.submissionTiming.uploadRequestSeconds, null);
+        }
+      } else if (["missing", "failed"].includes(outcome)) {
+        assert.equal(h.node("researchButton").textContent, "Check upload status");
+        const again = reloadHarness(storage, gate); await again.context.initialize();
+        assert.equal(again.node("researchButton").textContent, "Check upload status");
+      } else {
+        assert.equal(storage.has(uploadStorageKey), false);
+        assert.equal(h.state.pendingUpload, null);
+        assert.equal(h.state.selectedId, null);
+      }
+    }
+  }
+  for (const invalid of ["{", "null", JSON.stringify({ ...uploadRecord, version: 2 }),
+    JSON.stringify({ ...uploadRecord, principal: "another-account" }),
+    JSON.stringify({ ...uploadRecord, key: "short" }), JSON.stringify({ ...uploadRecord, key: "x".repeat(201) }),
+    JSON.stringify({ ...uploadRecord, key: "invalid\\header" }), JSON.stringify({ ...uploadRecord, key: null })]) {
+    const storage = new Map([[uploadStorageKey, invalid]]), h = reloadHarness(storage);
+    await h.context.initialize();
+    assert.equal(h.state.pendingUpload, null);
+    assert.equal(storage.has(uploadStorageKey), false);
+    assert.ok(h.requests.every(r => r.method === "GET" && !r.path.startsWith("/api/submissions/")));
+  }
+  for (const failure of ["network", "unauthorized", "no-marker", "storage-unavailable"]) {
+    const storage = new Map([[uploadStorageKey, JSON.stringify(uploadRecord)]]), h = reloadHarness(storage);
+    const standard = h.context.respond;
+    if (failure === "no-marker") h.context.principalMarker = "";
+    if (failure === "storage-unavailable") h.context.sessionStorage.getItem = () => { throw new Error("Storage blocked"); };
+    h.context.respond = async (path, options) => {
+      if (path === "/api/me" && failure === "network") throw new TypeError("Offline");
+      if (path === "/api/me" && failure === "unauthorized") return new Response("Signed out", { status: 401 });
+      return standard(path, options);
+    };
+    await h.context.initialize();
+    assert.equal(h.state.pendingUpload, null);
+    if (failure === "network") {
+      assert.deepEqual(JSON.parse(storage.get(uploadStorageKey)), uploadRecord);
+      h.context.respond = standard;
+      await h.context.initialize();
+      assert.equal(h.node("researchButton").textContent, "Check upload status");
+    } else assert.equal(storage.has(uploadStorageKey), false);
+  }
+  for (const outcome of ["accepted", "rejected", "storage-unavailable"]) {
+    const storage = new Map(), h = reloadHarness(storage);
+    await h.context.initialize();
+    if (outcome === "storage-unavailable") h.context.sessionStorage.setItem = () => { throw new Error("Storage full"); };
+    const standard = h.context.respond;
+    h.context.respond = async (path, options) => {
+      if (path === "/api/assets") return outcome === "accepted" ? { id: "saved-upload" }
+        : new Response("Not acknowledged", { status: outcome === "rejected" ? 422 : 500 });
+      if (path === "/api/submissions/upload") return new Response("Pending", { status: 404 });
+      if (path === "/api/jobs/research") return { id: "saved-scene" };
+      return standard(path, options);
+    };
+    h.select().onerror(); await h.submit();
+    assert.equal(storage.has(uploadStorageKey), false);
+    assert.equal(h.node("researchButton").textContent, outcome === "storage-unavailable" ? "Check upload status" : "Create scene");
+  }
+  {
+    // A crash between persisting the queue identity and removing the upload must not restore both.
+    const storage = new Map([[uploadStorageKey, JSON.stringify(uploadRecord)], [receiptStorageKey, JSON.stringify(receiptRecord)]]);
+    const h = reloadHarness(storage); await h.context.initialize();
+    assert.equal(h.node("researchButton").textContent, "Check scene status");
+    assert.equal(h.state.pendingUpload, null);
+    assert.equal(storage.has(uploadStorageKey), false);
   }
   // Private navigation must survive reload without depending on a loaded library page.
   const navigationJobs = Array.from({ length: 30 }, (_, i) => ({ id: `nav-${i}`, displayName: `Scene ${i}`,

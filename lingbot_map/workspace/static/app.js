@@ -322,9 +322,10 @@ function secureReset({ preserveRecovery = false } = {}) {
   state.reconstructionAllowance = null;
   state.retention = null;
   state.submissionTiming = null;
-  if (preserveRecovery) state.pendingResearch = null;
-  else clearPendingResearch();
-  state.pendingUpload = null;
+  for (const field of ["pendingResearch", "pendingUpload"]) {
+    if (preserveRecovery) state[field] = null;
+    else clearPendingSubmission(field);
+  }
   state.accountRefresh = null;
   state.uploading = false;
   state.controllers.forEach((controller) => controller.abort());
@@ -974,37 +975,43 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
 const unconfirmedResearchMessage = "We couldn't confirm whether your scene was queued. Choose Check scene status to check again without resubmitting, or use Refresh scenes.";
 const unconfirmedUploadMessage = "We couldn't confirm whether your video was uploaded. No scene was submitted. Choose Check upload status to check again without uploading.";
 const confirmedUploadMessage = "Video uploaded. Choose Create scene to continue without uploading again.";
-const pendingResearchStorageKey = "wayline-pending-research-v1";
+const pendingSubmissionStorageKeys = {
+  pendingResearch: "wayline-pending-research-v1", pendingUpload: "wayline-pending-upload-v1",
+};
 
-function clearPendingResearch() {
-  state.pendingResearch = null;
-  try { sessionStorage.removeItem(pendingResearchStorageKey); } catch (_) { /* storage may be unavailable */ }
+function clearPendingSubmission(field) {
+  state[field] = null;
+  try { sessionStorage.removeItem(pendingSubmissionStorageKeys[field]); } catch (_) { /* storage may be unavailable */ }
 }
 
-function rememberPendingResearch(file, headers) {
-  state.pendingResearch = { file, headers };
+function rememberPendingSubmission(field, file, headers) {
+  state[field] = { file, headers };
   if (!state.principalMarker) return;
   try {
     // This tab retains only receipt identity, never video bytes or credentials.
-    sessionStorage.setItem(pendingResearchStorageKey, JSON.stringify({ version: 1,
+    sessionStorage.setItem(pendingSubmissionStorageKeys[field], JSON.stringify({ version: 1,
       principal: state.principalMarker, key: headers["Idempotency-Key"] }));
   } catch (_) { /* same-page recovery remains available without browser storage */ }
 }
 
-function restorePendingResearch() {
-  if (state.pendingResearch) return;
-  try {
-    const raw = sessionStorage.getItem(pendingResearchStorageKey);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    if (saved?.version !== 1 || !state.principalMarker || saved.principal !== state.principalMarker
-        || typeof saved.key !== "string" || !/^[a-z0-9-]{8,200}$/i.test(saved.key)) {
-      clearPendingResearch();
-      return;
-    }
-    state.pendingResearch = { headers: { "Idempotency-Key": saved.key } };
-    validateSelectedCapture();
-  } catch (_) { clearPendingResearch(); }
+function restorePendingSubmissions() {
+  for (const [field, storageKey] of Object.entries(pendingSubmissionStorageKeys)) {
+    // A queue receipt supersedes its upload, including a reload during handoff.
+    if (field === "pendingUpload" && state.pendingResearch) { clearPendingSubmission(field); continue; }
+    if (state[field]) continue;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (!raw) continue;
+      const saved = JSON.parse(raw);
+      if (saved?.version !== 1 || !state.principalMarker || saved.principal !== state.principalMarker
+          || typeof saved.key !== "string" || !/^[a-z0-9-]{8,200}$/i.test(saved.key)) {
+        clearPendingSubmission(field);
+        continue;
+      }
+      state[field] = { headers: { "Idempotency-Key": saved.key } };
+    } catch (_) { clearPendingSubmission(field); }
+  }
+  if (state.pendingResearch || state.pendingUpload) validateSelectedCapture();
 }
 
 function renderReconstructionStatus() {
@@ -1021,12 +1028,15 @@ function renderReconstructionStatus() {
   byId("frameLimit").disabled = !canChoose;
   byId("capturePicker").classList.toggle("unavailable", !canChoose);
   const pending = state.pendingResearch && state.pendingResearch.file === byId("video").files[0];
-  const pendingUpload = state.pendingUpload && state.pendingUpload.file === byId("video").files[0] && !state.pendingUpload.asset;
-  byId("researchButton").disabled = pending || pendingUpload ? state.uploading
-    : !canChoose || !["valid", "fallback"].includes(state.captureCheck?.status);
+  const pendingUpload = state.pendingUpload?.file === byId("video").files[0] ? state.pendingUpload : null;
+  const checkingReceipt = pending || (pendingUpload && !pendingUpload.asset);
+  byId("video").required = !pending && !pendingUpload;
+  byId("researchButton").formNoValidate = Boolean(checkingReceipt);
+  byId("researchButton").disabled = checkingReceipt ? state.uploading
+    : !canChoose || (!pendingUpload?.asset && !["valid", "fallback"].includes(state.captureCheck?.status));
   byId("researchButton").textContent = pending
     ? (state.uploading ? "Checking scene status…" : "Check scene status")
-    : pendingUpload ? (state.uploading ? "Checking upload status…" : "Check upload status") : "Create scene";
+    : pendingUpload && !pendingUpload.asset ? (state.uploading ? "Checking upload status…" : "Check upload status") : "Create scene";
   const titles = { available: `${allowance?.remaining ?? 2} of ${allowance?.limit ?? 2} videos remaining`, processing: "Reconstruction in progress",
     used: "Both videos used", retry_later: "Try again later" };
   const unavailableReason = state.engine?.unavailableReasons?.join(" ")
@@ -1078,8 +1088,8 @@ function validateSelectedCapture() {
   byId("selectedFilename").textContent = file ? file.name : "Choose a video";
   byId("video").removeAttribute("aria-invalid");
   byId("captureMessage").textContent = "";
-  if (state.pendingResearch && state.pendingResearch.file !== file) clearPendingResearch();
-  if (state.pendingUpload?.file !== file) state.pendingUpload = null;
+  if (state.pendingResearch && state.pendingResearch.file !== file) clearPendingSubmission("pendingResearch");
+  if (state.pendingUpload && state.pendingUpload.file !== file) clearPendingSubmission("pendingUpload");
   byId("researchMessage").textContent = state.pendingResearch ? unconfirmedResearchMessage
     : state.pendingUpload ? (state.pendingUpload.asset ? confirmedUploadMessage : unconfirmedUploadMessage) : "";
   if (!file) { renderReconstructionStatus(); return; }
@@ -1144,7 +1154,7 @@ async function initialize() {
     showLogin({ preserveRecovery: true });
     return;
   }
-  restorePendingResearch();
+  restorePendingSubmissions();
   const linkedScene = sceneIdFromLocation(), restoreHome = location.hash === "#scenes";
   clearDetail();
   state.selectedId = linkedScene;
@@ -1152,7 +1162,7 @@ async function initialize() {
     await Promise.all([loadJobs({ selectNewest: !linkedScene && !restoreHome }), loadInventory()]);
     if (!linkedScene && !restoreHome && state.accountType === "google" && !state.jobs.length) openCreateScene({ refresh: false });
   } catch (error) { report(error); }
-  if (state.pendingResearch) openCreateScene({ refresh: false });
+  if (state.pendingResearch || state.pendingUpload) openCreateScene({ refresh: false });
 }
 
 byId("loginForm").addEventListener("submit", async (event) => {
@@ -1239,10 +1249,11 @@ byId("researchForm").addEventListener("submit", async (event) => {
   const pending = state.pendingResearch?.file === file ? state.pendingResearch : null;
   const savedUpload = state.pendingUpload?.file === file ? state.pendingUpload : null;
   const checkingUpload = savedUpload && !savedUpload.asset;
-  if (!pending && (!file || selection?.file !== file)) return;
+  if (!pending && !savedUpload && (!file || selection?.file !== file)) return;
   const assertCurrent = () => {
     if (epoch !== state.epoch || state.captureCheck !== selection
-        || (pending && !queued && state.pendingResearch !== pending)) throw new DOMException("Capture changed", "AbortError");
+        || (pending && !queued && state.pendingResearch !== pending)
+        || (savedUpload && phase !== "queueRequest" && state.pendingUpload !== savedUpload)) throw new DOMException("Capture changed", "AbortError");
   };
   const params = { extractFps: Number(byId("sampleFps").value), maxFrames: Number(byId("frameLimit").value) };
   const started = performance.now();
@@ -1301,12 +1312,15 @@ byId("researchForm").addEventListener("submit", async (event) => {
         body.append("file", file);
         const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
         asset = await measure("uploadRequest", async () => {
+          rememberPendingSubmission("pendingUpload", file, uploadHeaders);
           try {
             return await api("/api/assets", { method: "POST", body, headers: uploadHeaders, idempotent: true, timeoutMs: 15 * 60 * 1000 });
           } catch (error) {
             assertCurrent();
-            if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
-            state.pendingUpload = { file, headers: uploadHeaders, asset: null };
+            if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) {
+              clearPendingSubmission("pendingUpload");
+              throw error;
+            }
             byId("researchMessage").textContent = "Checking whether your video was uploaded…";
             try {
               // Resolve the saved upload without sending the video again.
@@ -1319,14 +1333,14 @@ byId("researchForm").addEventListener("submit", async (event) => {
         });
       }
       assertCurrent();
-      state.pendingUpload = null;
       byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     }
     const queueHeaders = pending?.headers || { "Idempotency-Key": crypto.randomUUID() };
     const job = await measure("queueRequest", async () => {
       if (!pending) {
         // Save before sending so a reload during the request can still check it.
-        rememberPendingResearch(file, queueHeaders);
+        rememberPendingSubmission("pendingResearch", file, queueHeaders);
+        clearPendingSubmission("pendingUpload");
         try {
           return await api("/api/jobs/research", {
             method: "POST", idempotent: true, headers: queueHeaders,
@@ -1353,7 +1367,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     updateSceneLocation(job.id);
     asset = null;
     queued = true;
-    clearPendingResearch();
+    clearPendingSubmission("pendingResearch");
     recordTiming("queued");
     await Promise.all([refreshAccount({ fresh: true }), loadJobs(), loadAssets()]);
     assertCurrent();
@@ -1363,7 +1377,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
     if (epoch !== state.epoch || error?.name === "AbortError") return;
     if (queued) return;
     if (asset && !uncertainQueue) {
-      clearPendingResearch();
+      clearPendingSubmission("pendingResearch");
       try { await api(`/api/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE", idempotent: true }); }
       catch (_) { /* a submitted job owns the asset or the server will reclaim it */ }
     }

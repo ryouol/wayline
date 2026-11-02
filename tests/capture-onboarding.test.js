@@ -460,6 +460,108 @@ async function main() {
     assert.equal(h.state.pendingUpload, null);
     assert.equal(storage.has(uploadStorageKey), false);
   }
+  for (const gate of ["available", "used"]) {
+    for (const mode of ["same-page", "reload"]) {
+      for (const linkedJobCount of [1, 2]) {
+        const storage = new Map([[uploadStorageKey, JSON.stringify(uploadRecord)]]), h = reloadHarness(storage, gate);
+        await h.context.initialize();
+        if (mode === "same-page") {
+          const file = { name: "original.mp4", size: 1024 };
+          h.node("video").files = [file]; h.state.pendingUpload.file = file;
+          h.context.validateSelectedCapture(); h.videos.at(-1).onerror();
+        }
+        const standard = h.context.respond;
+        h.context.respond = (path, options) => path === "/api/submissions/upload"
+          ? { id: "already-used-upload", linkedJobCount } : standard(path, options);
+        await h.submit();
+        assert.equal(h.node("researchButton").textContent, "Already submitted",
+          "A retained scene's upload must not be offered as another scene submission");
+        assert.equal(h.node("researchButton").disabled, true);
+        assert.match(h.node("researchMessage").textContent, /already.*scene.*Refresh scenes/);
+        h.context.validateSelectedCapture(); if (mode === "same-page") h.videos.at(-1).onerror();
+        h.node("createDialog").close(); await new Promise(setImmediate);
+        h.context.openCreateScene({ refresh: false });
+        assert.equal(h.node("researchButton").disabled, true);
+        assert.match(h.node("researchMessage").textContent, /already.*scene.*Refresh scenes/);
+        await h.submit();
+        assert.ok(h.requests.every(r => r.method === "GET"));
+        assert.equal(h.submissionTimings.length, 0);
+        assert.deepEqual(JSON.parse(storage.get(uploadStorageKey)), uploadRecord);
+        h.select({ name: "another.mp4", size: 1024 }).onerror();
+        assert.equal(h.state.pendingUpload, null);
+        assert.equal(storage.has(uploadStorageKey), false);
+      }
+    }
+  }
+  for (const mode of ["same-page", "reload"]) {
+    for (const outcome of ["linked", "unlinked", "missing", "failed", "session", "capture", "unauthorized"]) {
+      const storage = new Map([[uploadStorageKey, JSON.stringify(uploadRecord)]]), h = reloadHarness(storage), lookup = deferred();
+      await h.context.initialize();
+      if (mode === "same-page") {
+        const file = { name: "original.mp4", size: 1024 };
+        h.node("video").files = [file]; h.state.pendingUpload.file = file;
+        h.context.validateSelectedCapture(); h.videos.at(-1).onerror();
+      }
+      let lookups = 0;
+      const standard = h.context.respond;
+      h.context.respond = (path, options) => {
+        if (path === "/api/submissions/upload") {
+          assert.equal(options.headers.get("Idempotency-Key"), uploadRecord.key);
+          lookups++;
+          return lookups === 1 ? { id: "recovered-upload", linkedJobCount: 0 } : lookup.promise;
+        }
+        if (path === "/api/jobs/research") {
+          assert.equal(outcome, "unlinked");
+          assert.equal(JSON.parse(options.body).assetId, "recovered-upload");
+          return { id: "created-once" };
+        }
+        return standard(path, options);
+      };
+      await h.submit();
+      assert.equal(h.node("researchButton").disabled, false);
+      const count = h.requests.length, creating = h.submit(); await new Promise(setImmediate);
+      assert.equal(lookups, 2, "Revalidate the receipt before reusing an upload confirmed earlier");
+      assert.ok([...h.timers.values()].some(t => t.delay === 10000));
+      await h.submit(); assert.equal(lookups, 2);
+      if (outcome === "session") h.context.showLogin();
+      if (outcome === "capture") h.select({ name: "another.mp4", size: 1024 }).onerror();
+      lookup.resolve(["missing", "failed", "unauthorized"].includes(outcome)
+        ? new Response("Unavailable", { status: { missing: 404, failed: 503, unauthorized: 401 }[outcome] })
+        : { id: "recovered-upload", linkedJobCount: outcome === "linked" ? 1 : 0 });
+      await creating;
+      assert.equal(h.requests.some(r => r.method === "DELETE"), false, "Do not delete a linked, expired or uncertain upload");
+      if (outcome === "unlinked") {
+        assert.equal(h.context.location.hash, "#scene=created-once");
+        assert.equal(h.requests.filter(r => r.method === "POST").length, 1);
+        assert.equal(h.state.submissionTiming.uploadRequestSeconds, null);
+      } else {
+        assert.ok(h.requests.slice(count).every(r => r.method === "GET"));
+        if (outcome === "linked") {
+          assert.equal(h.node("researchButton").textContent, "Already submitted");
+          assert.equal(h.node("researchButton").disabled, true);
+          assert.equal(h.state.submissionTiming.outcome, "blocked");
+        } else if (["missing", "failed"].includes(outcome)) {
+          assert.equal(h.node("researchButton").textContent, "Check upload status");
+          assert.equal(h.state.pendingUpload.asset, null);
+          assert.deepEqual(JSON.parse(storage.get(uploadStorageKey)), uploadRecord);
+        } else assert.equal(h.state.pendingUpload, null);
+      }
+    }
+  }
+  {
+    const h = reloadHarness(new Map()); await h.context.initialize();
+    const standard = h.context.respond;
+    h.context.respond = (path, options) => {
+      if (path === "/api/assets") return new Response("Lost upload response", { status: 500 });
+      if (path === "/api/submissions/upload") return { id: "already-used-upload", linkedJobCount: 1 };
+      return standard(path, options);
+    };
+    h.select().onerror(); await h.submit();
+    assert.equal(h.node("researchButton").textContent, "Already submitted");
+    assert.equal(h.node("researchButton").disabled, true);
+    assert.ok(h.requests.every(r => r.method === "GET" || (r.path === "/api/assets" && r.method === "POST")));
+    assert.equal(h.state.submissionTiming.outcome, "blocked");
+  }
   // Private navigation must survive reload without depending on a loaded library page.
   const navigationJobs = Array.from({ length: 30 }, (_, i) => ({ id: `nav-${i}`, displayName: `Scene ${i}`,
     state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100 - i, artifacts: [] }));

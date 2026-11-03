@@ -129,13 +129,14 @@ async function api(path, options = {}) {
       if (response.status === 304 && conditional?.value && conditional.etag
           && response.headers.get("ETag")?.replace(/^W\//, "") === conditional.etag.replace(/^W\//, "")) return conditional.value;
       if (!response.ok) {
-        let detail = `Request failed (${response.status}).`;
+        let detail = `Request failed (${response.status}).`, code = "";
         try {
-          const value = (await response.json()).detail;
+          const payload = await response.json(), value = payload.detail;
+          if (typeof payload.code === "string") code = payload.code;
           if (typeof value === "string") detail = value;
           else if (Array.isArray(value)) detail = value.map((item) => `${item.loc?.slice(1).join(".") || "Input"}: ${item.msg}`).join("; ");
         } catch (_) { /* response was not JSON */ }
-        const error = Object.assign(new Error(detail), { status: response.status, outcomeUnknown });
+        const error = Object.assign(new Error(detail), { status: response.status, code, outcomeUnknown });
         // A gateway can lose the acknowledgement after the server commits.
         // Reconcile with the original key, within the shared retry/deadline budget.
         if (options.idempotent && [502, 504].includes(response.status) && attempt < 1) {
@@ -1276,7 +1277,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
       totalSeconds: (performance.now() - started) / 1000, outcome, endedAtStage: phase });
     byId("researchForm").dispatchEvent(new CustomEvent("wayline-submission-timing", { detail: state.submissionTiming }));
   };
-  let asset = null, queued = false, refreshed = false, uncertainQueue = Boolean(pending);
+  let asset = null, queued = false, refreshed = false, existingScene = false, uncertainQueue = Boolean(pending);
   state.uploading = true;
   renderReconstructionStatus();
   byId("researchMessage").textContent = pending ? "Checking whether your scene was queued…" : "Checking your account before upload…";
@@ -1356,7 +1357,9 @@ byId("researchForm").addEventListener("submit", async (event) => {
       }
       byId("researchMessage").textContent = "Video uploaded. Queuing reconstruction…";
     }
-    const queueHeaders = pending?.headers || { "Idempotency-Key": crypto.randomUUID() };
+    // Upload and scene receipts are route-scoped. Sharing their identity also
+    // makes tabs recovering the same upload share one atomic scene operation.
+    const queueHeaders = pending?.headers || state.pendingUpload.headers;
     const job = await measure("queueRequest", async () => {
       if (!pending) {
         // Save before sending so a reload during the request can still check it.
@@ -1369,7 +1372,8 @@ byId("researchForm").addEventListener("submit", async (event) => {
           });
         } catch (error) {
           assertCurrent();
-          if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && ![500, 502, 504].includes(error.status))) throw error;
+          existingScene = error.status === 409 && error.code === "idempotency_conflict";
+          if (error?.name === "AbortError" || (error.status && !error.outcomeUnknown && !existingScene && ![500, 502, 504].includes(error.status))) throw error;
           uncertainQueue = true;
         }
       }
@@ -1416,7 +1420,9 @@ byId("researchForm").addEventListener("submit", async (event) => {
         validateSelectedCapture();
         byId("createDialog").close();
         byId(refreshed ? "detailTitle" : "refreshButton").focus({ preventScroll: true });
-        if (!refreshed) toast("Your scene was queued, but the workspace couldn't refresh. Use Refresh scenes to check its progress.");
+        if (existingScene) toast("Opened the existing scene for this video; your new settings were not applied."
+          + (refreshed ? "" : " Use Refresh scenes to check its progress."));
+        else if (!refreshed) toast("Your scene was queued, but the workspace couldn't refresh. Use Refresh scenes to check its progress.");
       }
       state.uploading = false;
       renderReconstructionStatus();

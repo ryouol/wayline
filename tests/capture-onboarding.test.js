@@ -348,7 +348,7 @@ async function main() {
         if (path === "/api/jobs/research") {
           assert.ok(canQueue);
           assert.equal(JSON.parse(options.body).assetId, "recovered-upload");
-          assert.notEqual(options.headers.get("Idempotency-Key"), uploadRecord.key);
+          assert.equal(options.headers.get("Idempotency-Key"), uploadRecord.key);
           assert.ok(storage.has(receiptStorageKey), "Persist queue identity before the queue POST");
           assert.equal(storage.has(uploadStorageKey), false, "Queue identity supersedes upload recovery");
           return outcome === "found" ? { id: "recovered-upload-scene" }
@@ -561,6 +561,74 @@ async function main() {
     assert.equal(h.node("researchButton").disabled, true);
     assert.ok(h.requests.every(r => r.method === "GET" || (r.path === "/api/assets" && r.method === "POST")));
     assert.equal(h.state.submissionTiming.outcome, "blocked");
+  }
+  for (const outcome of ["matching", "different", "missing", "failed", "session", "capture"]) {
+    const tabs = [0, 1].map(() => reloadHarness(new Map([[uploadStorageKey, JSON.stringify(uploadRecord)]])));
+    const accepted = new Map(), bothQueued = deferred();
+    let posts = 0, receiptGets = 0;
+    for (const [index, h] of tabs.entries()) {
+      h.context.crypto.randomUUID = () => `tab-${index}-new-request`;
+      const standard = h.context.respond;
+      h.context.respond = async (path, options) => {
+        if (path === "/api/submissions/upload") return { id: "shared-upload", linkedJobCount: 0 };
+        if (path === "/api/jobs/research") {
+          const key = options.headers.get("Idempotency-Key"), body = options.body;
+          posts++;
+          const prior = accepted.get(key);
+          if (!prior) accepted.set(key, { body, id: `accepted-${accepted.size}` });
+          if (posts === 2) bothQueued.resolve();
+          await bothQueued.promise;
+          if (prior && prior.body !== body) return new Response(JSON.stringify({
+            detail: "Different request", code: "idempotency_conflict",
+          }), { status: 409 });
+          return { id: accepted.get(key).id };
+        }
+        if (path === "/api/submissions/research") {
+          receiptGets++;
+          assert.equal(options.headers.get("Idempotency-Key"), uploadRecord.key);
+          if (outcome === "session") h.context.showLogin();
+          if (outcome === "capture") h.select({ name: "next.mp4", size: 1024 }).onerror();
+          if (["missing", "failed"].includes(outcome)) return new Response("Unconfirmed", { status: outcome === "missing" ? 404 : 503 });
+          return { id: "accepted-0" };
+        }
+        return standard(path, options);
+      };
+      await h.context.initialize(); await h.submit();
+      if (index === 1 && outcome !== "matching") h.node("frameLimit").value = "24";
+    }
+    await Promise.all(tabs.map(h => h.submit()));
+    assert.equal(accepted.size, 1, "Tabs sharing an upload receipt must share a single scene operation");
+    assert.equal(posts, 2);
+    for (const h of tabs) {
+      assert.ok(h.requests.every(r => r.method !== "DELETE" && r.path !== "/api/assets"));
+      assert.equal(h.requests.find(r => r.path === "/api/jobs/research").options.headers.get("Idempotency-Key"), uploadRecord.key);
+    }
+    assert.equal(tabs[0].context.location.hash, "#scene=accepted-0");
+    assert.equal(receiptGets, outcome === "matching" ? 0 : 1);
+    if (["matching", "different"].includes(outcome)) {
+      assert.equal(tabs[1].context.location.hash, "#scene=accepted-0");
+      assert.equal(tabs[1].state.pendingResearch, null);
+      if (outcome === "different") assert.match(tabs[1].node("toast").textContent, /existing scene.*settings were not applied/);
+    } else if (["missing", "failed"].includes(outcome)) {
+      assert.equal(tabs[1].node("researchButton").textContent, "Check scene status");
+      assert.equal(tabs[1].state.pendingResearch.headers["Idempotency-Key"], uploadRecord.key);
+    } else assert.equal(tabs[1].state.pendingResearch, null);
+  }
+  {
+    const h = reloadHarness(new Map()); await h.context.initialize();
+    let nextKey = 0, uploadedKey;
+    h.context.crypto.randomUUID = () => `fresh-operation-${++nextKey}`;
+    const standard = h.context.respond;
+    h.context.respond = (path, options) => {
+      if (path === "/api/assets") { uploadedKey = options.headers.get("Idempotency-Key"); return { id: "fresh-upload", linkedJobCount: 0 }; }
+      if (path === "/api/jobs/research") {
+        assert.equal(options.headers.get("Idempotency-Key"), uploadedKey, "Initial creation also uses the upload identity");
+        return { id: "fresh-scene" };
+      }
+      return standard(path, options);
+    };
+    h.select().onerror(); await h.submit();
+    assert.equal(h.context.location.hash, "#scene=fresh-scene");
   }
   // Private navigation must survive reload without depending on a loaded library page.
   const navigationJobs = Array.from({ length: 30 }, (_, i) => ({ id: `nav-${i}`, displayName: `Scene ${i}`,
@@ -785,7 +853,7 @@ async function main() {
       assert.equal(replays.length, 2);
       assert.equal(replays[0].options.headers.get("Idempotency-Key"), replays[1].options.headers.get("Idempotency-Key"));
       assert.equal(replays[0].options.body, replays[1].options.body, "Replay uses the exact original request body");
-      assert.equal(keys, 2, "One key per upload and job, not per transport attempt");
+      assert.equal(keys, 1, "One identity shared by route-scoped upload and scene requests, including retries");
       assert.equal(accepted.size, 2, "Reconciliation creates one asset and one job");
       assert.equal(h.state.selectedId, "accepted-job");
       assert.equal(h.state.submissionTiming.outcome, "queued");
@@ -916,7 +984,7 @@ async function main() {
         if (path === "/api/jobs/research") {
           assert.equal(recovery, "found", "Only a current confirmed upload may queue");
           assert.equal(JSON.parse(options.body).assetId, "recovered-upload");
-          assert.notEqual(options.headers.get("Idempotency-Key"), uploadKey);
+          assert.equal(options.headers.get("Idempotency-Key"), uploadKey);
           return { id: "recovered-upload-job" };
         }
         if (path.startsWith("/api/jobs?")) return { jobs: [{ id: "recovered-upload-job", state: "queued", createdAt: 1 }], nextCursor: null };
@@ -1051,7 +1119,7 @@ async function main() {
         if (path === "/api/jobs/research") {
           assert.ok(canQueue);
           assert.equal(JSON.parse(options.body).assetId, "original-upload");
-          assert.notEqual(options.headers.get("Idempotency-Key"), uploadKey);
+          assert.equal(options.headers.get("Idempotency-Key"), uploadKey);
           if (outcome === "queue-rejected") return new Response("Rejected", { status: 422 });
           if (outcome === "queue-uncertain") return new Response("Lost acknowledgement", { status: 500 });
           return { id: "original-job" };
@@ -3058,4 +3126,8 @@ async function main() {
   console.log("Capture allowance, onboarding, metadata, and session behavior passed");
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+let settled = false;
+process.once("beforeExit", () => {
+  if (!settled) throw new Error("Capture suite exited with an unresolved test operation");
+});
+main().then(() => { settled = true; }, (error) => { settled = true; console.error(error); process.exitCode = 1; });

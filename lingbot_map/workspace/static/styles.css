@@ -290,6 +290,8 @@ dialog::backdrop { background: var(--scrim); backdrop-filter: blur(8px); }
 .capture-message.invalid { color: var(--danger); }
 .capture-preview { margin-top: 18px; }
 .capture-preview video { display: block; width: 100%; max-height: 240px; border-radius: 10px; background: var(--canvas); }
+.capture-preview.cropped video { width: min(100%, 240px); height: auto; aspect-ratio: 1; object-fit: cover; margin-inline: auto; }
+.capture-preview button { margin-top: 12px; }
 .capture-preview p { margin: 8px 0 0; font-size: 12px; }
 .capture-settings { margin: 14px 0 18px; border-bottom: 1px solid var(--line); }
 .capture-settings summary { font-size: 13px; }

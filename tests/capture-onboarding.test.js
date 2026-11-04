@@ -2831,6 +2831,47 @@ async function main() {
     assert.equal(h.node("googleLogin").hidden, false);
     assert.equal(h.node("trialButton").hidden, true);
   }
+  for (const [width, height, portrait] of [[1080, 1920, true], [720, 1280, true], [1920, 1080, false],
+    [1080, 1080, false], [0, 1920, false], [1080, 0, false], [NaN, 1920, false], [1080, Infinity, false]]) {
+    const h = harness(), metadata = h.select();
+    Object.assign(metadata, { duration: 12, videoWidth: width, videoHeight: height });
+    metadata.onloadedmetadata();
+    const button = h.node("captureCropButton"), preview = h.node("capturePreview"), panel = h.node("capturePreviewPanel");
+    assert.equal(button.hidden, !portrait, "Only portrait captures with known dimensions offer a crop preview");
+    assert.equal(button.getAttribute("aria-pressed"), "false");
+    assert.equal(h.node("captureCropHelp").hidden, !portrait);
+    assert.equal(panel.classList.contains("cropped"), false);
+    if (!portrait) continue;
+    const url = preview.src, created = h.createdUrls.length, requestCount = h.requests.length;
+    preview.currentTime = 4;
+    button.events.get("click")();
+    assert.equal(panel.classList.contains("cropped"), true);
+    assert.equal(button.getAttribute("aria-pressed"), "true");
+    assert.match(h.node("captureCropHelp").textContent, /Approximate center crop.*important details/);
+    assert.equal(preview.src, url); assert.equal(preview.currentTime, 4);
+    assert.equal(h.createdUrls.length, created); assert.equal(h.requests.length, requestCount);
+    button.events.get("click")();
+    assert.equal(panel.classList.contains("cropped"), false);
+    assert.match(h.node("captureCropHelp").textContent, /top and bottom/);
+    button.events.get("click")();
+    h.select({ name: "replacement.mp4", size: 1024 });
+    assert.equal(panel.classList.contains("cropped"), false);
+    assert.equal(button.hidden, true);
+    assert.equal(button.getAttribute("aria-pressed"), "false");
+    assert.equal(h.node("captureCropHelp").textContent, "");
+    assert.equal(h.revokedUrls.filter(x => x === url).length, 1);
+  }
+  {
+    const h = harness(), old = h.select(), stale = old.onloadedmetadata;
+    Object.assign(old, { duration: 12, videoWidth: 1080, videoHeight: 1920 });
+    const current = h.select({ name: "landscape.mp4", size: 1024 });
+    Object.assign(current, { duration: 12, videoWidth: 1920, videoHeight: 1080 });
+    current.onloadedmetadata(); stale();
+    assert.equal(h.node("captureCropButton").hidden, true, "Old portrait metadata cannot alter the new preview");
+    h.context.showLogin();
+    assert.equal(h.node("capturePreviewPanel").hidden, true);
+    assert.equal(h.node("captureCropHelp").textContent, "");
+  }
   {
     const h = harness();
     h.context.openCreateScene({ refresh: false });

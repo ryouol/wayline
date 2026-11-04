@@ -1064,6 +1064,16 @@ function cancelCaptureCheck() {
   state.captureCheck = null;
 }
 
+function renderCaptureCrop(cropped = false) {
+  const button = byId("captureCropButton"), help = byId("captureCropHelp");
+  byId("capturePreviewPanel").classList.toggle("cropped", cropped);
+  button.setAttribute("aria-pressed", String(cropped));
+  help.hidden = button.hidden;
+  help.textContent = button.hidden ? "" : cropped
+    ? "Approximate center crop shown. Check that important details remain visible."
+    : "Portrait clips are cropped at the top and bottom during reconstruction. Preview the approximate crop before uploading.";
+}
+
 function releaseCapturePreview() {
   const preview = byId("capturePreview");
   preview.pause();
@@ -1073,15 +1083,19 @@ function releaseCapturePreview() {
   state.capturePreviewUrl = null;
   byId("capturePreviewPanel").hidden = true;
   byId("capturePreviewMeta").textContent = "";
+  byId("captureCropButton").hidden = true;
+  renderCaptureCrop();
 }
 
-function showCapturePreview(file, duration) {
+function showCapturePreview(file, duration, width, height) {
   releaseCapturePreview();
   try {
     state.capturePreviewUrl = URL.createObjectURL(file);
     byId("capturePreview").src = state.capturePreviewUrl;
     byId("capturePreviewMeta").textContent = `${file.name} · ${formatBytes(file.size)}${duration ? ` · ${duration.toFixed(1)} seconds` : ""}`;
     byId("capturePreviewPanel").hidden = false;
+    byId("captureCropButton").hidden = !(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > width);
+    renderCaptureCrop();
   } catch (_) { /* server validation remains available when local playback is unsupported */ }
 }
 
@@ -1119,6 +1133,7 @@ function validateSelectedCapture() {
   const finish = (duration, cancelled = false) => {
     if (finished) return;
     finished = true;
+    const width = video.videoWidth, height = video.videoHeight;
     window.clearTimeout(timer);
     video.onloadedmetadata = null;
     video.onerror = null;
@@ -1131,11 +1146,11 @@ function validateSelectedCapture() {
         display("invalid", `Choose a clip up to ${state.config.maxVideoSeconds} seconds. This clip is ${Math.ceil(duration)} seconds.`);
       } else {
         display("valid", `${formatBytes(file.size)} · ${duration.toFixed(1)} seconds · ready to upload`);
-        showCapturePreview(file, duration);
+        showCapturePreview(file, duration, width, height);
       }
     } else {
       display("fallback", `${formatBytes(file.size)} · clip length will be checked after upload`);
-      showCapturePreview(file, null);
+      showCapturePreview(file, null, width, height);
     }
   };
   check.cancel = () => finish(null, true);
@@ -1590,6 +1605,9 @@ byId("createDialog").addEventListener("cancel", (event) => {
   if (state.uploading) { event.preventDefault(); toast("Your scene is being submitted. Wait for it to finish before closing."); }
 });
 byId("createDialog").addEventListener("close", () => byId("capturePreview").pause());
+byId("captureCropButton").addEventListener("click", () => {
+  if (!byId("captureCropButton").hidden) renderCaptureCrop(byId("captureCropButton").getAttribute("aria-pressed") !== "true");
+});
 ["createDialog", "managementDialog", "shareDialog", "confirmDialog"].forEach((id) => {
   const dialog = byId(id);
   dialog.addEventListener("close", () => {

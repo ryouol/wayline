@@ -13,7 +13,7 @@ const capacityMessage = "Reconstruction is temporarily paused because preview ca
 const engines = (available = true) => ({ engines: [{ id: "lingbot-research-v1", available,
   unavailableReasons: available ? [] : [capacityMessage] }] });
 const config = { googleSignIn: true, newAccountsAvailable: true, trialEnabled: true,
-  maxVideoSeconds: 30, maxUploadBytes: 10 * 1024 * 1024 };
+  maxVideoSeconds: 30, maxVideoDimension: 4096, maxUploadBytes: 10 * 1024 * 1024 };
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
@@ -2830,6 +2830,57 @@ async function main() {
     await loading;
     assert.equal(h.node("googleLogin").hidden, false);
     assert.equal(h.node("trialButton").hidden, true);
+  }
+  for (const [width, height, invalid] of [[4096, 2160, false], [2160, 4096, false],
+    [4097, 2160, true], [2160, 4097, true], [5120, 2880, true],
+    [0, 0, false], [NaN, 720, false], [640, Infinity, false], [5120, 0, false]]) {
+    const h = harness(), video = h.select();
+    Object.assign(video, { duration: 5, videoWidth: width, videoHeight: height });
+    video.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, invalid ? "invalid" : "valid");
+    assert.equal(h.node("researchButton").disabled, invalid);
+    if (invalid) {
+      assert.equal(h.node("video").getAttribute("aria-invalid"), "true");
+      assert.match(h.node("captureMessage").textContent, /4096px on its longest side/);
+      assert.ok(h.node("captureMessage").textContent.includes(`${width} × ${height}px`));
+      assert.equal(h.node("capturePreviewPanel").hidden, true);
+      assert.equal(h.createdUrls.length, 1);
+      assert.equal(h.revokedUrls.length, 1);
+      await h.submit();
+      assert.equal(h.requests.length, 0, "An oversized video cannot start transfer or processing");
+    }
+  }
+  for (const finish of ["error", "timeout"]) {
+    const h = harness(), video = h.select();
+    Object.assign(video, { videoWidth: 5120, videoHeight: 2880 });
+    if (finish === "error") video.onerror();
+    else [...h.timers.values()].find(t => t.delay === 10000).callback();
+    assert.equal(h.state.captureCheck.status, "invalid", "Known oversized dimensions still block when duration is unavailable");
+    assert.equal(h.node("researchButton").disabled, true);
+    assert.equal(h.revokedUrls.length, 1);
+  }
+  {
+    const h = harness();
+    h.context.respond = async () => ({ ...config, maxVideoDimension: 2048 });
+    await h.context.loadPublicConfig();
+    assert.match(h.node("captureLimits").textContent, /2048px longest side/);
+    let video = h.select();
+    Object.assign(video, { duration: 5, videoWidth: 2049, videoHeight: 1080 }); video.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, "invalid", "Use the configured limit, not a hardcoded default");
+    const stale = h.select(), callback = stale.onloadedmetadata;
+    Object.assign(stale, { duration: 5, videoWidth: 5120, videoHeight: 2880 });
+    video = h.select({ name: "smaller.mp4", size: 1024 });
+    Object.assign(video, { duration: 5, videoWidth: 2048, videoHeight: 1080 }); video.onloadedmetadata(); callback();
+    assert.equal(h.state.captureCheck.status, "valid");
+    assert.equal(h.node("researchButton").disabled, false);
+    assert.equal(h.node("video").hasAttribute("aria-invalid"), false);
+  }
+  {
+    const h = harness();
+    delete h.state.config.maxVideoDimension;
+    const video = h.select();
+    Object.assign(video, { duration: 5, videoWidth: 5120, videoHeight: 2880 }); video.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, "valid", "An unavailable local limit leaves server validation authoritative");
   }
   for (const [width, height, portrait] of [[1080, 1920, true], [720, 1280, true], [1920, 1080, false],
     [1080, 1080, false], [0, 1920, false], [1080, 0, false], [NaN, 1920, false], [1080, Infinity, false]]) {

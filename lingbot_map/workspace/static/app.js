@@ -1141,6 +1141,13 @@ function validateSelectedCapture() {
     video.load();
     if (url) URL.revokeObjectURL(url);
     if (cancelled || !current()) return;
+    const dimensionLimit = state.config?.maxVideoDimension;
+    if (Number.isFinite(dimensionLimit) && dimensionLimit > 0
+        && Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+        && Math.max(width, height) > dimensionLimit) {
+      display("invalid", `Choose a video up to ${dimensionLimit}px on its longest side. This clip is ${width} × ${height}px.`);
+      return;
+    }
     if (Number.isFinite(duration) && duration > 0) {
       if (state.config && duration > state.config.maxVideoSeconds) {
         display("invalid", `Choose a clip up to ${state.config.maxVideoSeconds} seconds. This clip is ${Math.ceil(duration)} seconds.`);
@@ -1578,7 +1585,9 @@ async function loadPublicConfig() {
     if (!response.ok) throw new Error("Sign-in options could not be loaded. Refresh to retry.");
     state.config = await response.json();
     renderAccountActions();
-    byId("captureLimits").textContent = `Up to ${state.config.maxVideoSeconds} seconds · ${formatBytes(state.config.maxUploadBytes)} maximum`;
+    const dimensionLimit = state.config.maxVideoDimension;
+    byId("captureLimits").textContent = `Up to ${state.config.maxVideoSeconds} seconds · ${formatBytes(state.config.maxUploadBytes)} maximum`
+      + (Number.isFinite(dimensionLimit) && dimensionLimit > 0 ? ` · ${dimensionLimit}px longest side` : "");
     if (byId("video").files[0] && !state.uploading) validateSelectedCapture();
     renderSignInOptions();
   } catch (error) { byId("onboardingStatus").textContent = error.message; }

@@ -80,6 +80,7 @@ def register_auth_routes(
             "trialEnabled": runtime.trial_enabled,
             "maxUploadBytes": runtime.max_upload_bytes,
             "maxVideoSeconds": runtime.max_video_seconds,
+            "maxVideoDimension": runtime.max_video_dimension,
             "analytics": (
                 {"propertyId": runtime.analytics_property_id, "endpoint": "/analytics/page-view"}
                 if runtime.analytics_enabled

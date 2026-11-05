@@ -16,6 +16,45 @@ def fake_mp4(size: int = 64) -> bytes:
     return b"\x00\x00\x00\x18ftypisom" + b"\x00" * max(0, size - 12)
 
 
+@pytest.mark.parametrize("limit", [2048, 4096])
+@pytest.mark.parametrize("long_side", ["width", "height"])
+def test_public_resolution_limit_matches_upload_validation(
+    settings, service, monkeypatch, limit, long_side
+):
+    runtime = replace(settings, max_video_dimension=limit)
+    service.settings = runtime
+    metadata = {
+        "fps": 10.0,
+        "frames": 100,
+        "durationSeconds": 10.0,
+        "width": 1080,
+        "height": 1080,
+        long_side: limit,
+    }
+    monkeypatch.setattr(service.inspector, "inspect", lambda _path: metadata.copy())
+    with TestClient(create_app(runtime, service=service, start_worker=False)) as browser:
+        response = browser.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["maxVideoDimension"] == limit
+        headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+        accepted = browser.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("at-limit.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert accepted.status_code == 201
+        metadata[long_side] = limit + 1
+        rejected = browser.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("too-wide.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert rejected.status_code == 413
+        assert f"{limit}px" in rejected.json()["detail"]
+        assert len(browser.get("/api/assets", headers=headers).json()["assets"]) == 1
+        assert browser.get("/api/jobs", headers=headers).json()["jobs"] == []
+
+
 def test_authentication_and_security_headers(client, service):
     response = client.get("/api/jobs")
     assert response.status_code == 401

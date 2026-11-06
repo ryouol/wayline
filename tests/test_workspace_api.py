@@ -189,6 +189,26 @@ def test_long_upload_filename_preserves_extension_and_receipt(
     assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
 
 
+def test_long_upload_replays_a_receipt_with_a_different_valid_clipped_extension(
+    authenticated_client,
+):
+    clipped = "a" * 116 + ".mp4"
+    filename = clipped + ".export.mov"
+    headers = {"Idempotency-Key": "previously-accepted-long-name"}
+    # Prior versions persisted the first 120 characters in the receipt hash.
+    previous = authenticated_client.post(
+        "/api/assets", files={"file": (clipped, fake_mp4(), "video/mp4")}, headers=headers
+    )
+    assert previous.status_code == 201
+    files = {"file": (filename, fake_mp4(), "video/mp4")}
+    replay = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == previous.json()["id"]
+    new = authenticated_client.post("/api/assets", files=files)
+    assert new.status_code == 201
+    assert new.json()["name"] == "a" * 116 + ".mov"
+
+
 @pytest.mark.parametrize("suffix", [".exe", "without-extension", ".avi", "." + "a" * 130])
 def test_long_filename_cannot_hide_an_unsupported_suffix(authenticated_client, service, suffix):
     response = authenticated_client.post(

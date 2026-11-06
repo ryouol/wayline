@@ -406,11 +406,13 @@ class WorkspaceService:
         extension = Path(full_name).suffix
         suffix = extension.lower()
         declared = (media_type or "").lower().split(";", 1)[0]
-        if declared not in ALLOWED_VIDEO_TYPES or suffix not in ALLOWED_VIDEO_TYPES[declared]:
+        allowed_suffixes = ALLOWED_VIDEO_TYPES.get(declared, set())
+        if suffix not in allowed_suffixes:
             raise UploadRejected("Use an MP4, MOV, AVI, or MKV video file.", status_code=415)
-        # Keep previously accepted names stable for idempotent retries.
-        original_name = safe_filename(filename)
-        if Path(original_name).suffix.lower() != suffix:
+        clipped_name = safe_filename(filename)
+        clipped_suffix = Path(clipped_name).suffix.lower()
+        original_name = clipped_name
+        if clipped_suffix != suffix:
             stem = full_name.removesuffix(extension)
             original_name = stem[: MAX_FILENAME_LENGTH - len(extension)] + extension
         self.database.consume_rate(
@@ -477,7 +479,8 @@ class WorkspaceService:
             metadata["container"] = detected
             scope = "POST:/api/assets"
             payload = {
-                "filename": original_name,
+                # An older receipt may have hashed a different, but valid, clipped extension.
+                "filename": clipped_name if clipped_suffix in allowed_suffixes else original_name,
                 "mediaType": detected,
                 "sha256": stored.sha256,
                 "sizeBytes": stored.size_bytes,

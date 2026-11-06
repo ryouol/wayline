@@ -164,9 +164,68 @@ def test_validated_upload_and_research_gate(authenticated_client, service):
     )
 
 
-def test_upload_rejects_mismatched_content_and_removes_object(authenticated_client, service):
+@pytest.mark.parametrize(
+    ("filename", "expected_name"),
+    [
+        ("a" * 116 + ".MP4", "a" * 116 + ".MP4"),
+        ("a" * 117 + ".MP4", "a" * 116 + ".MP4"),
+        ("part." + "a" * 180 + ".m4v", "part." + "a" * 111 + ".m4v"),
+        ("." * 120 + "walkthrough.mov", "walkthrough.mov"),
+        # Keep the existing stored name and receipt hash for an already-accepted upload.
+        ("a" * 116 + ".MP4" + ".extra.mp4", "a" * 116 + ".MP4"),
+    ],
+)
+def test_long_upload_filename_preserves_extension_and_receipt(
+    authenticated_client, filename, expected_name
+):
+    files = {"file": (filename, fake_mp4(), "video/mp4")}
+    headers = {"Idempotency-Key": "long-capture-name"}
+    upload = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert upload.status_code == 201
+    assert upload.json()["name"] == expected_name
+    replay = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == upload.json()["id"]
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+
+
+def test_long_upload_replays_a_receipt_with_a_different_valid_clipped_extension(
+    authenticated_client,
+):
+    clipped = "a" * 116 + ".mp4"
+    filename = clipped + ".export.mov"
+    headers = {"Idempotency-Key": "previously-accepted-long-name"}
+    # Prior versions persisted the first 120 characters in the receipt hash.
+    previous = authenticated_client.post(
+        "/api/assets", files={"file": (clipped, fake_mp4(), "video/mp4")}, headers=headers
+    )
+    assert previous.status_code == 201
+    files = {"file": (filename, fake_mp4(), "video/mp4")}
+    replay = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == previous.json()["id"]
+    new = authenticated_client.post("/api/assets", files=files)
+    assert new.status_code == 201
+    assert new.json()["name"] == "a" * 116 + ".mov"
+
+
+@pytest.mark.parametrize("suffix", [".exe", "without-extension", ".avi", "." + "a" * 130])
+def test_long_filename_cannot_hide_an_unsupported_suffix(authenticated_client, service, suffix):
     response = authenticated_client.post(
-        "/api/assets", files={"file": ("not-video.mp4", b"plain text", "video/mp4")}
+        "/api/assets",
+        files={"file": ("a" * 116 + ".mp4" + suffix, fake_mp4(), "video/mp4")},
+    )
+    assert response.status_code == 415
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+
+
+@pytest.mark.parametrize("filename", ["not-video.mp4", "a" * 160 + ".mp4"])
+def test_upload_rejects_mismatched_content_and_removes_object(
+    authenticated_client, service, filename
+):
+    response = authenticated_client.post(
+        "/api/assets", files={"file": (filename, b"plain text", "video/mp4")}
     )
     assert response.status_code == 415
     assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []

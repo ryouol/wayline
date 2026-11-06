@@ -43,6 +43,7 @@ from .storage import LocalObjectStore, ObjectStore, ObjectTooLarge, StoredObject
 
 logger = logging.getLogger(__name__)
 
+MAX_FILENAME_LENGTH = 120
 ALLOWED_VIDEO_TYPES = {
     "video/mp4": {".mp4", ".m4v", ".mov"},
     "video/quicktime": {".mov"},
@@ -61,9 +62,9 @@ class InvalidEngineParameters(ValueError):
     pass
 
 
-def safe_filename(value: str | None) -> str:
+def safe_filename(value: str | None, *, max_length: int | None = MAX_FILENAME_LENGTH) -> str:
     name = Path(value or "upload.mp4").name.strip()
-    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name)[:120].strip(". ")
+    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name)[:max_length].strip(". ")
     return name or "upload.mp4"
 
 
@@ -401,11 +402,17 @@ class WorkspaceService:
         stream: BinaryIO,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        original_name = safe_filename(filename)
-        suffix = Path(original_name).suffix.lower()
+        full_name = safe_filename(filename, max_length=None)
+        extension = Path(full_name).suffix
+        suffix = extension.lower()
         declared = (media_type or "").lower().split(";", 1)[0]
         if declared not in ALLOWED_VIDEO_TYPES or suffix not in ALLOWED_VIDEO_TYPES[declared]:
             raise UploadRejected("Use an MP4, MOV, AVI, or MKV video file.", status_code=415)
+        # Keep previously accepted names stable for idempotent retries.
+        original_name = safe_filename(filename)
+        if Path(original_name).suffix.lower() != suffix:
+            stem = full_name.removesuffix(extension)
+            original_name = stem[: MAX_FILENAME_LENGTH - len(extension)] + extension
         self.database.consume_rate(
             tenant_id,
             "upload",

@@ -1346,7 +1346,14 @@ byId("researchForm").addEventListener("submit", async (event) => {
       } else {
         byId("researchMessage").textContent = "Uploading video…";
         const body = new FormData();
-        body.append("file", file);
+        let content = file;
+        if (file.type === "") {
+          const extension = file.name.trim().replace(/^[. ]+|[. ]+$/g, "").match(/\.[^.]+$/)?.[0].toLowerCase();
+          const mediaType = Object.entries(state.config?.acceptedVideoTypes || {})
+            .find(([, extensions]) => extensions.includes(extension))?.[0];
+          if (mediaType) content = file.slice(0, file.size, mediaType);
+        }
+        body.append("file", content, file.name);
         const uploadHeaders = { "Idempotency-Key": crypto.randomUUID() };
         asset = await measure("uploadRequest", async () => {
           rememberPendingSubmission("pendingUpload", file, uploadHeaders);

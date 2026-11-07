@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from . import identity
 from .config import Settings
 from .database import QuotaExceeded
-from .service import WorkspaceService
+from .service import ALLOWED_VIDEO_TYPES, WorkspaceService
 
 OAUTH_COOKIE = "wayline_oauth_browser"
 
@@ -81,6 +81,9 @@ def register_auth_routes(
             "maxUploadBytes": runtime.max_upload_bytes,
             "maxVideoSeconds": runtime.max_video_seconds,
             "maxVideoDimension": runtime.max_video_dimension,
+            "acceptedVideoTypes": {
+                media_type: sorted(suffixes) for media_type, suffixes in ALLOWED_VIDEO_TYPES.items()
+            },
             "analytics": (
                 {"propertyId": runtime.analytics_property_id, "endpoint": "/analytics/page-view"}
                 if runtime.analytics_enabled

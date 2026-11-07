@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const { File } = require("node:buffer");
 const source = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/app.js"), "utf8");
 const markup = fs.readFileSync(require.resolve("../lingbot_map/workspace/static/index.html"), "utf8");
 const documentOrder = new Map([...markup.matchAll(/\bid="([^"]+)"/g)].map((match, index) => [match[1], index]));
@@ -113,7 +114,10 @@ function harness(search = "", storage = new Map()) {
     localStorage: { setItem() {}, removeItem() {} },
     sessionStorage: { getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) },
-    FormData: class { append() {} },
+    FormData: class {
+      constructor() { this.entries = []; }
+      append(...args) { this.entries.push(args); }
+    },
     window: { location, setTimeout, clearTimeout, addEventListener: (name, callback) => windowEvents.set(name, callback),
       scrollTo: (options) => scrolls.push(options),
       matchMedia: () => ({ matches: false }),
@@ -168,6 +172,47 @@ function harness(search = "", storage = new Map()) {
 }
 
 async function main() {
+  const acceptedVideoTypes = {
+    "video/mp4": [".m4v", ".mov", ".mp4"], "video/quicktime": [".mov"],
+    "video/x-msvideo": [".avi"], "video/x-matroska": [".mkv"],
+  };
+  for (const [name, type, expectedType, suppliedTypes] of [
+    ["room.mp4", "", "video/mp4", acceptedVideoTypes],
+    ["room.M4V", "", "video/mp4", acceptedVideoTypes],
+    ["room.mov", "", "video/mp4", acceptedVideoTypes],
+    ["room.avi", "", "video/x-msvideo", acceptedVideoTypes],
+    ["room.mkv", "", "video/x-matroska", acceptedVideoTypes],
+    ["room.mp4. ", "", "video/mp4", acceptedVideoTypes],
+    ["room.webm", "", "", acceptedVideoTypes],
+    ["mp4", "", "", acceptedVideoTypes],
+    [".mp4", "", "", acceptedVideoTypes],
+    ["room.mp4", "video/webm", "video/webm", acceptedVideoTypes],
+    ["room.mov", "video/quicktime", "video/quicktime", acceptedVideoTypes],
+    ["room.mp4", "", "", undefined],
+    ["room.mp4", "", "", {}],
+    ["room.mp4", "", "", { "video/quicktime": [".mov"] }],
+  ]) {
+    const h = harness(), file = new File(["exact video bytes"], name, { type });
+    h.state.config.acceptedVideoTypes = suppliedTypes;
+    let uploadEntries, pendingFile;
+    h.context.respond = async (path, options) => {
+      if (path === "/api/me") return account("available");
+      assert.equal(path, "/api/assets");
+      uploadEntries = options.body.entries;
+      pendingFile = h.state.pendingUpload.file;
+      return new Response("Fixture stops after checking the upload", { status: 415 });
+    };
+    h.select(file).onerror();
+    await h.submit();
+    const [[field, content, filename]] = uploadEntries;
+    assert.equal(field, "file");
+    assert.equal(filename ?? content.name, name, "Preserve the original filename in multipart");
+    assert.equal(content.type, expectedType, name);
+    assert.equal(await content.text(), await file.text(), "Preserve the video bytes");
+    assert.equal(pendingFile, file, "Receipt state uses the selected File");
+    if (expectedType === type) assert.equal(content, file);
+    assert.equal(h.requests.filter(r => r.path === "/api/assets" && r.method === "POST").length, 1);
+  }
   const receiptStorageKey = "wayline-pending-research-v1";
   const marker = "a".repeat(64);
   const receiptRecord = { version: 1, principal: marker, key: "original-queue-key" };

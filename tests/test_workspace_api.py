@@ -16,6 +16,38 @@ def fake_mp4(size: int = 64) -> bytes:
     return b"\x00\x00\x00\x18ftypisom" + b"\x00" * max(0, size - 12)
 
 
+@pytest.mark.parametrize(
+    ("filename", "media_type", "header"),
+    [
+        ("capture.mp4", "video/mp4", fake_mp4()),
+        ("capture.m4v", "video/mp4", fake_mp4()),
+        ("capture.mov", "video/mp4", fake_mp4()),
+        ("capture.mov", "video/quicktime", fake_mp4()),
+        ("capture.avi", "video/x-msvideo", b"RIFF\x00\x00\x00\x00AVI " + b"\x00" * 52),
+        ("capture.mkv", "video/x-matroska", b"\x1a\x45\xdf\xa3" + b"\x00" * 60),
+    ],
+)
+def test_public_upload_types_match_accepted_file_pairs(
+    authenticated_client, filename, media_type, header
+):
+    configuration = authenticated_client.get("/api/config")
+    assert configuration.status_code == 200
+    suffix = "." + filename.rsplit(".", 1)[1]
+    assert suffix in configuration.json()["acceptedVideoTypes"][media_type]
+    uploaded = authenticated_client.post(
+        "/api/assets", files={"file": (filename, header, media_type)}
+    )
+    assert uploaded.status_code == 201
+
+
+def test_upload_still_requires_an_accepted_declared_type(authenticated_client):
+    response = authenticated_client.post(
+        "/api/assets", files={"file": ("capture.mp4", fake_mp4(), "application/octet-stream")}
+    )
+    assert response.status_code == 415
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+
+
 @pytest.mark.parametrize("limit", [2048, 4096])
 @pytest.mark.parametrize("long_side", ["width", "height"])
 def test_public_resolution_limit_matches_upload_validation(

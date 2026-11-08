@@ -1076,13 +1076,17 @@ function renderCaptureCrop(cropped = false) {
 
 function releaseCapturePreview() {
   const preview = byId("capturePreview");
+  preview.onerror = null;
   preview.pause();
   preview.removeAttribute("src");
   preview.load();
   if (state.capturePreviewUrl) URL.revokeObjectURL(state.capturePreviewUrl);
   state.capturePreviewUrl = null;
+  preview.hidden = false;
   byId("capturePreviewPanel").hidden = true;
   byId("capturePreviewMeta").textContent = "";
+  byId("capturePreviewStatus").textContent = "";
+  byId("capturePreviewStatus").hidden = true;
   byId("captureCropButton").hidden = true;
   renderCaptureCrop();
 }
@@ -1090,8 +1094,17 @@ function releaseCapturePreview() {
 function showCapturePreview(file, duration, width, height) {
   releaseCapturePreview();
   try {
-    state.capturePreviewUrl = URL.createObjectURL(file);
-    byId("capturePreview").src = state.capturePreviewUrl;
+    const preview = byId("capturePreview"), url = URL.createObjectURL(file);
+    state.capturePreviewUrl = url;
+    preview.onerror = () => {
+      if (state.capturePreviewUrl !== url) return;
+      preview.hidden = true;
+      byId("capturePreviewStatus").textContent = "Preview unavailable in this browser. Create scene will check the video after upload.";
+      byId("capturePreviewStatus").hidden = false;
+      byId("captureCropButton").hidden = true;
+      renderCaptureCrop();
+    };
+    preview.src = url;
     byId("capturePreviewMeta").textContent = `${file.name} · ${formatBytes(file.size)}${duration ? ` · ${duration.toFixed(1)} seconds` : ""}`;
     byId("capturePreviewPanel").hidden = false;
     byId("captureCropButton").hidden = !(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > width);

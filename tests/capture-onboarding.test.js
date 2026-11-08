@@ -2927,6 +2927,45 @@ async function main() {
     Object.assign(video, { duration: 5, videoWidth: 5120, videoHeight: 2880 }); video.onloadedmetadata();
     assert.equal(h.state.captureCheck.status, "valid", "An unavailable local limit leaves server validation authoritative");
   }
+  for (const metadataAvailable of [true, false]) {
+    const h = harness(), metadata = h.select();
+    if (metadataAvailable) {
+      Object.assign(metadata, { duration: 12, videoWidth: 1080, videoHeight: 1920 });
+      metadata.onloadedmetadata();
+      h.node("captureCropButton").events.get("click")();
+    } else metadata.onerror();
+    const preview = h.node("capturePreview"), previewError = preview.onerror;
+    assert.equal(typeof previewError, "function", "Handle an unsupported browser preview");
+    previewError();
+    assert.equal(preview.hidden, true);
+    assert.equal(h.node("capturePreviewPanel").hidden, false);
+    assert.equal(h.node("capturePreviewStatus").hidden, false);
+    assert.match(h.node("capturePreviewStatus").textContent, /Preview unavailable.*Create scene.*after upload/);
+    assert.match(h.node("capturePreviewMeta").textContent, /room.mp4/);
+    assert.equal(h.node("captureCropButton").hidden, true);
+    assert.equal(h.node("captureCropHelp").hidden, true);
+    assert.equal(h.node("capturePreviewPanel").classList.contains("cropped"), false);
+    assert.equal(h.node("researchButton").disabled, false);
+    assert.equal(h.state.captureCheck.status, metadataAvailable ? "valid" : "fallback");
+    assert.equal(h.requests.length, 0, "A preview failure never uploads or submits by itself");
+    const oldUrl = h.state.capturePreviewUrl;
+    const replacement = h.select({ name: "replacement.mp4", size: 1024 });
+    assert.equal(h.node("capturePreviewStatus").hidden, true);
+    assert.equal(h.node("capturePreviewStatus").textContent, "");
+    Object.assign(replacement, { duration: 4, videoWidth: 1280, videoHeight: 720 });
+    replacement.onloadedmetadata();
+    previewError();
+    assert.equal(preview.hidden, false, "A stale error cannot hide the replacement preview");
+    assert.equal(h.node("capturePreviewStatus").hidden, true);
+    assert.equal(h.revokedUrls.filter(url => url === oldUrl).length, 1);
+    const replacementError = preview.onerror;
+    h.context.showLogin();
+    replacementError();
+    assert.equal(preview.onerror, null);
+    assert.equal(h.node("capturePreviewStatus").hidden, true);
+    assert.equal(h.node("capturePreviewPanel").hidden, true);
+  }
+  assert.match(markup, /id="capturePreviewStatus"[^>]*role="status"[^>]*hidden/);
   for (const [width, height, portrait] of [[1080, 1920, true], [720, 1280, true], [1920, 1080, false],
     [1080, 1080, false], [0, 1920, false], [1080, 0, false], [NaN, 1920, false], [1080, Infinity, false]]) {
     const h = harness(), metadata = h.select();

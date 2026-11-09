@@ -1140,6 +1140,13 @@ function validateSelectedCapture() {
     display("invalid", `Choose a video no larger than ${formatBytes(state.config.maxUploadBytes)}.`);
     return;
   }
+  const acceptedTypes = state.config?.acceptedVideoTypes;
+  const declaredType = (file.type || "").toLowerCase().split(";", 1)[0];
+  if (declaredType && acceptedTypes && Object.keys(acceptedTypes).length && !Object.hasOwn(acceptedTypes, declaredType)) {
+    const formats = [...new Set(Object.values(acceptedTypes).flat())].join(", ");
+    display("invalid", `This file type is not supported. Choose a video in one of these formats: ${formats}.`);
+    return;
+  }
   display("checking", "Checking clip length…");
   const video = document.createElement("video");
   let url = null, timer = null, finished = false;

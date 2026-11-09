@@ -176,6 +176,27 @@ async function main() {
     "video/mp4": [".m4v", ".mov", ".mp4"], "video/quicktime": [".mov"],
     "video/x-msvideo": [".avi"], "video/x-matroska": [".mkv"],
   };
+  for (const type of ["video/webm", "image/png", "application/octet-stream"]) {
+    const h = harness();
+    h.state.config.acceptedVideoTypes = acceptedVideoTypes;
+    const file = new File(["unsupported contents"], "capture.webm", { type });
+    h.select(file);
+    assert.equal(h.state.captureCheck.status, "invalid", "Reject a published unsupported type before transfer");
+    assert.equal(h.node("video").getAttribute("aria-invalid"), "true");
+    assert.match(h.node("captureMessage").textContent, /file type is not supported/);
+    assert.match(h.node("captureMessage").textContent, /\.mp4/);
+    assert.equal(h.node("researchButton").disabled, true);
+    assert.equal(h.node("capturePreviewPanel").hidden, true);
+    assert.equal(h.videos.length, 0, "No metadata probe for a known unsupported type");
+    await h.submit();
+    assert.equal(h.requests.length, 0, "No preflight, upload, or reconstruction request");
+    const replacement = h.select(new File(["supported contents"], "replacement.mp4", { type: "video/mp4" }));
+    replacement.duration = 5; replacement.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, "valid");
+    assert.equal(h.node("video").hasAttribute("aria-invalid"), false);
+    assert.equal(h.node("researchButton").disabled, false);
+    assert.match(h.node("captureMessage").textContent, /ready to upload/);
+  }
   for (const [name, type, expectedType, suppliedTypes] of [
     ["room.mp4", "", "video/mp4", acceptedVideoTypes],
     ["room.M4V", "", "video/mp4", acceptedVideoTypes],
@@ -186,7 +207,9 @@ async function main() {
     ["room.webm", "", "", acceptedVideoTypes],
     ["mp4", "", "", acceptedVideoTypes],
     [".mp4", "", "", acceptedVideoTypes],
-    ["room.mp4", "video/webm", "video/webm", acceptedVideoTypes],
+    ["room.mp4", "video/webm", "video/webm", undefined],
+    ["room.mp4", "video/webm", "video/webm", {}],
+    ["room.mov", "video/mp4;codecs=avc1", "video/mp4;codecs=avc1", acceptedVideoTypes],
     ["room.mov", "video/quicktime", "video/quicktime", acceptedVideoTypes],
     ["room.mp4", "", "", undefined],
     ["room.mp4", "", "", {}],
@@ -212,6 +235,31 @@ async function main() {
     assert.equal(pendingFile, file, "Receipt state uses the selected File");
     if (expectedType === type) assert.equal(content, file);
     assert.equal(h.requests.filter(r => r.path === "/api/assets" && r.method === "POST").length, 1);
+  }
+  for (const stage of ["upload", "research"]) {
+    const h = harness(), file = new File(["video"], "capture.webm", { type: "video/webm" });
+    h.context.respond = async path => {
+      if (path === "/api/me") return account("available");
+      if (path === "/api/assets") return stage === "upload"
+        ? new Response("Upload acknowledgement lost", { status: 500 }) : { id: "accepted-upload" };
+      if (path === "/api/jobs/research") return new Response("Queue acknowledgement lost", { status: 500 });
+      if (path === `/api/submissions/${stage}`) return new Response("Not confirmed", { status: 404 });
+      assert.fail(`Unexpected receipt request: ${path}`);
+    };
+    h.select(file).onerror(); await h.submit();
+    const field = stage === "upload" ? "pendingUpload" : "pendingResearch", receipt = h.state[field];
+    assert.ok(receipt, "Retain an unconfirmed submission made before the format list was available");
+    h.state.config.acceptedVideoTypes = acceptedVideoTypes;
+    h.context.validateSelectedCapture();
+    assert.equal(h.state.captureCheck.status, "invalid");
+    assert.equal(h.state[field], receipt);
+    assert.equal(h.node("researchButton").disabled, false, "Local format validation must not block receipt recovery");
+    const count = h.requests.length;
+    await h.submit();
+    const checks = h.requests.slice(count);
+    assert.equal(checks[0].path, `/api/submissions/${stage}`);
+    assert.ok(checks.every(r => r.method === "GET"), "Recovery does not retransmit the video or create another scene");
+    assert.equal(h.state[field], receipt, "An unconfirmed status check retains the original receipt");
   }
   const receiptStorageKey = "wayline-pending-research-v1";
   const marker = "a".repeat(64);

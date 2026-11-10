@@ -458,6 +458,8 @@ class WorkspaceService:
                     "The declared media type does not match the file contents.", status_code=415
                 )
             metadata = self.inspector.inspect(path)
+            if metadata["frames"] < 2:
+                raise UploadRejected("Choose a video with at least two frames for reconstruction.")
             if (
                 metadata.get("samplingDurationSeconds", metadata["durationSeconds"])
                 > self.settings.max_video_seconds

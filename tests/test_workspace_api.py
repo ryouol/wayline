@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import cv2
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from lingbot_map.workspace.app import create_app
 from lingbot_map.workspace.database import token_digest
-from lingbot_map.workspace.service import WorkspaceService
+from lingbot_map.workspace.modal_engine import ModalLingbotEngine
+from lingbot_map.workspace.service import VideoInspector, WorkspaceService
 
 from .conftest import BOOTSTRAP_TOKEN
 
@@ -38,6 +41,54 @@ def test_public_upload_types_match_accepted_file_pairs(
         "/api/assets", files={"file": (filename, header, media_type)}
     )
     assert uploaded.status_code == 201
+
+
+def test_single_frame_upload_is_rejected_without_retaining_data_or_using_allowance(
+    authenticated_client, service, tenant_id, tmp_path
+):
+    service.inspector = VideoInspector()
+    before = service.database.quota(tenant_id)
+    headers = {"Idempotency-Key": "minimum-frames-replacement"}
+
+    def upload_frames(count):
+        path = tmp_path / f"{count}-frames.avi"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+        assert writer.isOpened()
+        try:
+            for index in range(count):
+                writer.write(np.full((48, 64, 3), index * 100, dtype=np.uint8))
+        finally:
+            writer.release()
+        return authenticated_client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": (path.name, path.read_bytes(), "video/x-msvideo")},
+        )
+
+    rejected = upload_frames(1)
+    assert rejected.status_code == 400
+    assert "at least two frames" in rejected.json()["detail"]
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).status_code == 404
+    assert service.database.quota(tenant_id) == before
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+
+    accepted = upload_frames(2)
+    assert accepted.status_code == 201
+    asset = accepted.json()
+    assert asset["metadata"]["frames"] == 2
+    assert ModalLingbotEngine(service.settings).estimate_units(asset["metadata"], {}) == 2
+    assert upload_frames(2).json()["id"] == asset["id"]
+    assert (
+        authenticated_client.get("/api/submissions/upload", headers=headers).json()["id"]
+        == asset["id"]
+    )
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    quota = service.database.quota(tenant_id)
+    for field in ("quota_units", "reserved_units", "consumed_units", "available_units"):
+        assert quota[field] == before[field]
 
 
 def test_upload_still_requires_an_accepted_declared_type(authenticated_client):

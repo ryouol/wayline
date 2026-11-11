@@ -109,6 +109,26 @@ class VideoInspector:
             "height": height,
         }
 
+    def validate_boundary_frames(self, path: Path, frames: int) -> None:
+        """Check the mandatory first/last samples after upload limits have passed."""
+        import cv2
+
+        message = (
+            "The beginning or end of this video could not be decoded. "
+            "Try exporting the video again."
+        )
+        capture = cv2.VideoCapture(str(path))
+        try:
+            for index in (0, frames - 1):
+                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    raise UploadRejected(message)
+        except cv2.error as error:
+            raise UploadRejected(message) from error
+        finally:
+            capture.release()
+
 
 class WorkspaceService:
     def __init__(
@@ -478,6 +498,7 @@ class WorkspaceService:
                     f"Video dimensions exceed {self.settings.max_video_dimension}px.",
                     status_code=413,
                 )
+            self.inspector.validate_boundary_frames(path, metadata["frames"])
             metadata["container"] = detected
             scope = "POST:/api/assets"
             payload = {

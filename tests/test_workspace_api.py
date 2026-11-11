@@ -99,6 +99,85 @@ def test_upload_still_requires_an_accepted_declared_type(authenticated_client):
     assert authenticated_client.get("/api/assets").json()["assets"] == []
 
 
+@pytest.mark.parametrize("retained_fraction", [0.55, 0.85])
+def test_truncated_upload_is_rejected_and_a_complete_replacement_can_be_retried(
+    authenticated_client, service, tenant_id, tmp_path, retained_fraction
+):
+    service.inspector = VideoInspector()
+    path = tmp_path / "capture.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+    assert writer.isOpened()
+    try:
+        for index in range(20):
+            writer.write(np.full((48, 64, 3), index * 10, dtype=np.uint8))
+    finally:
+        writer.release()
+    complete = path.read_bytes()
+    truncated = complete[: int(len(complete) * retained_fraction)]
+    path.write_bytes(truncated)
+    # The damaged container still advertises enough frames to pass metadata checks.
+    assert service.inspector.inspect(path)["frames"] == 20
+    before = service.database.quota(tenant_id)
+    headers = {"Idempotency-Key": "truncated-capture-replacement"}
+
+    def upload(data):
+        return authenticated_client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": (path.name, data, "video/x-msvideo")},
+        )
+
+    rejected = upload(truncated)
+    assert rejected.status_code == 400
+    assert "could not be decoded" in rejected.json()["detail"]
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).status_code == 404
+    assert service.database.quota(tenant_id) == before
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+    with service.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM object_claims").fetchone()[0] == 0
+
+    accepted = upload(complete)
+    assert accepted.status_code == 201
+    asset = accepted.json()
+    assert asset["metadata"]["frames"] == 20
+    assert upload(complete).json()["id"] == asset["id"]
+    assert (
+        authenticated_client.get("/api/submissions/upload", headers=headers).json()["id"]
+        == asset["id"]
+    )
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    quota = service.database.quota(tenant_id)
+    for field in ("quota_units", "reserved_units", "consumed_units", "available_units"):
+        assert quota[field] == before[field]
+
+
+@pytest.mark.parametrize("exceeded_limit", ["durationSeconds", "frames", "width"])
+def test_upload_limits_are_checked_before_decoding_boundary_frames(
+    authenticated_client, service, monkeypatch, exceeded_limit
+):
+    metadata = service.inspector.inspect(None)
+    limits = {
+        "durationSeconds": service.settings.max_video_seconds,
+        "frames": service.settings.max_video_frames,
+        "width": service.settings.max_video_dimension,
+    }
+    metadata[exceeded_limit] = limits[exceeded_limit] + 1
+    monkeypatch.setattr(service.inspector, "inspect", lambda _path: metadata)
+
+    def unexpected_decode(*_args):
+        pytest.fail("Over-limit uploads must be rejected before decoding")
+
+    monkeypatch.setattr(service.inspector, "validate_boundary_frames", unexpected_decode)
+    response = authenticated_client.post(
+        "/api/assets", files={"file": ("capture.mp4", fake_mp4(), "video/mp4")}
+    )
+    assert response.status_code == 413
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+
+
 @pytest.mark.parametrize("limit", [2048, 4096])
 @pytest.mark.parametrize("long_side", ["width", "height"])
 def test_public_resolution_limit_matches_upload_validation(

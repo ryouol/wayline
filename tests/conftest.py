@@ -13,6 +13,9 @@ BOOTSTRAP_TOKEN = "test-workspace-token-that-is-long-enough"
 
 
 class StubInspector:
+    def validate_boundary_frames(self, _path, _frames):
+        pass
+
     def inspect(self, _path):
         return {
             "fps": 10.0,

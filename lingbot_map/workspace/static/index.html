@@ -71,7 +71,8 @@
         <h1 id="accountTitle" tabindex="-1">Your own space<br>starts here.</h1>
         <p class="account-description" id="accountDescription">Two videos to start. A new way to see it.</p>
         <a class="secondary google-button wide" id="googleLogin" href="/auth/google/start" hidden><img src="/static/icons/google-logo.svg" alt="" width="20" height="20"><span id="googleLoginLabel">Continue with Google</span></a>
-        <p class="supporting" id="onboardingStatus" role="status">Loading sign-in options…</p>
+        <p class="supporting" id="onboardingStatus" role="status" tabindex="-1">Loading sign-in options…</p>
+        <button class="secondary" id="retryConfigButton" type="button" aria-label="Retry sign-in options" aria-describedby="onboardingStatus" hidden>Try again</button>
         <p class="form-message" id="trialMessage" role="alert"></p>
         <button class="secondary" id="trialButton" type="button" hidden>Open synthetic playground</button>
         <p class="account-switch" id="accountSwitch">Already have an account? <button class="text-button" type="button" data-account-entry="login">Sign in</button></p>

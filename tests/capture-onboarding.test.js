@@ -172,6 +172,67 @@ function harness(search = "", storage = new Map()) {
 }
 
 async function main() {
+  for (const failure of ["gateway", "network", "json"]) {
+    const h = harness("#signin"), retry = h.node("retryConfigButton");
+    h.state.config = null;
+    retry.hidden = true;
+    h.context.respond = async () => {
+      if (failure === "network") throw new TypeError("Failed to fetch");
+      return new Response(failure === "json" ? "broken JSON" : "Bad gateway", { status: failure === "json" ? 200 : 502 });
+    };
+    await h.context.loadPublicConfig();
+    assert.equal(retry.hidden, false, "A failed configuration load must offer an in-page retry");
+    assert.equal(retry.disabled, false);
+    assert.match(h.node("onboardingStatus").textContent, /Try again/);
+    const pending = deferred();
+    h.context.respond = () => pending.promise;
+    h.context.document.activeElement = retry;
+    const recovery = retry.events.get("click")();
+    assert.equal(retry.disabled, true);
+    // Browsers blur a disabled button; a user may also move elsewhere while waiting.
+    h.context.document.activeElement = failure === "network" ? h.node("accountTitle") : h.context.document.body;
+    await h.context.loadPublicConfig();
+    assert.equal(h.requests.length, 2, "Concurrent attempts do not duplicate the configuration request");
+    pending.resolve({ ...config, newAccountsAvailable: false });
+    await recovery;
+    assert.equal(retry.hidden, true);
+    assert.equal(retry.disabled, false);
+    assert.equal(h.node("googleLogin").hidden, false, "Returning users retain sign-in when signup is full");
+    assert.equal(h.node("googleLogin").focusCount, failure === "network" ? 0 : 1);
+    assert.match(h.node("onboardingStatus").textContent, /Sign in securely/);
+    assert.equal(h.context.location.hash, "#signin");
+    assert.equal(h.state.csrf, "csrf");
+    assert.deepEqual(h.requests.map(r => [r.path, r.method]), [["/api/config", "GET"], ["/api/config", "GET"]]);
+    assert.equal(h.timers.size, 0, "Completed attempts release their timeout");
+  }
+  {
+    const h = harness("#signup"), retry = h.node("retryConfigButton");
+    h.state.config = null;
+    let signal;
+    h.context.respond = (_path, options) => new Promise((_resolve, reject) => {
+      signal = options.signal;
+      signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+    const stalled = h.context.loadPublicConfig();
+    const deadline = [...h.timers.values()].find(timer => timer.delay === 10000);
+    assert.ok(deadline, "Configuration loading has a finite deadline");
+    deadline.callback();
+    await stalled;
+    assert.equal(signal.aborted, true);
+    assert.equal(retry.hidden, false);
+    assert.equal(retry.disabled, false);
+    assert.match(h.node("onboardingStatus").textContent, /too long.*Try again/);
+    h.context.respond = async () => new Response("Unavailable", { status: 503 });
+    await retry.events.get("click")();
+    assert.equal(retry.hidden, false, "Another failed retry remains recoverable");
+    h.context.respond = async () => ({ ...config, newAccountsAvailable: false });
+    h.context.document.activeElement = retry;
+    await retry.events.get("click")();
+    assert.equal(h.node("googleLogin").hidden, true, "Retry does not bypass signup capacity");
+    assert.equal(h.node("onboardingStatus").focusCount, 1);
+    assert.equal(retry.hidden, true);
+    assert.equal(h.requests.length, 3);
+  }
   const acceptedVideoTypes = {
     "video/mp4": [".m4v", ".mov", ".mp4"], "video/quicktime": [".mov"],
     "video/x-msvideo": [".avi"], "video/x-matroska": [".mkv"],

@@ -1597,6 +1597,13 @@ byId("trialButton").addEventListener("click", async () => {
   finally { button.disabled = false; }
 });
 async function loadPublicConfig() {
+  const retry = byId("retryConfigButton");
+  if (retry.disabled) return;
+  const retryHadFocus = document.activeElement === retry;
+  retry.disabled = true;
+  byId("onboardingStatus").textContent = "Loading sign-in options…";
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
   const messages = { cancelled: "Google sign-in was cancelled. You can try again.",
     capacity: "New video accounts are currently full. Existing accounts can still sign in.",
     failed: "Google sign-in did not finish. Please try again.",
@@ -1608,8 +1615,8 @@ async function loadPublicConfig() {
     history.replaceState(null, "", `${location.pathname}#signin`);
   }
   try {
-    const response = await fetch("/api/config");
-    if (!response.ok) throw new Error("Sign-in options could not be loaded. Refresh to retry.");
+    const response = await fetch("/api/config", { signal: controller.signal });
+    if (!response.ok) throw new Error("Configuration request failed.");
     state.config = await response.json();
     renderAccountActions();
     const dimensionLimit = state.config.maxVideoDimension;
@@ -1617,8 +1624,20 @@ async function loadPublicConfig() {
       + (Number.isFinite(dimensionLimit) && dimensionLimit > 0 ? ` · ${dimensionLimit}px longest side` : "");
     if (byId("video").files[0] && !state.uploading) validateSelectedCapture();
     renderSignInOptions();
-  } catch (error) { byId("onboardingStatus").textContent = error.message; }
+    const restoreFocus = retryHadFocus && (document.activeElement === retry || document.activeElement === document.body);
+    retry.hidden = true;
+    if (restoreFocus) byId(byId("googleLogin").hidden ? "onboardingStatus" : "googleLogin").focus();
+  } catch (_) {
+    byId("onboardingStatus").textContent = controller.signal.aborted
+      ? "Sign-in options took too long to load. Try again."
+      : "Sign-in options could not be loaded. Try again.";
+    retry.hidden = false;
+  } finally {
+    window.clearTimeout(timeout);
+    retry.disabled = false;
+  }
 }
+byId("retryConfigButton").addEventListener("click", loadPublicConfig);
 
 function confirmAction(title, message, label) {
   const dialog = byId("confirmDialog");

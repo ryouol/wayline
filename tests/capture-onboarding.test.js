@@ -172,6 +172,56 @@ function harness(search = "", storage = new Map()) {
 }
 
 async function main() {
+  for (const failure of ["gateway", "network", "json", "timeout"]) {
+    const h = harness("#scenes"), retry = h.node("retryCaptureConfigButton");
+    const file = new File(["capture"], "room.mp4", { type: "video/mp4" });
+    const metadata = h.select(file);
+    metadata.duration = 5; metadata.onloadedmetadata();
+    const pendingUpload = { file, headers: { "Idempotency-Key": "existing-upload" } };
+    h.state.pendingUpload = pendingUpload;
+    h.state.config = null;
+    h.node("createDialog").open = true;
+    retry.hidden = true;
+    h.context.renderAccountActions();
+    assert.equal(h.node("video").disabled, true);
+    h.context.respond = (_path, options) => {
+      if (failure === "timeout") return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+      if (failure === "network") throw new TypeError("Failed to fetch");
+      return new Response(failure === "json" ? "broken JSON" : "Bad gateway", { status: failure === "json" ? 200 : 502 });
+    };
+    const failed = h.context.loadPublicConfig();
+    if (failure === "timeout") [...h.timers.values()].find(timer => timer.delay === 10000).callback();
+    await failed;
+    assert.equal(retry.hidden, false, "Signed-in users need recovery in the visible creation dialog");
+    assert.match(h.node("captureLimits").textContent, /Capture limits.*Try again/);
+    assert.equal(h.node("video").disabled, true);
+    const response = deferred();
+    h.context.respond = () => response.promise;
+    h.context.document.activeElement = retry;
+    const recovery = retry.events.get("click")();
+    h.context.document.activeElement = failure === "network" ? h.node("accountTitle") : h.context.document.body;
+    assert.equal(retry.disabled, true);
+    assert.equal(h.node("retryConfigButton").disabled, true);
+    await h.node("retryConfigButton").events.get("click")();
+    await retry.events.get("click")();
+    assert.equal(h.requests.length, 2, "Both controls share one in-flight request");
+    if (failure === "json") h.state.reconstructionAllowance = allowance("used");
+    response.resolve({ ...config });
+    await recovery;
+    assert.equal(retry.hidden, true);
+    assert.equal(retry.disabled, false);
+    assert.match(h.node("captureLimits").textContent, /30 seconds.*4096px/);
+    assert.equal(h.node("video").disabled, failure === "json", "Recovery preserves allowance restrictions");
+    const focusTarget = h.node(failure === "json" ? "captureLimits" : "video");
+    assert.equal(focusTarget.focusCount, failure === "network" ? 0 : 1);
+    assert.equal(h.node("video").files[0], file);
+    assert.equal(h.state.pendingUpload, pendingUpload);
+    assert.equal(h.state.csrf, "csrf");
+    assert.equal(h.context.location.hash, "#scenes");
+    assert.deepEqual(h.requests.map(r => [r.path, r.method]), [["/api/config", "GET"], ["/api/config", "GET"]]);
+  }
   for (const failure of ["gateway", "network", "json"]) {
     const h = harness("#signin"), retry = h.node("retryConfigButton");
     h.state.config = null;

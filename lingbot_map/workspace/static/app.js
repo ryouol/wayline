@@ -1597,11 +1597,12 @@ byId("trialButton").addEventListener("click", async () => {
   finally { button.disabled = false; }
 });
 async function loadPublicConfig() {
-  const retry = byId("retryConfigButton");
-  if (retry.disabled) return;
-  const retryHadFocus = document.activeElement === retry;
-  retry.disabled = true;
+  const retries = [byId("retryConfigButton"), byId("retryCaptureConfigButton")];
+  if (retries.some(button => button.disabled)) return;
+  const focusedRetry = retries.find(button => document.activeElement === button);
+  for (const button of retries) button.disabled = true;
   byId("onboardingStatus").textContent = "Loading sign-in options…";
+  byId("captureLimits").textContent = "Loading capture limits…";
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10000);
   const messages = { cancelled: "Google sign-in was cancelled. You can try again.",
@@ -1624,20 +1625,28 @@ async function loadPublicConfig() {
       + (Number.isFinite(dimensionLimit) && dimensionLimit > 0 ? ` · ${dimensionLimit}px longest side` : "");
     if (byId("video").files[0] && !state.uploading) validateSelectedCapture();
     renderSignInOptions();
-    const restoreFocus = retryHadFocus && (document.activeElement === retry || document.activeElement === document.body);
-    retry.hidden = true;
-    if (restoreFocus) byId(byId("googleLogin").hidden ? "onboardingStatus" : "googleLogin").focus();
+    const restoreFocus = focusedRetry && (document.activeElement === focusedRetry || document.activeElement === document.body);
+    for (const button of retries) button.hidden = true;
+    if (restoreFocus) {
+      if (focusedRetry === byId("retryCaptureConfigButton")) {
+        if (byId("createDialog").open) byId(byId("video").disabled ? "captureLimits" : "video").focus();
+      } else byId(byId("googleLogin").hidden ? "onboardingStatus" : "googleLogin").focus();
+    }
   } catch (_) {
     byId("onboardingStatus").textContent = controller.signal.aborted
       ? "Sign-in options took too long to load. Try again."
       : "Sign-in options could not be loaded. Try again.";
-    retry.hidden = false;
+    byId("captureLimits").textContent = controller.signal.aborted
+      ? "Capture limits took too long to load. Try again."
+      : "Capture limits could not be loaded. Try again.";
+    for (const button of retries) button.hidden = false;
   } finally {
     window.clearTimeout(timeout);
-    retry.disabled = false;
+    for (const button of retries) button.disabled = false;
   }
 }
 byId("retryConfigButton").addEventListener("click", loadPublicConfig);
+byId("retryCaptureConfigButton").addEventListener("click", loadPublicConfig);
 
 function confirmAction(title, message, label) {
   const dialog = byId("confirmDialog");

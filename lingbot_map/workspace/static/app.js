@@ -865,7 +865,16 @@ function updateProgress(job) {
   setText("progressTitle", title);
   setText("progressDescription", description);
   setText("progressStep", stopped ? "Processing stopped" : cancelling ? "Cancellation requested" : step >= 0 ? `Step ${step + 1} of 5` : "In progress");
-  setText("progressNote", stopped || cancelling ? "The bar shows the last reported progress." : "Progress updates by stage. Some steps take longer than others.");
+  setText("progressNote", stopped || cancelling ? "The bar shows the last reported progress." : "You can close this page and return to this scene. Progress updates by stage; some steps take longer than others.");
+  // Submission age includes queue time and survives refreshes and worker retries.
+  // Reuse successful job polling; this is not a completion estimate or heartbeat.
+  const seconds = Math.floor(Date.now() / 1000 - job.createdAt);
+  const showElapsed = !terminalStates.has(job.state) && !cancelling
+    && Number.isFinite(job.createdAt) && job.createdAt >= 0 && seconds >= 0;
+  const minutes = Math.floor(seconds / 60);
+  const elapsed = minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  setText("progressElapsed", showElapsed ? `${elapsed} since submission, including queue time.` : "");
+  if (byId("progressElapsed").hidden !== !showElapsed) byId("progressElapsed").hidden = !showElapsed;
   byId("stageList").querySelectorAll("li").forEach((item, index) => {
     item.classList.toggle("complete", step > index);
     item.classList.toggle("current", step === index);

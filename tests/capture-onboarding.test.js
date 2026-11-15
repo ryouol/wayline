@@ -2449,6 +2449,56 @@ async function main() {
   }
 
   {
+    let now = 1700000000000;
+    const job = { id: "long-running-scene", displayName: "Room", engineId: "lingbot-research-v1",
+      state: "queued", stage: "queued", progress: 0, provenance: {}, artifacts: [],
+      createdAt: now / 1000 - 79, startedAt: null, usedUnits: 0, reservedUnits: 0 };
+    const open = async () => {
+      const h = harness();
+      h.context.Date = class extends Date { static now() { return now; } };
+      h.state.jobs = [job];
+      h.state.selectedId = job.id;
+      h.context.renderJobDetail = h.renderRealJobDetail;
+      h.context.respond = async path => path.startsWith("/api/jobs?") ? { jobs: [job], nextCursor: null } : job;
+      await h.renderRealJobDetail();
+      return h;
+    };
+    const h = await open();
+    assert.equal(h.node("progressElapsed").textContent, "1m 19s since submission, including queue time.");
+    assert.equal(h.node("progressElapsed").hidden, false);
+    assert.match(h.node("progressNote").textContent, /close this page and return/);
+    Object.assign(job, { state: "running", stage: "reconstructing", progress: 0.3, startedAt: now / 1000 });
+    now += 61000;
+    await h.context.pollJobs();
+    assert.equal(h.node("progressElapsed").textContent, "2m 20s since submission, including queue time.");
+    assert.equal(h.node("progressBar").getAttribute("aria-valuenow"), "30", "Elapsed time never advances the stage percentage");
+    assert.equal((await open()).node("progressElapsed").textContent, h.node("progressElapsed").textContent,
+      "Reopening the scene derives the same age from its original submission");
+    now += 3600000;
+    await h.context.pollJobs();
+    assert.equal(h.node("progressElapsed").textContent, "1h 2m since submission, including queue time.");
+    for (const createdAt of [undefined, null, NaN, Infinity, -1, now / 1000 + 10]) {
+      h.context.updateProgress({ ...job, createdAt });
+      assert.equal(h.node("progressElapsed").hidden, true, "Missing, invalid or future timestamps do not invent an age");
+      assert.equal(h.node("progressElapsed").textContent, "");
+    }
+    for (const status of [{ cancellationRequested: true }, { state: "failed" }, { state: "cancelled" }, { state: "ready" }]) {
+      h.context.respond = async () => ({ ...job, ...status });
+      await h.renderRealJobDetail();
+      assert.equal(h.node("progressElapsed").hidden, true, "Cancellation and completion remove the active wait counter");
+      assert.equal(h.node("progressElapsed").textContent, "");
+      if (status.state !== "ready") assert.doesNotMatch(h.node("progressNote").textContent, /close this page/);
+    }
+    h.context.respond = async () => ({ ...job, id: "newer-scene", createdAt: now / 1000 - 5 });
+    h.state.selectedId = "newer-scene";
+    await h.renderRealJobDetail();
+    assert.equal(h.node("progressElapsed").textContent, "0m 5s since submission, including queue time.");
+    assert.ok(h.requests.every(request => !request.options.method || request.options.method === "GET"));
+    assert.match(markup, /<p class="progress-note" id="progressElapsed" hidden><\/p>/,
+      "The ticking age stays outside the live status region");
+  }
+
+  {
     const h = harness();
     for (const remaining of [2, 1, 0]) {
       h.context.showApp(user, "csrf", allowance(remaining ? "available" : "used", remaining));

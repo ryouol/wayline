@@ -11,6 +11,10 @@
 <body>
   <a class="skip-link" href="#loginTitle" id="skipLink">Skip to main content</a>
   <p class="signin-notice" id="signinNotice" role="status" hidden></p>
+  <div class="signin-notice" id="startupNotice" hidden>
+    <p id="startupMessage" role="alert">We couldn’t load your workspace. Reload to check your session and try again.</p>
+    <button class="secondary" id="reloadWorkspaceButton" type="button" aria-describedby="startupMessage">Reload workspace</button>
+  </div>
 
   <main class="login-shell" id="loginView">
     <header class="landing-nav">

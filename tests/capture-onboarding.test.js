@@ -480,10 +480,12 @@ async function main() {
     assert.equal(h.state.pendingResearch, null);
     assert.equal(h.node("researchButton").textContent, "Create scene");
     if (failure === "network") {
+      assert.equal(h.node("startupNotice").hidden, false);
       assert.deepEqual(JSON.parse(storage.get(receiptStorageKey)), receiptRecord,
         "A transient startup failure must not erase the unconfirmed operation");
       h.context.respond = standard;
       await h.context.initialize();
+      assert.equal(h.node("startupNotice").hidden, true);
       assert.equal(h.node("researchButton").textContent, "Check scene status");
     } else assert.equal(storage.has(receiptStorageKey), false);
   }
@@ -851,6 +853,58 @@ async function main() {
     };
     return h;
   };
+  for (const endpoint of ["account", "engines"]) {
+    for (const failure of ["gateway", "network", "body"]) {
+      const h = navigationHarness("#scene=nav-1");
+      h.state.principal = ""; // Fresh page: no account has been verified yet.
+      const standard = h.context.respond, engine = h.context.engineResponse;
+      const fail = async () => {
+        if (failure === "network") throw new TypeError("Connection lost");
+        return new Response(failure === "body" ? "{" : "Gateway error", { status: failure === "body" ? 200 : 502 });
+      };
+      if (endpoint === "engines") h.context.engineResponse = fail;
+      else h.context.respond = path => path === "/api/me" ? fail() : standard(path);
+      await h.context.initialize();
+      assert.equal(h.node("startupNotice").hidden, false, `${endpoint} ${failure} is visible`);
+      assert.equal(h.node("appView").hidden, true, "No private workspace is shown before both checks succeed");
+      assert.equal(h.context.location.hash, "#scene=nav-1");
+      assert.ok(h.requests.every(r => ["/api/me", "/api/engines"].includes(r.path) && r.method === "GET"));
+      let reloads = 0;
+      h.context.location.reload = () => { reloads++; };
+      await h.node("reloadWorkspaceButton").events.get("click")();
+      assert.equal(reloads, 1);
+      assert.equal(h.context.location.hash, "#scene=nav-1", "Reload retains the private bookmark");
+      h.context.respond = standard; h.context.engineResponse = engine;
+      await h.context.initialize();
+      assert.equal(h.node("startupNotice").hidden, true);
+      assert.equal(h.node("appView").hidden, false);
+      assert.equal(h.state.selectedId, "nav-1");
+    }
+  }
+  {
+    const h = navigationHarness("#scene=nav-1"), standard = h.context.respond;
+    h.state.principal = "";
+    h.context.respond = (path, options) => path === "/api/me"
+      ? new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError"))))
+      : standard(path);
+    const loading = h.context.initialize();
+    [...h.timers.values()].find(timer => timer.delay === 60000).callback();
+    await loading;
+    assert.equal(h.node("startupNotice").hidden, false, "An expired account check offers recovery");
+    assert.equal(h.context.location.hash, "#scene=nav-1");
+  }
+  for (const change of ["unauthorized", "signed-out", "new-session"]) {
+    const h = navigationHarness("#scene=nav-1"), pending = deferred();
+    h.context.respond = () => pending.promise;
+    const loading = h.context.initialize();
+    if (change !== "unauthorized") h.context.showLogin();
+    if (change === "new-session") h.context.showApp(user, "new-csrf", allowance("available"));
+    pending.resolve(change === "unauthorized" ? new Response("Signed out", { status: 401 }) : account("available"));
+    await loading;
+    assert.equal(h.node("startupNotice").hidden, true, "Stale startup errors and 401s do not show a misleading reload prompt");
+    assert.equal(h.node("appView").hidden, change !== "new-session");
+    if (change === "new-session") assert.equal(h.state.csrf, "new-csrf");
+  }
   {
     const last = navigationJobs[29];
     const h = navigationHarness();

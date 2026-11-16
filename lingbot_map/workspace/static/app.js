@@ -316,6 +316,7 @@ function updateSceneLocation(jobId, { replace = false } = {}) {
 const compareJobs = (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
 function secureReset({ preserveRecovery = false } = {}) {
+  byId("startupNotice").hidden = true;
   if (state.principal && sceneIdFromLocation()) updateSceneLocation(null, { replace: true });
   state.epoch += 1;
   cancelCaptureCheck();
@@ -448,6 +449,7 @@ function showApp(user, csrfToken, allowance = null, retention = null) {
   renderRetention();
   byId("shareButton").hidden = state.accountType === "trial" || !byId("shareButton").dataset.artifactId;
   renderAccountActions();
+  byId("startupNotice").hidden = true;
   byId("loginView").hidden = true;
   byId("accountView").hidden = true;
   byId("appView").hidden = false;
@@ -1201,12 +1203,16 @@ function validateSelectedCapture() {
 }
 
 async function initialize() {
+  const epoch = state.epoch;
   try {
     await refreshAccount();
-  } catch (_) {
+  } catch (error) {
+    // A confirmed sign-out or newer session has already chosen the right view.
+    if (epoch !== state.epoch || error?.name === "AbortError") return;
     // A transient startup read failure must not erase a saved receipt. A 401
     // already clears recovery through api() before reaching this catch.
     showLogin({ preserveRecovery: true });
+    byId("startupNotice").hidden = false;
     return;
   }
   restorePendingSubmissions();
@@ -1219,6 +1225,8 @@ async function initialize() {
   } catch (error) { report(error); }
   if (state.pendingResearch || state.pendingUpload) openCreateScene({ refresh: false });
 }
+
+byId("reloadWorkspaceButton").addEventListener("click", () => window.location.reload());
 
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();

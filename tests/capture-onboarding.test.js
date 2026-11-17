@@ -172,6 +172,49 @@ function harness(search = "", storage = new Map()) {
 }
 
 async function main() {
+  {
+    const h = harness(), note = h.node("captureSampling");
+    h.state.config.maxVideoSeconds = 60;
+    h.node("sampleFps").value = "3"; h.node("frameLimit").value = "120";
+    const metadata = h.select();
+    assert.equal(note.hidden, true, "No estimate before metadata is available");
+    metadata.duration = 5.1; metadata.onloadedmetadata();
+    assert.match(note.textContent, /up to 16 frames across the whole clip/);
+    assert.match(note.textContent, /final count depends on the source video/);
+    assert.equal(note.hidden, false);
+    const file = h.node("video").files[0], allowanceBefore = h.state.reconstructionAllowance;
+    const edit = (id, value) => { h.node(id).value = value; h.node(id).events.get("input")(); };
+    edit("sampleFps", "15"); edit("frameLimit", "30");
+    assert.match(note.textContent, /up to 30 frames/);
+    assert.match(note.textContent, /Maximum frames setting caps/);
+    edit("sampleFps", "1");
+    assert.match(note.textContent, /up to 6 frames/);
+    assert.doesNotMatch(note.textContent, /setting caps/);
+    for (const [id, bad, good] of [["sampleFps", "", "1"], ["sampleFps", "1.5", "1"],
+      ["sampleFps", "16", "3"], ["frameLimit", "29", "30"], ["frameLimit", "121", "120"]]) {
+      edit(id, bad); assert.equal(note.hidden, true); assert.equal(note.textContent, ""); edit(id, good);
+    }
+    const long = h.select(file); long.duration = 60; long.onloadedmetadata();
+    assert.match(note.textContent, /up to 120 frames/);
+    assert.match(note.textContent, /setting caps/);
+    for (const field of ["pendingResearch", "pendingUpload"]) {
+      h.state[field] = {}; h.context.renderReconstructionStatus();
+      assert.equal(note.hidden, true, "An unconfirmed operation must not advertise new sampling settings");
+      h.state[field] = null;
+    }
+    const unknown = h.select(file); unknown.onerror();
+    assert.equal(note.hidden, true, "Unreadable metadata does not retain an old estimate");
+    const invalid = h.select(file); invalid.duration = 61; invalid.onloadedmetadata();
+    assert.equal(note.hidden, true, "An invalid capture has no sampling estimate");
+    const short = h.select(file); short.duration = 0.1; short.onloadedmetadata();
+    assert.match(note.textContent, /up to 2 frames/);
+    assert.equal(h.node("video").files[0], file);
+    assert.equal(h.state.reconstructionAllowance, allowanceBefore);
+    assert.equal(h.requests.length, 0, "Sampling feedback is local and does not start processing");
+    h.context.secureReset();
+    assert.equal(note.hidden, true);
+    assert.equal(note.textContent, "");
+  }
   for (const failure of ["gateway", "network", "json", "timeout"]) {
     const h = harness("#scenes"), retry = h.node("retryCaptureConfigButton");
     const file = new File(["capture"], "room.mp4", { type: "video/mp4" });

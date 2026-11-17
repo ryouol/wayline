@@ -1029,6 +1029,7 @@ function restorePendingSubmissions() {
 }
 
 function renderReconstructionStatus() {
+  renderCaptureSampling();
   const trial = state.accountType === "trial";
   const google = state.accountType === "google";
   const owner = state.accountType === "owner";
@@ -1073,6 +1074,26 @@ function renderReconstructionStatus() {
 function cancelCaptureCheck() {
   state.captureCheck?.cancel?.();
   state.captureCheck = null;
+  renderCaptureSampling();
+}
+
+function renderCaptureSampling() {
+  const check = state.captureCheck, node = byId("captureSampling");
+  const fps = Number(byId("sampleFps").value), limit = Number(byId("frameLimit").value);
+  const valid = check?.file === byId("video").files[0] && check?.status === "valid"
+    && Number.isFinite(check.duration) && check.duration > 0
+    && Number.isInteger(fps) && fps >= 1 && fps <= 15
+    && Number.isInteger(limit) && limit >= 30 && limit <= 120
+    && !state.pendingResearch && !state.pendingUpload;
+  let text = "";
+  if (valid) {
+    const requested = Math.max(2, Math.ceil(check.duration * fps));
+    text = `Estimated sampling: up to ${Math.min(limit, requested)} frames across the whole clip.`
+      + (requested > limit ? " The Maximum frames setting caps this estimate." : "")
+      + " The final count depends on the source video.";
+  }
+  if (node.textContent !== text) node.textContent = text;
+  node.hidden = !valid;
 }
 
 function renderCaptureCrop(cropped = false) {
@@ -1183,6 +1204,7 @@ function validateSelectedCapture() {
       if (state.config && duration > state.config.maxVideoSeconds) {
         display("invalid", `Choose a clip up to ${state.config.maxVideoSeconds} seconds. This clip is ${Math.ceil(duration)} seconds.`);
       } else {
+        check.duration = duration;
         display("valid", `${formatBytes(file.size)} · ${duration.toFixed(1)} seconds · ready to upload`);
         showCapturePreview(file, duration, width, height);
       }
@@ -1601,6 +1623,8 @@ byId("fullScreen").addEventListener("click", async () => {
   } catch (_) { toast("Full screen is unavailable in this browser."); }
 });
 byId("video").addEventListener("change", validateSelectedCapture);
+byId("sampleFps").addEventListener("input", renderCaptureSampling);
+byId("frameLimit").addEventListener("input", renderCaptureSampling);
 byId("trialButton").addEventListener("click", async () => {
   const button = byId("trialButton"); button.disabled = true;
   byId("trialMessage").textContent = "Opening your private playground…";

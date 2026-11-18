@@ -3,10 +3,11 @@
 (async function loadSharedScene() {
   const status = document.getElementById("sharedStatus");
   const download = document.getElementById("sharedDownload");
+  const retry = document.getElementById("reloadSharedScene");
   const controller = new AbortController();
   const timeline = new window.SceneTimeline(document.getElementById("sharedTimeline"));
-  let viewer = null, expiryTimer = null, downloadUrl = null;
-  function unavailable(message, title = "This link is no longer available.") {
+  let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null;
+  function unavailable(message, title = "This link is no longer available.", canRetry = false) {
     close();
     document.querySelector(".shared-viewer").hidden = true;
     document.getElementById("shareLicense").hidden = true;
@@ -14,10 +15,12 @@
     document.getElementById("shareUnavailableTitle").textContent = title;
     document.getElementById("shareUnavailableMessage").textContent = message;
     document.getElementById("shareUnavailable").hidden = false;
+    retry.hidden = !canRetry;
   }
   function close() {
     controller.abort();
     clearTimeout(expiryTimer);
+    clearTimeout(metadataTimer);
     closePreview();
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = null;
@@ -29,6 +32,10 @@
     viewer = null;
   }
   window.addEventListener("pagehide", close, { once: true });
+  retry.addEventListener("click", () => {
+    retry.disabled = true;
+    location.reload();
+  });
   document.getElementById("sharedSkipLink").addEventListener("click", (event) => {
     event.preventDefault();
     document.getElementById("shareTitle").focus();
@@ -44,13 +51,18 @@
       return;
     }
     const headers = { Authorization: `Bearer ${token}` };
+    metadataTimer = setTimeout(() => {
+      if (!controller.signal.aborted) unavailable("Loading took too long. Reload this scene to try again.", "Unable to load this scene.", true);
+    }, 15000);
     const response = await fetch("/api/public/share", { headers, credentials: "omit", signal: controller.signal });
+    if (controller.signal.aborted) return;
     if (!response.ok) {
       if ([401, 403, 404, 410].includes(response.status)) unavailable("This link is invalid or has expired.");
-      else unavailable("The shared scene could not be loaded. Please try opening the link again.", "Unable to load this scene.");
+      else unavailable("The shared scene could not be loaded. Reload this scene to try again.", "Unable to load this scene.", true);
       return;
     }
     const data = await response.json();
+    clearTimeout(metadataTimer);
     if (controller.signal.aborted) return;
     if (data.expiresAt * 1000 <= Date.now()) {
       unavailable("This link has expired. Ask the person who shared it for a new link.");
@@ -108,6 +120,6 @@
       status.textContent = "The 3D preview couldn't be loaded. You can still download this scene.";
     }
   } catch (error) {
-    if (!controller.signal.aborted) unavailable("The shared scene could not be loaded. Please try opening the link again.", "Unable to load this scene.");
+    if (!controller.signal.aborted) unavailable("The shared scene could not be loaded. Reload this scene to try again.", "Unable to load this scene.", true);
   }
 }());

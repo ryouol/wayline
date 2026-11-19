@@ -21,7 +21,7 @@ function element(values = {}) {
 
 function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200,
   webglFailure = false, renderFailure = false, pendingDownload = false, licenseId = "NOASSERTION",
-  metadataFailure = null, ignoreMetadataAbort = false } = {}) {
+  metadataFailure = null, ignoreMetadataAbort = false, ignoreDownloadAbort = false, downloadStatus = 200 } = {}) {
   const ids = ["sharedStatus", "sharedDownload", "sharedTimeline", "shareLicense", "shareTitle",
     "shareUnavailableMessage", "shareUnavailableTitle", "shareUnavailable", "sharedZoomIn",
     "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink", "reloadSharedScene"];
@@ -32,7 +32,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   const selectors = Object.fromEntries([".shared-viewer", ".shared-viewer .viewport-wrap", ".shared-viewer .viewer-help"].map(selector => [selector, element()]));
   const requests = [], viewers = [], timelineAttachments = [], downloads = [], createdUrls = [], revokedUrls = [];
   const timers = new Map();
-  let nextTimer = 0, contentRequests = 0, releaseMetadata;
+  let nextTimer = 0, contentRequests = 0, releaseMetadata, releaseDownload;
   const metadata = {
     artifact: { filename: "office.glb", licenseId, contentUrl: "/api/public/share/content" },
     expiresAt: Math.ceil(Date.now() / 1000) + 60,
@@ -88,14 +88,20 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
       assert.equal(url, "/api/public/share/content");
       contentRequests += 1;
       if (pendingDownload && contentRequests === 2) {
-        return new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(new Error("Aborted"))));
+        const hold = value => new Promise((resolve, reject) => {
+          releaseDownload = () => resolve(value);
+          if (!ignoreDownloadAbort) options.signal.addEventListener("abort", () => reject(new Error("Aborted")));
+        });
+        const response = { ok: downloadStatus === 200, status: downloadStatus,
+          blob: async () => pendingDownload === "body" ? hold({ kind: "artifact" }) : { kind: "artifact" } };
+        return pendingDownload === "body" ? response : hold(response);
       }
       return { ok: contentStatus === 200, status: contentStatus, blob: async () => ({ kind: "artifact" }) };
     },
   };
   const run = vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/share.js"), "utf8"), scope);
   return { run, window, location, elements, selectors, requests, viewers, timelineAttachments, downloads, createdUrls, revokedUrls,
-    timers, releaseMetadata: () => releaseMetadata(),
+    timers, releaseMetadata: () => releaseMetadata(), releaseDownload: () => releaseDownload(),
     deadline() { Array.from(timers.values()).filter(timer => timer.delay === 15000).forEach(timer => timer.callback()); },
     expire() { Array.from(timers.values()).filter(timer => timer.delay !== 15000).forEach(timer => timer.callback()); } };
 }
@@ -199,6 +205,50 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(artifactRevoked.elements.sharedDownload.hidden, true, "A revoked content response closes the share immediately");
   assert.equal(artifactRevoked.elements.shareUnavailable.hidden, false);
   assert.equal(artifactRevoked.elements.shareLicense.hidden, true);
+
+  for (const pendingDownload of [true, "body"]) {
+    const cancellable = fixture({ pendingDownload }); await cancellable.run;
+    const pending = cancellable.elements.sharedDownload.click(); await settle();
+    assert.equal(cancellable.elements.sharedDownload.textContent, "Cancel download");
+    assert.notEqual(cancellable.elements.sharedDownload.disabled, true);
+    assert.notEqual(cancellable.requests.at(-1).options.signal, cancellable.requests[1].options.signal,
+      "Downloads have their own cancellation signal");
+    await cancellable.elements.sharedDownload.click(); await pending;
+    assert.equal(cancellable.requests.at(-1).options.signal.aborted, true);
+    assert.equal(cancellable.requests[1].options.signal.aborted, false, "Cancelling a download preserves the preview request");
+    assert.equal(cancellable.viewers[0].destroyed, undefined);
+    assert.equal(cancellable.elements.shareUnavailable.hidden, true);
+    assert.equal(cancellable.elements.sharedDownload.textContent, "Download GLB");
+    assert.match(cancellable.elements.sharedStatus.textContent, /Download cancelled/);
+    assert.equal(cancellable.downloads.length, 0);
+    assert.equal(cancellable.createdUrls.length, 0);
+    assert.equal(cancellable.requests.length, 3, "Cancel does not send a retry or a separate cancellation request");
+    await cancellable.elements.sharedDownload.click();
+    assert.equal(cancellable.requests.length, 4, "Only an explicit retry starts a new transfer");
+    assert.equal(cancellable.downloads.length, 1);
+    assert.match(cancellable.elements.sharedStatus.textContent, /Download ready/);
+    for (const r of cancellable.requests) {
+      assert.equal(r.url.includes(token), false);
+      assert.equal(r.options.credentials, "omit");
+      assert.equal(r.options.headers.Authorization, `Bearer ${token}`);
+    }
+  }
+  for (const pendingDownload of [true, "body"]) {
+    const late = fixture({ pendingDownload, ignoreDownloadAbort: true, downloadStatus: pendingDownload === true ? 410 : 200 });
+    await late.run;
+    const pending = late.elements.sharedDownload.click(); await settle();
+    await late.elements.sharedDownload.click(); late.releaseDownload(); await pending;
+    assert.equal(late.downloads.length, 0, "A cancelled response never becomes a browser download");
+    assert.equal(late.createdUrls.length, 0);
+    assert.equal(late.elements.shareUnavailable.hidden, true, "A cancelled request's late 410 does not close the preview");
+    assert.equal(late.viewers[0].destroyed, undefined);
+  }
+  const leaving = fixture({ pendingDownload: "body" }); await leaving.run;
+  const leavingDownload = leaving.elements.sharedDownload.click(); await settle();
+  leaving.window.listeners.pagehide(); await leavingDownload;
+  assert.equal(leaving.requests.at(-1).options.signal.aborted, true);
+  assert.equal(leaving.elements.sharedDownload.hidden, true);
+  assert.equal(leaving.downloads.length, 0);
 
   const expiring = fixture({ pendingDownload: true });
   await expiring.run;

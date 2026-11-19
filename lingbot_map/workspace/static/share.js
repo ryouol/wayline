@@ -6,7 +6,7 @@
   const retry = document.getElementById("reloadSharedScene");
   const controller = new AbortController();
   const timeline = new window.SceneTimeline(document.getElementById("sharedTimeline"));
-  let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null;
+  let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null, activeDownload = null;
   function unavailable(message, title = "This link is no longer available.", canRetry = false) {
     close();
     document.querySelector(".shared-viewer").hidden = true;
@@ -19,6 +19,7 @@
   }
   function close() {
     controller.abort();
+    activeDownload?.abort();
     clearTimeout(expiryTimer);
     clearTimeout(metadataTimer);
     closePreview();
@@ -76,8 +77,9 @@
     warning.hidden = !data.researchOnly;
     warning.textContent = data.commercialWarning || "";
     expiryTimer = setTimeout(() => unavailable("This link has expired. Ask the person who shared it for a new link."), Math.max(0, data.expiresAt * 1000 - Date.now()));
-    async function fetchArtifact() {
-      const result = await fetch(data.artifact.contentUrl, { headers, credentials: "omit", signal: controller.signal });
+    async function fetchArtifact(signal = controller.signal) {
+      const result = await fetch(data.artifact.contentUrl, { headers, credentials: "omit", signal });
+      signal.throwIfAborted();
       if (!result.ok) {
         if ([401, 403, 404, 410].includes(result.status)) unavailable("This link is no longer available. Ask the person who shared it for a new link.");
         throw new Error("The scene could not be downloaded. Please try again.");
@@ -87,22 +89,30 @@
     // Download access depends on the share, not on this browser's WebGL support.
     download.hidden = false;
     download.addEventListener("click", async () => {
-      download.disabled = true;
-      download.textContent = "Preparing download…";
+      if (controller.signal.aborted) return;
+      if (activeDownload) {
+        activeDownload.abort();
+        status.textContent = "Download cancelled. You can try again.";
+        return;
+      }
+      const request = activeDownload = new AbortController();
+      download.textContent = "Cancel download";
+      status.textContent = "Preparing download…";
       try {
-        const response = await fetchArtifact();
+        const response = await fetchArtifact(request.signal);
         const blob = await response.blob();
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || request.signal.aborted) return;
         if (downloadUrl) URL.revokeObjectURL(downloadUrl);
         downloadUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = downloadUrl;
         link.download = data.artifact.filename;
         link.click();
+        status.textContent = "Download ready. Check your browser's downloads.";
       } catch (error) {
-        if (!controller.signal.aborted) status.textContent = error.message;
+        if (!controller.signal.aborted && !request.signal.aborted) status.textContent = error.message;
       } finally {
-        download.disabled = false;
+        activeDownload = null;
         download.textContent = "Download GLB";
       }
     }, { signal: controller.signal });

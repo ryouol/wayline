@@ -1144,6 +1144,14 @@ function showCapturePreview(file, duration, width, height) {
   } catch (_) { /* server validation remains available when local playback is unsupported */ }
 }
 
+function captureFilenameExtension(file) {
+  // Match the server's full, unclipped filename when checking its extension.
+  const name = (file.name.split("/").filter(Boolean).pop() || "")
+    .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, "")
+    .replace(/[^A-Za-z0-9._ -]/gu, "_").replace(/^[. ]+|[. ]+$/g, "") || "upload.mp4";
+  return name.match(/\.[^.]+$/)?.[0].toLowerCase();
+}
+
 function validateSelectedCapture() {
   cancelCaptureCheck();
   releaseCapturePreview();
@@ -1178,6 +1186,13 @@ function validateSelectedCapture() {
     const formats = [...new Set(Object.values(acceptedTypes).flat())].join(", ");
     display("invalid", `This file type is not supported. Choose a video in one of these formats: ${formats}.`);
     return;
+  }
+  if (acceptedTypes && Object.keys(acceptedTypes).length) {
+    const extensions = declaredType ? acceptedTypes[declaredType] : [...new Set(Object.values(acceptedTypes).flat())];
+    if (!extensions.includes(captureFilenameExtension(file))) {
+      display("invalid", `This video filename is not supported. Choose a video ending in ${extensions.join(", ")}.`);
+      return;
+    }
   }
   display("checking", "Checking clip length…");
   const video = document.createElement("video");
@@ -1407,7 +1422,7 @@ byId("researchForm").addEventListener("submit", async (event) => {
         const body = new FormData();
         let content = file;
         if (file.type === "") {
-          const extension = file.name.trim().replace(/^[. ]+|[. ]+$/g, "").match(/\.[^.]+$/)?.[0].toLowerCase();
+          const extension = captureFilenameExtension(file);
           const mediaType = Object.entries(state.config?.acceptedVideoTypes || {})
             .find(([, extensions]) => extensions.includes(extension))?.[0];
           if (mediaType) content = file.slice(0, file.size, mediaType);

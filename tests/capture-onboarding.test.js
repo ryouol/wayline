@@ -358,16 +358,17 @@ async function main() {
     ["room.avi", "", "video/x-msvideo", acceptedVideoTypes],
     ["room.mkv", "", "video/x-matroska", acceptedVideoTypes],
     ["room.mp4. ", "", "video/mp4", acceptedVideoTypes],
-    ["room.webm", "", "", acceptedVideoTypes],
-    ["mp4", "", "", acceptedVideoTypes],
-    [".mp4", "", "", acceptedVideoTypes],
+    ["room.mp4\u0085", "", "video/mp4", acceptedVideoTypes],
+    ["room.mp4\u001c", "", "video/mp4", acceptedVideoTypes],
+    ["a".repeat(130) + ".MP4", "", "video/mp4", acceptedVideoTypes],
+    ["... ", "", "video/mp4", acceptedVideoTypes],
+    ["room.webm", "", "", undefined],
     ["room.mp4", "video/webm", "video/webm", undefined],
     ["room.mp4", "video/webm", "video/webm", {}],
     ["room.mov", "video/mp4;codecs=avc1", "video/mp4;codecs=avc1", acceptedVideoTypes],
     ["room.mov", "video/quicktime", "video/quicktime", acceptedVideoTypes],
     ["room.mp4", "", "", undefined],
     ["room.mp4", "", "", {}],
-    ["room.mp4", "", "", { "video/quicktime": [".mov"] }],
   ]) {
     const h = harness(), file = new File(["exact video bytes"], name, { type });
     h.state.config.acceptedVideoTypes = suppliedTypes;
@@ -390,8 +391,32 @@ async function main() {
     if (expectedType === type) assert.equal(content, file);
     assert.equal(h.requests.filter(r => r.path === "/api/assets" && r.method === "POST").length, 1);
   }
-  for (const stage of ["upload", "research"]) {
-    const h = harness(), file = new File(["video"], "capture.webm", { type: "video/webm" });
+  for (const [name, type, suppliedTypes] of [
+    ["room.webm", "", acceptedVideoTypes], ["mp4", "", acceptedVideoTypes],
+    [".mp4", "", acceptedVideoTypes], ["room.mp4.exe", "video/mp4", acceptedVideoTypes],
+    ["room.avi", "video/mp4", acceptedVideoTypes], ["room.mp4", "video/quicktime", acceptedVideoTypes],
+    ["a".repeat(116) + ".mp4.exe", "video/mp4", acceptedVideoTypes],
+    ["room.mp4\ufeff", "video/mp4", acceptedVideoTypes],
+    ["room.mp4", "", { "video/quicktime": [".mov"] }],
+  ]) {
+    const h = harness(); h.state.config.acceptedVideoTypes = suppliedTypes;
+    h.select(new File(["video"], name, { type }));
+    assert.equal(h.state.captureCheck.status, "invalid", name);
+    assert.match(h.node("captureMessage").textContent, /filename is not supported.*ending in/);
+    assert.equal(h.node("video").getAttribute("aria-invalid"), "true");
+    assert.equal(h.node("researchButton").disabled, true);
+    assert.equal(h.node("capturePreviewPanel").hidden, true);
+    assert.equal(h.videos.length, 0, "No metadata probe for a server-rejected filename");
+    await h.submit();
+    assert.equal(h.requests.length, 0, "No preflight or transfer for a rejected filename");
+    const replacement = h.select(new File(["video"], "replacement.mov", { type: "video/quicktime" }));
+    replacement.duration = 5; replacement.onloadedmetadata();
+    assert.equal(h.state.captureCheck.status, "valid");
+    assert.equal(h.node("video").hasAttribute("aria-invalid"), false);
+    assert.equal(h.node("researchButton").disabled, false);
+  }
+  for (const stage of ["upload", "research"]) for (const type of ["video/webm", "video/mp4", ""]) {
+    const h = harness(), file = new File(["video"], "capture.webm", { type });
     h.context.respond = async path => {
       if (path === "/api/me") return account("available");
       if (path === "/api/assets") return stage === "upload"

@@ -1147,7 +1147,7 @@ function showCapturePreview(file, duration, width, height) {
 function captureFilenameExtension(file) {
   // Match the server's full, unclipped filename when checking its extension.
   const name = (file.name.split("/").filter(Boolean).pop() || "").trim()
-    .replace(/[^A-Za-z0-9._ -]/g, "_").replace(/^[. ]+|[. ]+$/g, "") || "upload.mp4";
+    .replace(/[^A-Za-z0-9._ -]/gu, "_").replace(/^[. ]+|[. ]+$/g, "") || "upload.mp4";
   return name.match(/\.[^.]+$/)?.[0].toLowerCase();
 }
 

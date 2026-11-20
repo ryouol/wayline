@@ -358,6 +358,8 @@ async function main() {
     ["room.avi", "", "video/x-msvideo", acceptedVideoTypes],
     ["room.mkv", "", "video/x-matroska", acceptedVideoTypes],
     ["room.mp4. ", "", "video/mp4", acceptedVideoTypes],
+    ["room.mp4\u0085", "", "video/mp4", acceptedVideoTypes],
+    ["room.mp4\u001c", "", "video/mp4", acceptedVideoTypes],
     ["a".repeat(130) + ".MP4", "", "video/mp4", acceptedVideoTypes],
     ["... ", "", "video/mp4", acceptedVideoTypes],
     ["room.webm", "", "", undefined],
@@ -394,6 +396,7 @@ async function main() {
     [".mp4", "", acceptedVideoTypes], ["room.mp4.exe", "video/mp4", acceptedVideoTypes],
     ["room.avi", "video/mp4", acceptedVideoTypes], ["room.mp4", "video/quicktime", acceptedVideoTypes],
     ["a".repeat(116) + ".mp4.exe", "video/mp4", acceptedVideoTypes],
+    ["room.mp4\ufeff", "video/mp4", acceptedVideoTypes],
     ["room.mp4", "", { "video/quicktime": [".mov"] }],
   ]) {
     const h = harness(); h.state.config.acceptedVideoTypes = suppliedTypes;

@@ -21,18 +21,20 @@ function element(values = {}) {
 
 function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200,
   webglFailure = false, renderFailure = false, pendingDownload = false, licenseId = "NOASSERTION",
-  metadataFailure = null, ignoreMetadataAbort = false, ignoreDownloadAbort = false, downloadStatus = 200 } = {}) {
+  metadataFailure = null, ignoreMetadataAbort = false, ignoreDownloadAbort = false, downloadStatus = 200,
+  previewResponses = [], pendingPreviewStatus = 200, ignorePreviewAbort = false } = {}) {
   const ids = ["sharedStatus", "sharedDownload", "sharedTimeline", "shareLicense", "shareTitle",
     "shareUnavailableMessage", "shareUnavailableTitle", "shareUnavailable", "sharedZoomIn",
-    "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink", "reloadSharedScene"];
+    "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink", "reloadSharedScene", "retrySharedPreview"];
   const elements = Object.fromEntries(ids.map(id => [id, element()]));
   elements.shareUnavailable.hidden = true;
   elements.sharedDownload.hidden = true;
   elements.reloadSharedScene.hidden = true;
+  elements.retrySharedPreview.hidden = true;
   const selectors = Object.fromEntries([".shared-viewer", ".shared-viewer .viewport-wrap", ".shared-viewer .viewer-help"].map(selector => [selector, element()]));
   const requests = [], viewers = [], timelineAttachments = [], downloads = [], createdUrls = [], revokedUrls = [];
   const timers = new Map();
-  let nextTimer = 0, contentRequests = 0, releaseMetadata, releaseDownload;
+  let nextTimer = 0, contentRequests = 0, releaseMetadata, releaseDownload, releasePreview;
   const metadata = {
     artifact: { filename: "office.glb", licenseId, contentUrl: "/api/public/share/content" },
     expiresAt: Math.ceil(Date.now() / 1000) + 60,
@@ -54,6 +56,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
       async load(url, options) {
         assert.equal(url, "/api/public/share/content");
         assert.equal(options.prefetchedResponse.ok, true, "Only validated capability responses are passed to the preview");
+        await options.prefetchedResponse.arrayBuffer();
         if (renderFailure) throw new Error("Unsupported geometry.");
       }
       destroy() { this.destroyed = true; this.loadController.abort(); }
@@ -96,12 +99,26 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
           blob: async () => pendingDownload === "body" ? hold({ kind: "artifact" }) : { kind: "artifact" } };
         return pendingDownload === "body" ? response : hold(response);
       }
-      return { ok: contentStatus === 200, status: contentStatus, blob: async () => ({ kind: "artifact" }) };
+      const outcome = previewResponses[contentRequests - 1];
+      if (outcome === "network") throw new Error("Failed to fetch");
+      const holdPreview = value => new Promise((resolve, reject) => {
+        releasePreview = () => resolve(value);
+        if (!ignorePreviewAbort) options.signal.addEventListener("abort", () => reject(new Error("Aborted")));
+      });
+      const responseStatus = typeof outcome === "number" ? outcome : outcome === "headers" ? pendingPreviewStatus : contentStatus;
+      const response = { ok: responseStatus === 200, status: responseStatus,
+        blob: async () => ({ kind: "artifact" }),
+        arrayBuffer: async () => {
+          if (outcome === "body-failure") throw new Error("Truncated body");
+          if (outcome === "body") return holdPreview(new ArrayBuffer(0));
+          return new ArrayBuffer(0);
+        } };
+      return outcome === "headers" ? holdPreview(response) : response;
     },
   };
   const run = vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/share.js"), "utf8"), scope);
   return { run, window, location, elements, selectors, requests, viewers, timelineAttachments, downloads, createdUrls, revokedUrls,
-    timers, releaseMetadata: () => releaseMetadata(), releaseDownload: () => releaseDownload(),
+    timers, releaseMetadata: () => releaseMetadata(), releaseDownload: () => releaseDownload(), releasePreview: () => releasePreview(),
     deadline() { Array.from(timers.values()).filter(timer => timer.delay === 15000).forEach(timer => timer.callback()); },
     expire() { Array.from(timers.values()).filter(timer => timer.delay !== 15000).forEach(timer => timer.callback()); } };
 }
@@ -195,6 +212,73 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(rendering.elements.sharedDownload.hidden, false);
   assert.equal(rendering.elements.shareUnavailable.hidden, true);
   assert.deepEqual(rendering.revokedUrls, rendering.createdUrls);
+
+  for (const failure of [502, "network", "body-failure"]) {
+    const recoverable = fixture({ previewResponses: [failure, 200] }); await recoverable.run;
+    assert.equal(recoverable.elements.retrySharedPreview.hidden, false, "A failed preview offers recovery without reloading the page");
+    assert.equal(recoverable.requests.length, 2, "Failed previews never retry automatically");
+    assert.equal(recoverable.viewers[0].destroyed, true);
+    await recoverable.elements.retrySharedPreview.click();
+    assert.equal(recoverable.requests.length, 3, "An explicit retry requests only the artifact");
+    assert.equal(recoverable.location.reloadCount, 0);
+    assert.equal(recoverable.location.hash, `#${token}`);
+    assert.equal(recoverable.elements.retrySharedPreview.hidden, true);
+    assert.equal(recoverable.selectors[".shared-viewer .viewport-wrap"].hidden, false);
+    assert.equal(recoverable.selectors[".shared-viewer .viewer-help"].hidden, false);
+    assert.equal(recoverable.elements.sharedCanvas.focused, true, "Keyboard focus moves into the restored viewer");
+    assert.equal(recoverable.timelineAttachments.at(-1), recoverable.viewers[1]);
+    assert.equal(recoverable.elements.sharedDownload.hidden, false);
+    assert.equal(recoverable.elements.shareCommercialWarning.textContent, "Research preview.");
+    for (const r of recoverable.requests) {
+      assert.equal(r.url.includes(token), false);
+      assert.equal(r.options.credentials, "omit");
+      assert.equal(r.options.headers.Authorization, `Bearer ${token}`);
+    }
+  }
+  for (const stage of ["headers", "body"]) {
+    const busy = fixture({ previewResponses: [502, stage] }); await busy.run;
+    const attempt = busy.elements.retrySharedPreview.click(); await settle();
+    assert.equal(busy.elements.retrySharedPreview.disabled, true);
+    await busy.elements.retrySharedPreview.click();
+    assert.equal(busy.requests.length, 3, "Repeated clicks cannot overlap preview transfers");
+    await busy.elements.sharedDownload.click();
+    assert.equal(busy.downloads.length, 1, "Downloads remain usable during preview recovery");
+    busy.releasePreview(); await attempt;
+    assert.equal(busy.elements.retrySharedPreview.hidden, true);
+  }
+  for (const code of [401, 403, 404, 410]) {
+    const denied = fixture({ previewResponses: [502, code] }); await denied.run;
+    await denied.elements.retrySharedPreview.click();
+    assert.equal(denied.elements.shareUnavailable.hidden, false);
+    assert.equal(denied.elements.retrySharedPreview.hidden, true);
+    assert.equal(denied.elements.sharedDownload.hidden, true);
+    assert.equal(denied.timelineAttachments.at(-1), null);
+    await denied.elements.retrySharedPreview.click();
+    assert.equal(denied.requests.length, 3);
+  }
+  for (const stage of ["headers", "body"]) {
+    for (const exit of [false, true]) {
+      const late = fixture({ previewResponses: [502, stage], ignorePreviewAbort: true,
+        pendingPreviewStatus: 410 }); await late.run;
+      const attempt = late.elements.retrySharedPreview.click(); await settle();
+      if (exit) late.window.listeners.pagehide(); else late.expire();
+      const finalStatus = late.elements.sharedStatus.textContent;
+      late.releasePreview(); await attempt;
+      assert.equal(late.requests.at(-1).options.signal.aborted, true);
+      assert.equal(late.viewers[1].destroyed, true);
+      assert.equal(late.timelineAttachments.at(-1), null);
+      assert.equal(late.elements.retrySharedPreview.hidden, true);
+      assert.equal(late.elements.sharedDownload.hidden, true);
+      assert.equal(late.elements.sharedStatus.textContent, finalStatus, "Late completion cannot revive a closed preview");
+      assert.equal(late.elements.sharedCanvas.focused, undefined);
+    }
+  }
+  await rendering.elements.retrySharedPreview.click();
+  assert.equal(rendering.elements.retrySharedPreview.hidden, false, "Repeated rendering failure keeps manual recovery available");
+  assert.equal(rendering.viewers[1].destroyed, true);
+  assert.equal(rendering.elements.sharedDownload.hidden, false);
+  const html = fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/share.html"), "utf8");
+  assert.match(html, /<button[^>]+id="retrySharedPreview"[^>]+type="button"[^>]+hidden>Retry preview<\/button>/);
   const cc0 = fixture({ licenseId: "CC0-1.0" });
   await cc0.run;
   assert.equal(cc0.elements.shareLicense.textContent, "CC0-1.0", "Known license identifiers remain unchanged");

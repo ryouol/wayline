@@ -4,6 +4,7 @@
   const status = document.getElementById("sharedStatus");
   const download = document.getElementById("sharedDownload");
   const retry = document.getElementById("reloadSharedScene");
+  const retryPreview = document.getElementById("retrySharedPreview");
   const controller = new AbortController();
   const timeline = new window.SceneTimeline(document.getElementById("sharedTimeline"));
   let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null, activeDownload = null;
@@ -26,6 +27,7 @@
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = null;
     download.hidden = true;
+    retryPreview.hidden = true;
   }
   function closePreview() {
     timeline.attach(null);
@@ -116,19 +118,34 @@
         download.textContent = "Download GLB";
       }
     }, { signal: controller.signal });
-    try {
-      viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
-      const response = await fetchArtifact();
-      if (controller.signal.aborted) return;
-      await viewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
-      if (!controller.signal.aborted) timeline.attach(viewer);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      closePreview();
-      document.querySelector(".shared-viewer .viewport-wrap").hidden = true;
-      document.querySelector(".shared-viewer .viewer-help").hidden = true;
-      status.textContent = "The 3D preview couldn't be loaded. You can still download this scene.";
+    async function loadPreview(focus = false) {
+      if (controller.signal.aborted || retryPreview.disabled) return;
+      retryPreview.disabled = true;
+      document.querySelector(".shared-viewer .viewport-wrap").hidden = false;
+      document.querySelector(".shared-viewer .viewer-help").hidden = false;
+      status.textContent = "Loading preview…";
+      try {
+        viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
+        const response = await fetchArtifact();
+        if (controller.signal.aborted) return;
+        await viewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
+        if (controller.signal.aborted) return;
+        timeline.attach(viewer);
+        retryPreview.hidden = true;
+        if (focus) document.getElementById("sharedCanvas").focus();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        closePreview();
+        document.querySelector(".shared-viewer .viewport-wrap").hidden = true;
+        document.querySelector(".shared-viewer .viewer-help").hidden = true;
+        retryPreview.hidden = false;
+        status.textContent = "The 3D preview couldn't be loaded. Retry the preview or download this scene.";
+      } finally {
+        retryPreview.disabled = false;
+      }
     }
+    retryPreview.addEventListener("click", () => loadPreview(true), { signal: controller.signal });
+    await loadPreview();
   } catch (error) {
     if (!controller.signal.aborted) unavailable("The shared scene could not be loaded. Reload this scene to try again.", "Unable to load this scene.", true);
   }

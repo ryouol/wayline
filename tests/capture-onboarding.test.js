@@ -1761,6 +1761,7 @@ async function main() {
       destroy() { destroyed++; }
     };
     h.context.renderTimeline = () => {};
+    h.context.renderJobDetail = h.renderRealJobDetail;
     h.state.selectedId = job.id;
     h.context.respond = async (_path, options) => {
       if (options.headers.get("If-None-Match") === etag) {
@@ -1772,7 +1773,12 @@ async function main() {
     await h.renderRealJobDetail();
     await h.renderRealJobDetail({ background: true });
     assert.equal(unchanged, 1, "A ready scene is revalidated without retransferring its details");
-    assert.equal(loads, 2, "An unchanged detail still retries an unsuccessful viewer load");
+    assert.equal(loads, 1, "An unchanged detail must not redownload a failed preview in the background");
+    assert.equal(h.node("retryPreviewButton").hidden, false);
+    await h.node("retryPreviewButton").events.get("click")();
+    assert.equal(loads, 2, "Only an explicit preview retry starts another artifact load");
+    assert.equal(h.node("retryPreviewButton").hidden, true);
+    assert.equal(h.node("sceneCanvas").focusCount, 1);
     assert.equal(h.node("downloadLink").href, "/download");
     assert.equal(h.node("requestStatus").hidden, true);
     h.context.Date = class extends Date { static now() { return (job.expiresAt + 1) * 1000; } };
@@ -1788,12 +1794,113 @@ async function main() {
     await h.renderRealJobDetail({ background: true });
     assert.equal(h.node("viewerSection").hidden, true);
     assert.equal(h.node("downloadLink").href, "");
-    assert.equal(destroyed, 1);
+    assert.equal(destroyed, 2, "Failed and subsequently removed viewers both release their resources");
     await h.renderRealJobDetail();
     assert.equal(h.requests.at(-1).options.headers.has("If-None-Match"), false, "Direct refresh fetches full details");
     h.context.secureReset();
     assert.equal(h.state.detailCache, null);
   }
+  for (const constructorFailure of [false, true]) {
+    const h = harness();
+    const scene = { id: "failed-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
+    const job = { id: "failed-preview", state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, artifacts: [scene] };
+    let attempts = 0, loads = 0;
+    h.context.window.PointCloudViewer = class {
+      constructor() { attempts++; if (constructorFailure) throw new Error("WebGL unavailable"); }
+      async load() { loads++; throw new Error("Unsupported geometry"); }
+      destroy() {}
+    };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.selectedId = job.id;
+    h.context.respond = async () => job;
+    await h.renderRealJobDetail();
+    for (let poll = 0; poll < 3; poll++) await h.renderRealJobDetail({ background: true });
+    assert.equal(attempts, 1, "Polling must not recreate failed graphics or transfer invalid geometry");
+    assert.equal(loads, constructorFailure ? 0 : 1);
+    assert.equal(h.node("downloadLink").href, "/download");
+    assert.equal(h.node("retryPreviewButton").hidden, false);
+    await h.node("retryPreviewButton").events.get("click")();
+    assert.equal(attempts, 2);
+    assert.equal(h.node("retryPreviewButton").hidden, false, "Another failure allows another explicit retry");
+    assert.equal(h.node("retryPreviewButton").disabled, false);
+    job.artifacts = [{ ...scene, id: "replacement" }];
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(attempts, 3, "A newly published artifact gets its own initial preview attempt");
+    job.artifacts = [];
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(h.node("retryPreviewButton").hidden, true);
+    assert.equal(h.state.viewerAttempt, null);
+  }
+  for (const invalidation of ["none", "removed", "session", "selection"]) {
+    const h = harness(), waiting = deferred();
+    const scene = { id: "artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
+    const job = { id: "retrying", state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, artifacts: [scene] };
+    let loads = 0, destroyed = 0, missing = false;
+    h.context.window.PointCloudViewer = class {
+      async load() { loads++; if (loads === 1) throw new Error("Temporary failure"); if (loads === 2) return waiting.promise; }
+      destroy() { destroyed++; }
+    };
+    h.context.renderTimeline = () => {};
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.state.selectedId = job.id;
+    h.context.respond = async () => missing ? new Response('{"detail":"Job not found."}', { status: 404 }) : job;
+    await h.renderRealJobDetail();
+    const retry = h.node("retryPreviewButton").events.get("click")();
+    await new Promise(setImmediate);
+    assert.equal(h.node("retryPreviewButton").disabled, true);
+    await h.node("retryPreviewButton").events.get("click")();
+    await h.renderRealJobDetail({ background: true });
+    await h.renderRealJobDetail();
+    assert.equal(loads, 2, "Polling, refresh and repeated clicks cannot overlap the pending artifact transfer");
+    if (invalidation === "removed") { missing = true; await h.renderRealJobDetail({ background: true }); }
+    if (invalidation === "session") h.context.secureReset();
+    if (invalidation === "selection") {
+      h.context.clearDetail(); h.state.selectedId = "another";
+      job.id = "another"; job.artifacts = [{ ...scene, id: "another-artifact" }];
+      await h.renderRealJobDetail();
+      h.node("viewerStatus").textContent = "Another scene is ready";
+    }
+    const status = h.node("viewerStatus").textContent;
+    if (invalidation === "none") waiting.resolve(); else waiting.reject(new Error("Late failed response"));
+    await retry;
+    assert.equal(h.node("retryPreviewButton").hidden, true);
+    assert.equal(h.node("retryPreviewButton").disabled, false);
+    if (invalidation === "none") {
+      assert.equal(h.state.viewerArtifact, scene.id);
+      assert.equal(h.node("sceneCanvas").focusCount, 1);
+    } else {
+      assert.equal(h.node("viewerStatus").textContent, status, "Late errors cannot overwrite the current session or selection");
+      assert.equal(h.node("sceneCanvas").focusCount, 0);
+      assert.equal(destroyed, 2);
+      if (invalidation !== "selection") assert.equal(h.state.viewerAttempt, null);
+    }
+  }
+  for (const status of [401, 404]) {
+    const h = harness();
+    const scene = { id: "private-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/private-scene", downloadUrl: "/download" };
+    const job = { id: "private-job", state: "ready", stage: "ready", displayName: "Private",
+      provenance: {}, createdAt: 100, artifacts: [scene] };
+    let loads = 0;
+    h.context.window.PointCloudViewer = class {
+      async load() { loads++; throw new Error("Temporary failure"); }
+      destroy() {}
+    };
+    h.context.renderJobDetail = h.renderRealJobDetail; h.state.selectedId = job.id;
+    h.context.respond = async () => job;
+    await h.renderRealJobDetail();
+    h.context.respond = async () => new Response('{"detail":"Unavailable"}', { status });
+    await h.node("retryPreviewButton").events.get("click")();
+    assert.equal(loads, 1, "Retry revalidates scene access before requesting its artifact");
+    assert.equal(h.node("retryPreviewButton").hidden, true);
+    assert.equal(h.node("jobDetail").hidden, true);
+    assert.equal(h.node("downloadLink").href, "");
+  }
+  assert.match(markup, /<button[^>]+id="retryPreviewButton"[^>]+type="button"[^>]+hidden>Retry preview<\/button>/);
   for (const changed of ["selection", "session", "principal"]) {
     const h = harness(), pending = deferred();
     const job = { id: "private", state: "ready", stage: "ready", displayName: "Private",

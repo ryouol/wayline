@@ -3,7 +3,7 @@
 const byId = (id) => document.getElementById(id);
 const state = {
   csrf: "", jobs: [], assets: [], shares: [], selectedId: null, engine: null, viewer: null,
-  viewerArtifact: null, pollTimer: null, pollRefresh: null, toastTimer: null, epoch: 0, controllers: new Set(),
+  viewerArtifact: null, viewerAttempt: null, pollTimer: null, pollRefresh: null, toastTimer: null, epoch: 0, controllers: new Set(),
   foregroundRequests: new Set(), principal: "", principalMarker: "", jobCursor: null, assetCursor: null, shareCursor: null,
   selectedJobs: new Set(), selectedAssets: new Set(), selectedShares: new Set(),
   jobsRenderKey: "", jobCheckOffset: 0, accountType: "operator", config: null,
@@ -299,6 +299,9 @@ function clearDetail() {
   if (state.viewer) state.viewer.destroy();
   state.viewer = null;
   state.viewerArtifact = null;
+  state.viewerAttempt = null;
+  byId("retryPreviewButton").hidden = true;
+  byId("retryPreviewButton").disabled = false;
 }
 
 function sceneIdFromLocation() {
@@ -885,7 +888,7 @@ function updateProgress(job) {
   });
 }
 
-async function renderJobDetail({ background = false, summary = null } = {}) {
+async function renderJobDetail({ background = false, summary = null, retryPreview = false } = {}) {
   if (!state.selectedId) { clearDetail(); return; }
   const selected = state.selectedId, epoch = state.epoch;
   // Only ready jobs expose artifacts. Other states have complete details in the
@@ -962,25 +965,48 @@ async function renderJobDetail({ background = false, summary = null } = {}) {
     addFact(facts, "SHA-256", scene.sha256);
     addFact(facts, "Points", scene.metadata.pointCount?.toLocaleString() || "Not reported");
     addFact(facts, "Storage", "Tenant-scoped object");
-    try {
-      if (!state.viewer) state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
-      if (state.viewerArtifact !== scene.id) {
+    // Poll details for removal and expiry, but never repeat a failed or pending
+    // artifact transfer without an explicit retry.
+    if (state.viewerArtifact !== scene.id && (state.viewerAttempt?.artifactId !== scene.id
+        || (retryPreview && !state.viewerAttempt.loading))) {
+      const attempt = state.viewerAttempt = { artifactId: scene.id, loading: true };
+      const retry = byId("retryPreviewButton");
+      retry.disabled = true;
+      try {
         timeline.attach(null);
-        const viewer = state.viewer, epoch = state.epoch;
+        state.viewer?.destroy();
+        state.viewer = null;
+        const viewer = state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
         await viewer.load(scene.viewUrl);
-        if (state.viewer !== viewer || state.epoch !== epoch || state.selectedId !== job.id) return;
+        if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
         state.viewerArtifact = scene.id;
         renderTimeline();
+        retry.hidden = true;
+        if (retryPreview) byId("sceneCanvas").focus();
+      } catch (error) {
+        if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
+        timeline.attach(null);
+        state.viewer?.destroy();
+        state.viewer = null;
+        state.viewerArtifact = null;
+        retry.hidden = false;
+        byId("viewerStatus").textContent = `${error.message} Retry the preview or download this scene.`;
+      } finally {
+        if (state.viewerAttempt === attempt) {
+          attempt.loading = false;
+          retry.disabled = false;
+        }
       }
-    } catch (error) {
-      if (state.selectedId === job.id && error.name !== "AbortError") byId("viewerStatus").textContent = error.message;
     }
-  } else if (state.viewer) {
+  } else {
     stopPlayback();
     timeline.attach(null);
-    state.viewer.destroy();
+    state.viewer?.destroy();
     state.viewer = null;
     state.viewerArtifact = null;
+    state.viewerAttempt = null;
+    byId("retryPreviewButton").hidden = true;
+    byId("retryPreviewButton").disabled = false;
   }
 }
 
@@ -1611,6 +1637,18 @@ byId("bulkDeleteButton").addEventListener("click", async () => {
 });
 
 function stopPlayback() { timeline.stop(); }
+byId("retryPreviewButton").addEventListener("click", async () => {
+  const button = byId("retryPreviewButton");
+  if (button.disabled || button.hidden || !state.selectedId) return;
+  const selected = state.selectedId, epoch = state.epoch;
+  button.disabled = true;
+  try { await renderJobDetail({ retryPreview: true }); }
+  catch (error) { report(error); }
+  finally {
+    if (state.selectedId === selected && state.epoch === epoch) button.disabled = Boolean(state.viewerAttempt?.loading);
+  }
+});
+
 function renderTimeline() { timeline.attach(state.viewer); }
 function wholeSpace() { timeline.wholeSpace(); }
 byId("resetView").addEventListener("click", wholeSpace);

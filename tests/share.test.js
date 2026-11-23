@@ -20,7 +20,7 @@ function element(values = {}) {
 }
 
 function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200,
-  webglFailure = false, renderFailure = false, pendingDownload = false, licenseId = "NOASSERTION",
+  webglFailure = false, renderFailure = false, contextLossOnLoad = false, pendingDownload = false, licenseId = "NOASSERTION",
   metadataFailure = null, ignoreMetadataAbort = false, ignoreDownloadAbort = false, downloadStatus = 200,
   previewResponses = [], pendingPreviewStatus = 200, ignorePreviewAbort = false } = {}) {
   const ids = ["sharedStatus", "sharedDownload", "sharedTimeline", "shareLicense", "shareTitle",
@@ -58,6 +58,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
         assert.equal(options.prefetchedResponse.ok, true, "Only validated capability responses are passed to the preview");
         await options.prefetchedResponse.arrayBuffer();
         if (renderFailure) throw new Error("Unsupported geometry.");
+        this.contextLost = contextLossOnLoad;
       }
       destroy() { this.destroyed = true; this.loadController.abort(); }
     },
@@ -212,6 +213,10 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(rendering.elements.sharedDownload.hidden, false);
   assert.equal(rendering.elements.shareUnavailable.hidden, true);
   assert.deepEqual(rendering.revokedUrls, rendering.createdUrls);
+  const firstDraw = fixture({ contextLossOnLoad: true }); await firstDraw.run;
+  assert.equal(firstDraw.elements.retrySharedPreview.hidden, false, "Context loss during the first draw cannot hide recovery");
+  assert.equal(firstDraw.viewers[0].destroyed, true);
+  assert.equal(firstDraw.timelineAttachments.at(-1), null);
 
   for (const failure of [502, "network", "body-failure"]) {
     const recoverable = fixture({ previewResponses: [failure, 200] }); await recoverable.run;
@@ -234,6 +239,39 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
       assert.equal(r.options.credentials, "omit");
       assert.equal(r.options.headers.Authorization, `Bearer ${token}`);
     }
+  }
+  for (const recovery of ["retry", "revoked", "expired", "exit"]) {
+    const interrupted = fixture({ previewResponses: [200, recovery === "revoked" ? 410 : 200] });
+    await interrupted.run;
+    const lost = interrupted.elements.sharedCanvas.listeners["wayline-viewer-unavailable"];
+    assert.equal(typeof lost, "function", "Loaded shared previews must expose graphics-interruption recovery");
+    interrupted.viewers[0].contextLost = true;
+    lost();
+    assert.equal(interrupted.viewers[0].destroyed, true);
+    assert.equal(interrupted.timelineAttachments.at(-1), null);
+    assert.equal(interrupted.elements.retrySharedPreview.hidden, false);
+    assert.equal(interrupted.elements.sharedDownload.hidden, false);
+    assert.match(interrupted.elements.sharedStatus.textContent, /interrupted.*Retry/);
+    assert.equal(interrupted.requests.length, 2, "Graphics loss cannot silently repeat a capability transfer");
+    if (recovery === "expired") interrupted.expire();
+    if (recovery === "exit") interrupted.window.listeners.pagehide();
+    await interrupted.elements.retrySharedPreview.click();
+    assert.equal(interrupted.elements.retrySharedPreview.hidden, true);
+    assert.equal(interrupted.location.reloadCount, 0);
+    assert.equal(interrupted.location.hash, `#${token}`);
+    const status = interrupted.elements.sharedStatus.textContent;
+    lost();
+    assert.equal(interrupted.elements.sharedStatus.textContent, status, "Stale graphics events cannot overwrite recovered or closed shares");
+    if (recovery === "retry") {
+      assert.equal(interrupted.elements.sharedCanvas.focused, true);
+      assert.equal(interrupted.timelineAttachments.at(-1), interrupted.viewers[1]);
+      interrupted.elements.sharedCanvas.listeners["wayline-viewer-unavailable"]();
+      assert.equal(interrupted.elements.retrySharedPreview.hidden, false);
+    } else {
+      assert.equal(interrupted.elements.sharedDownload.hidden, true);
+      assert.equal(interrupted.timelineAttachments.at(-1), null);
+    }
+    assert.equal(interrupted.requests.length, ["retry", "revoked"].includes(recovery) ? 3 : 2);
   }
   for (const stage of ["headers", "body"]) {
     const busy = fixture({ previewResponses: [502, stage] }); await busy.run;

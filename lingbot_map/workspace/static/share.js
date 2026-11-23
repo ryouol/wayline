@@ -118,6 +118,13 @@
         download.textContent = "Download GLB";
       }
     }, { signal: controller.signal });
+    function previewFailed(message) {
+      closePreview();
+      document.querySelector(".shared-viewer .viewport-wrap").hidden = true;
+      document.querySelector(".shared-viewer .viewer-help").hidden = true;
+      retryPreview.hidden = false;
+      status.textContent = `${message} Retry the preview or download this scene.`;
+    }
     async function loadPreview(focus = false) {
       if (controller.signal.aborted || retryPreview.disabled) return;
       retryPreview.disabled = true;
@@ -130,16 +137,17 @@
         if (controller.signal.aborted) return;
         await viewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
         if (controller.signal.aborted) return;
+        if (viewer.contextLost) throw new Error("The 3D preview was interrupted.");
+        const loadedViewer = viewer;
+        document.getElementById("sharedCanvas").addEventListener("wayline-viewer-unavailable", () => {
+          if (!controller.signal.aborted && viewer === loadedViewer) previewFailed("The 3D preview was interrupted.");
+        }, { once: true });
         timeline.attach(viewer);
         retryPreview.hidden = true;
         if (focus) document.getElementById("sharedCanvas").focus();
       } catch (error) {
         if (controller.signal.aborted) return;
-        closePreview();
-        document.querySelector(".shared-viewer .viewport-wrap").hidden = true;
-        document.querySelector(".shared-viewer .viewer-help").hidden = true;
-        retryPreview.hidden = false;
-        status.textContent = "The 3D preview couldn't be loaded. Retry the preview or download this scene.";
+        previewFailed("The 3D preview couldn't be loaded.");
       } finally {
         retryPreview.disabled = false;
       }

@@ -972,18 +972,7 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
       const attempt = state.viewerAttempt = { artifactId: scene.id, loading: true };
       const retry = byId("retryPreviewButton");
       retry.disabled = true;
-      try {
-        timeline.attach(null);
-        state.viewer?.destroy();
-        state.viewer = null;
-        const viewer = state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
-        await viewer.load(scene.viewUrl);
-        if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
-        state.viewerArtifact = scene.id;
-        renderTimeline();
-        retry.hidden = true;
-        if (retryPreview) byId("sceneCanvas").focus();
-      } catch (error) {
+      const previewFailed = (error) => {
         if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
         timeline.attach(null);
         state.viewer?.destroy();
@@ -991,6 +980,24 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
         state.viewerArtifact = null;
         retry.hidden = false;
         byId("viewerStatus").textContent = `${error.message} Retry the preview or download this scene.`;
+      };
+      try {
+        timeline.attach(null);
+        state.viewer?.destroy();
+        state.viewer = null;
+        const viewer = state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
+        await viewer.load(scene.viewUrl);
+        if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
+        if (viewer.contextLost) throw new Error("The 3D preview was interrupted.");
+        byId("sceneCanvas").addEventListener("wayline-viewer-unavailable", () => {
+          if (state.viewer === viewer) previewFailed(new Error("The 3D preview was interrupted."));
+        }, { once: true });
+        state.viewerArtifact = scene.id;
+        renderTimeline();
+        retry.hidden = true;
+        if (retryPreview) byId("sceneCanvas").focus();
+      } catch (error) {
+        previewFailed(error);
       } finally {
         if (state.viewerAttempt === attempt) {
           attempt.loading = false;

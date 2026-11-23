@@ -168,6 +168,7 @@ function harness(search = "", storage = new Map()) {
   };
   return { context, state, node, select, submit, click, videos, createdUrls, revokedUrls, timers,
     requests, windowEvents, documentEvents, historyEntries, scrolls, renderRealJobDetail, submissionTimings,
+    replaceNode: (id) => { nodes.set(id, element()); },
     advance: (milliseconds) => { clock += milliseconds; } };
 }
 
@@ -1800,6 +1801,55 @@ async function main() {
     h.context.secureReset();
     assert.equal(h.state.detailCache, null);
   }
+  for (const recovery of ["retry", "removed", "session", "selection"]) {
+    const h = harness(), viewers = [];
+    const scene = { id: "graphics-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
+    const job = { id: "graphics-job", state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, artifacts: [scene] };
+    h.context.window.PointCloudViewer = class {
+      constructor(canvas) { this.canvas = canvas; viewers.push(this); }
+      async load() {}
+      destroy() { this.destroyed = true; if (h.node("sceneCanvas") === this.canvas) h.replaceNode("sceneCanvas"); }
+    };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.renderTimeline = () => {};
+    h.state.selectedId = job.id;
+    h.context.respond = async () => job;
+    await h.renderRealJobDetail();
+    const lost = h.node("sceneCanvas").events.get("wayline-viewer-unavailable");
+    assert.equal(typeof lost, "function", "A loaded preview must offer recovery after graphics interruption");
+    viewers[0].contextLost = true;
+    lost();
+    assert.equal(viewers[0].destroyed, true);
+    assert.equal(h.state.viewer, null);
+    assert.equal(h.state.viewerArtifact, null);
+    assert.equal(h.node("retryPreviewButton").hidden, false);
+    assert.match(h.node("viewerStatus").textContent, /interrupted.*Retry/);
+    assert.doesNotMatch(h.node("viewerStatus").textContent, /Reload/);
+    assert.equal(h.node("downloadLink").href, "/download");
+    await h.renderRealJobDetail({ background: true });
+    assert.equal(viewers.length, 1, "Polling must not retransmit an interrupted preview");
+    if (recovery === "removed") h.context.respond = async () => new Response('{"detail":"Gone"}', { status: 404 });
+    if (recovery === "session") h.context.secureReset();
+    if (recovery === "selection") {
+      h.context.clearDetail(); h.state.selectedId = "another";
+      job.id = "another"; job.artifacts = [{ ...scene, id: "another-artifact" }];
+      await h.renderRealJobDetail();
+    }
+    await h.node("retryPreviewButton").events.get("click")();
+    assert.equal(h.node("retryPreviewButton").hidden, true);
+    assert.equal(viewers.length, ["retry", "selection"].includes(recovery) ? 2 : 1);
+    if (recovery === "retry") assert.equal(h.node("sceneCanvas").focusCount, 1);
+    const current = h.state.viewer, status = h.node("viewerStatus").textContent;
+    lost();
+    assert.equal(h.state.viewer, current, "An old viewer event cannot discard the new scene or session");
+    assert.equal(h.node("viewerStatus").textContent, status);
+    if (current) {
+      h.node("sceneCanvas").events.get("wayline-viewer-unavailable")();
+      assert.equal(h.node("retryPreviewButton").hidden, false, "A second graphics interruption remains recoverable");
+    }
+  }
   for (const constructorFailure of [false, true]) {
     const h = harness();
     const scene = { id: "failed-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
@@ -1832,6 +1882,20 @@ async function main() {
     await h.renderRealJobDetail({ background: true });
     assert.equal(h.node("retryPreviewButton").hidden, true);
     assert.equal(h.state.viewerAttempt, null);
+  }
+  {
+    const h = harness();
+    h.state.selectedId = "lost-on-first-draw";
+    h.context.respond = async () => ({ id: h.state.selectedId, state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, artifacts: [{ id: "artifact", kind: "scene", metadata: {}, sizeBytes: 100 }] });
+    h.context.window.PointCloudViewer = class {
+      async load() { this.contextLost = true; }
+      destroy() {}
+    };
+    await h.renderRealJobDetail();
+    assert.equal(h.state.viewerArtifact, null, "Context loss during the first draw must not mark the artifact ready");
+    assert.equal(h.node("retryPreviewButton").hidden, false);
+    assert.match(h.node("viewerStatus").textContent, /interrupted.*Retry/);
   }
   for (const invalidation of ["none", "removed", "session", "selection"]) {
     const h = harness(), waiting = deferred();

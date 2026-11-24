@@ -5,9 +5,11 @@
   const download = document.getElementById("sharedDownload");
   const retry = document.getElementById("reloadSharedScene");
   const retryPreview = document.getElementById("retrySharedPreview");
+  const cancelPreview = document.getElementById("cancelSharedPreview");
   const controller = new AbortController();
   const timeline = new window.SceneTimeline(document.getElementById("sharedTimeline"));
   let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null, activeDownload = null;
+  let activePreview = null;
   function unavailable(message, title = "This link is no longer available.", canRetry = false) {
     close();
     document.querySelector(".shared-viewer").hidden = true;
@@ -30,6 +32,10 @@
     retryPreview.hidden = true;
   }
   function closePreview() {
+    activePreview?.abort();
+    activePreview = null;
+    cancelPreview.hidden = true;
+    retryPreview.disabled = false;
     timeline.attach(null);
     viewer?.destroy();
     viewer = null;
@@ -79,7 +85,7 @@
     warning.hidden = !data.researchOnly;
     warning.textContent = data.commercialWarning || "";
     expiryTimer = setTimeout(() => unavailable("This link has expired. Ask the person who shared it for a new link."), Math.max(0, data.expiresAt * 1000 - Date.now()));
-    async function fetchArtifact(signal = controller.signal) {
+    async function fetchArtifact(signal) {
       const result = await fetch(data.artifact.contentUrl, { headers, credentials: "omit", signal });
       signal.throwIfAborted();
       if (!result.ok) {
@@ -127,18 +133,19 @@
     }
     async function loadPreview(focus = false) {
       if (controller.signal.aborted || retryPreview.disabled) return;
+      const request = activePreview = new AbortController();
       retryPreview.disabled = true;
+      cancelPreview.hidden = false;
       document.querySelector(".shared-viewer .viewport-wrap").hidden = false;
       document.querySelector(".shared-viewer .viewer-help").hidden = false;
       status.textContent = "Loading preview…";
       try {
-        viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
-        const response = await fetchArtifact();
-        if (controller.signal.aborted) return;
-        await viewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
-        if (controller.signal.aborted) return;
-        if (viewer.contextLost) throw new Error("The 3D preview was interrupted.");
-        const loadedViewer = viewer;
+        const loadedViewer = viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
+        const response = await fetchArtifact(request.signal);
+        if (controller.signal.aborted || activePreview !== request) return;
+        await loadedViewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
+        if (controller.signal.aborted || activePreview !== request) return;
+        if (loadedViewer.contextLost) throw new Error("The 3D preview was interrupted.");
         document.getElementById("sharedCanvas").addEventListener("wayline-viewer-unavailable", () => {
           if (!controller.signal.aborted && viewer === loadedViewer) previewFailed("The 3D preview was interrupted.");
         }, { once: true });
@@ -146,12 +153,21 @@
         retryPreview.hidden = true;
         if (focus) document.getElementById("sharedCanvas").focus();
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || activePreview !== request) return;
         previewFailed("The 3D preview couldn't be loaded.");
       } finally {
-        retryPreview.disabled = false;
+        if (activePreview === request) {
+          activePreview = null;
+          cancelPreview.hidden = true;
+          retryPreview.disabled = false;
+        }
       }
     }
+    cancelPreview.addEventListener("click", () => {
+      if (controller.signal.aborted || !activePreview) return;
+      previewFailed("Preview cancelled.");
+      retryPreview.focus();
+    }, { signal: controller.signal });
     retryPreview.addEventListener("click", () => loadPreview(true), { signal: controller.signal });
     await loadPreview();
   } catch (error) {

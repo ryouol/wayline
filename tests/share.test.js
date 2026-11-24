@@ -25,12 +25,13 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   previewResponses = [], pendingPreviewStatus = 200, ignorePreviewAbort = false } = {}) {
   const ids = ["sharedStatus", "sharedDownload", "sharedTimeline", "shareLicense", "shareTitle",
     "shareUnavailableMessage", "shareUnavailableTitle", "shareUnavailable", "sharedZoomIn",
-    "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink", "reloadSharedScene", "retrySharedPreview"];
+    "sharedZoomOut", "sharedReset", "shareExpiry", "shareCommercialWarning", "sharedCanvas", "sharedSkipLink", "reloadSharedScene", "retrySharedPreview", "cancelSharedPreview"];
   const elements = Object.fromEntries(ids.map(id => [id, element()]));
   elements.shareUnavailable.hidden = true;
   elements.sharedDownload.hidden = true;
   elements.reloadSharedScene.hidden = true;
   elements.retrySharedPreview.hidden = true;
+  elements.cancelSharedPreview.hidden = true;
   const selectors = Object.fromEntries([".shared-viewer", ".shared-viewer .viewport-wrap", ".shared-viewer .viewer-help"].map(selector => [selector, element()]));
   const requests = [], viewers = [], timelineAttachments = [], downloads = [], createdUrls = [], revokedUrls = [];
   const timers = new Map();
@@ -120,6 +121,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   const run = vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/share.js"), "utf8"), scope);
   return { run, window, location, elements, selectors, requests, viewers, timelineAttachments, downloads, createdUrls, revokedUrls,
     timers, releaseMetadata: () => releaseMetadata(), releaseDownload: () => releaseDownload(), releasePreview: () => releasePreview(),
+    capturePreviewRelease: () => releasePreview,
     deadline() { Array.from(timers.values()).filter(timer => timer.delay === 15000).forEach(timer => timer.callback()); },
     expire() { Array.from(timers.values()).filter(timer => timer.delay !== 15000).forEach(timer => timer.callback()); } };
 }
@@ -240,6 +242,65 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
       assert.equal(r.options.headers.Authorization, `Bearer ${token}`);
     }
   }
+  for (const stage of ["headers", "body"]) {
+    const cancellable = fixture({ previewResponses: [stage, 200] }); await settle();
+    assert.equal(cancellable.elements.cancelSharedPreview.hidden, false, "Pending artifact headers and bodies need a cancel action");
+    await cancellable.elements.cancelSharedPreview.click();
+    await cancellable.elements.cancelSharedPreview.click();
+    await cancellable.run;
+    assert.equal(cancellable.requests[1].options.signal.aborted, true);
+    assert.equal(cancellable.requests[0].options.signal.aborted, false, "Cancelling preview preserves the share");
+    assert.equal(cancellable.viewers[0].destroyed, true);
+    assert.equal(cancellable.timelineAttachments.at(-1), null);
+    assert.equal(cancellable.elements.cancelSharedPreview.hidden, true);
+    assert.equal(cancellable.elements.retrySharedPreview.hidden, false);
+    assert.equal(cancellable.elements.retrySharedPreview.disabled, false);
+    assert.equal(cancellable.elements.retrySharedPreview.focused, true);
+    assert.match(cancellable.elements.sharedStatus.textContent, /Preview cancelled/);
+    assert.equal(cancellable.elements.sharedDownload.hidden, false);
+    assert.equal(cancellable.requests.length, 2, "Cancel never retries automatically");
+    await cancellable.elements.retrySharedPreview.click();
+    assert.equal(cancellable.requests.length, 3);
+    assert.equal(cancellable.elements.cancelSharedPreview.hidden, true);
+    assert.equal(cancellable.elements.retrySharedPreview.hidden, true);
+    assert.equal(cancellable.elements.sharedCanvas.focused, true);
+    assert.equal(cancellable.timelineAttachments.at(-1), cancellable.viewers[1]);
+    assert.equal(cancellable.location.reloadCount, 0);
+  }
+  for (const stage of ["headers", "body"]) {
+    const late = fixture({ previewResponses: [stage, "body"], ignorePreviewAbort: true, pendingPreviewStatus: 410 });
+    await settle();
+    const releaseOld = late.capturePreviewRelease();
+    await late.elements.cancelSharedPreview.click();
+    const newer = late.elements.retrySharedPreview.click(); await settle();
+    releaseOld(); await late.run;
+    assert.equal(late.elements.shareUnavailable.hidden, true, "A cancelled late 410 cannot close a valid newer attempt");
+    assert.equal(late.elements.cancelSharedPreview.hidden, false, "Old completion cannot clear the newer cancel action");
+    assert.equal(late.elements.retrySharedPreview.disabled, true);
+    assert.equal(late.viewers[1].destroyed, undefined);
+    late.releasePreview(); await newer;
+    assert.equal(late.timelineAttachments.at(-1), late.viewers[1]);
+    assert.equal(late.elements.cancelSharedPreview.hidden, true);
+  }
+  {
+    const independent = fixture({ previewResponses: ["body"], pendingDownload: "body" }); await settle();
+    const downloading = independent.elements.sharedDownload.click(); await settle();
+    await independent.elements.cancelSharedPreview.click(); await independent.run;
+    assert.equal(independent.requests[2].options.signal.aborted, false, "Preview cancellation must not abort an explicit download");
+    independent.releaseDownload(); await downloading;
+    assert.equal(independent.downloads.length, 1);
+    assert.equal(independent.elements.retrySharedPreview.hidden, false);
+  }
+  for (const exit of [false, true]) {
+    const closed = fixture({ previewResponses: ["body"], ignorePreviewAbort: true }); await settle();
+    if (exit) closed.window.listeners.pagehide(); else closed.expire();
+    const status = closed.elements.sharedStatus.textContent;
+    closed.releasePreview(); await closed.run;
+    assert.equal(closed.requests[1].options.signal.aborted, true);
+    assert.equal(closed.elements.cancelSharedPreview.hidden, true);
+    assert.equal(closed.elements.retrySharedPreview.hidden, true);
+    assert.equal(closed.elements.sharedStatus.textContent, status);
+  }
   for (const recovery of ["retry", "revoked", "expired", "exit"]) {
     const interrupted = fixture({ previewResponses: [200, recovery === "revoked" ? 410 : 200] });
     await interrupted.run;
@@ -317,6 +378,7 @@ function fixture({ hash = `#${token}`, metadataStatus = 200, contentStatus = 200
   assert.equal(rendering.elements.sharedDownload.hidden, false);
   const html = fs.readFileSync(path.join(__dirname, "../lingbot_map/workspace/static/share.html"), "utf8");
   assert.match(html, /<button[^>]+id="retrySharedPreview"[^>]+type="button"[^>]+hidden>Retry preview<\/button>/);
+  assert.match(html, /<button[^>]+id="cancelSharedPreview"[^>]+type="button"[^>]+hidden>Cancel preview<\/button>/);
   const cc0 = fixture({ licenseId: "CC0-1.0" });
   await cc0.run;
   assert.equal(cc0.elements.shareLicense.textContent, "CC0-1.0", "Known license identifiers remain unchanged");

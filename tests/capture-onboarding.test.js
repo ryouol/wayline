@@ -1801,6 +1801,80 @@ async function main() {
     h.context.secureReset();
     assert.equal(h.state.detailCache, null);
   }
+  for (const outcome of ["resolve", "reject", "newer", "removed", "session", "selection", "artifact-removed", "401", "404"]) {
+    const h = harness(), pending = deferred(), newer = deferred(), viewers = [];
+    const scene = { id: "cancel-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+      metadata: {}, viewUrl: "/scene", downloadUrl: "/download" };
+    let job = { id: "cancel-preview", state: "ready", stage: "ready", displayName: "Studio",
+      provenance: {}, createdAt: 100, artifacts: [scene] };
+    h.context.window.PointCloudViewer = class {
+      constructor() { viewers.push(this); }
+      async load() { if (viewers.length === 1) return pending.promise; if (outcome === "newer") return newer.promise; }
+      destroy() { this.destroyed = true; }
+    };
+    h.context.renderJobDetail = h.renderRealJobDetail;
+    h.context.renderTimeline = () => {};
+    h.state.selectedId = job.id;
+    h.context.respond = async () => job;
+    const loading = h.renderRealJobDetail();
+    await new Promise(setImmediate);
+    const cancel = h.node("cancelPreviewButton");
+    assert.equal(typeof cancel.events.get("click"), "function", "A pending private preview needs a cancel action");
+    assert.equal(cancel.hidden, false);
+    cancel.events.get("click")(); cancel.events.get("click")();
+    assert.equal(viewers[0].destroyed, true);
+    assert.equal(h.state.viewer, null);
+    assert.equal(h.state.viewerArtifact, null);
+    assert.equal(h.state.viewerAttempt.loading, false);
+    assert.equal(cancel.hidden, true);
+    assert.equal(h.node("retryPreviewButton").hidden, false);
+    assert.equal(h.node("retryPreviewButton").disabled, false);
+    assert.equal(h.node("retryPreviewButton").focusCount, 1);
+    assert.match(h.node("viewerStatus").textContent, /Preview cancelled.*Retry/);
+    assert.equal(h.node("downloadLink").href, "/download");
+    assert.equal(h.node("shareButton").dataset.artifactId, scene.id);
+    await h.renderRealJobDetail({ background: true }); await h.renderRealJobDetail();
+    assert.equal(viewers.length, 1, "Polling and refresh must not restart a cancelled preview");
+    let retry;
+    if (outcome === "newer") {
+      retry = h.node("retryPreviewButton").events.get("click")(); await new Promise(setImmediate);
+      assert.equal(cancel.hidden, false);
+    }
+    if (outcome === "removed") {
+      h.context.respond = async () => new Response('{"detail":"Gone"}', { status: 404 });
+      await h.renderRealJobDetail({ background: true });
+    }
+    if (outcome === "session") h.context.secureReset();
+    if (outcome === "selection") {
+      h.context.clearDetail(); h.state.selectedId = "another";
+      job = { ...job, id: "another", artifacts: [{ ...scene, id: "another-artifact" }] };
+      await h.renderRealJobDetail();
+    }
+    if (outcome === "artifact-removed") { job.artifacts = []; await h.renderRealJobDetail({ background: true }); }
+    const status = h.node("viewerStatus").textContent, current = h.state.viewer;
+    if (outcome === "resolve" || outcome === "newer") pending.resolve(); else pending.reject(new Error("Late cancelled response"));
+    await loading;
+    assert.equal(h.state.viewer, current, "Late completion cannot replace the current viewer");
+    assert.equal(h.node("viewerStatus").textContent, status, "Late errors cannot replace cancellation or a newer scene");
+    if (outcome === "newer") {
+      assert.equal(cancel.hidden, false, "Old completion cannot hide a newer cancel action");
+      assert.equal(h.node("retryPreviewButton").disabled, true);
+      newer.resolve(); await retry;
+      assert.equal(h.state.viewerArtifact, scene.id);
+      assert.equal(cancel.hidden, true);
+      assert.equal(h.node("retryPreviewButton").hidden, true);
+    } else if (["resolve", "reject", "401", "404"].includes(outcome)) {
+      if (["401", "404"].includes(outcome)) h.context.respond = async () => new Response('{"detail":"Unavailable"}', { status: Number(outcome) });
+      await h.node("retryPreviewButton").events.get("click")();
+      assert.equal(viewers.length, ["401", "404"].includes(outcome) ? 1 : 2, "Retry rechecks access before a new transfer");
+      assert.equal(h.requests.at(-1).options.headers.has("If-None-Match"), false);
+      assert.equal(h.node("retryPreviewButton").hidden, true);
+      assert.equal(cancel.hidden, true);
+    } else {
+      assert.equal(cancel.hidden, true);
+      assert.equal(h.node("retryPreviewButton").hidden, true);
+    }
+  }
   for (const recovery of ["retry", "removed", "session", "selection"]) {
     const h = harness(), viewers = [];
     const scene = { id: "graphics-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
@@ -1965,6 +2039,7 @@ async function main() {
     assert.equal(h.node("downloadLink").href, "");
   }
   assert.match(markup, /<button[^>]+id="retryPreviewButton"[^>]+type="button"[^>]+hidden>Retry preview<\/button>/);
+  assert.match(markup, /<button[^>]+id="cancelPreviewButton"[^>]+type="button"[^>]+hidden>Cancel preview<\/button>/);
   for (const changed of ["selection", "session", "principal"]) {
     const h = harness(), pending = deferred();
     const job = { id: "private", state: "ready", stage: "ready", displayName: "Private",

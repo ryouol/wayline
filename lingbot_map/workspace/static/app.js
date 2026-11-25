@@ -302,6 +302,7 @@ function clearDetail() {
   state.viewerAttempt = null;
   byId("retryPreviewButton").hidden = true;
   byId("retryPreviewButton").disabled = false;
+  byId("cancelPreviewButton").hidden = true;
 }
 
 function sceneIdFromLocation() {
@@ -971,7 +972,9 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
         || (retryPreview && !state.viewerAttempt.loading))) {
       const attempt = state.viewerAttempt = { artifactId: scene.id, loading: true };
       const retry = byId("retryPreviewButton");
+      const cancel = byId("cancelPreviewButton");
       retry.disabled = true;
+      cancel.hidden = false;
       const previewFailed = (error) => {
         if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
         timeline.attach(null);
@@ -980,6 +983,14 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
         state.viewerArtifact = null;
         retry.hidden = false;
         byId("viewerStatus").textContent = `${error.message} Retry the preview or download this scene.`;
+      };
+      attempt.cancel = () => {
+        if (!attempt.loading || state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
+        previewFailed(new Error("Preview cancelled."));
+        state.viewerAttempt = { artifactId: scene.id, loading: false };
+        cancel.hidden = true;
+        retry.disabled = false;
+        retry.focus();
       };
       try {
         timeline.attach(null);
@@ -1001,6 +1012,7 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
       } finally {
         if (state.viewerAttempt === attempt) {
           attempt.loading = false;
+          cancel.hidden = true;
           retry.disabled = false;
         }
       }
@@ -1014,6 +1026,7 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
     state.viewerAttempt = null;
     byId("retryPreviewButton").hidden = true;
     byId("retryPreviewButton").disabled = false;
+    byId("cancelPreviewButton").hidden = true;
   }
 }
 
@@ -1644,6 +1657,7 @@ byId("bulkDeleteButton").addEventListener("click", async () => {
 });
 
 function stopPlayback() { timeline.stop(); }
+byId("cancelPreviewButton").addEventListener("click", () => state.viewerAttempt?.cancel?.());
 byId("retryPreviewButton").addEventListener("click", async () => {
   const button = byId("retryPreviewButton");
   if (button.disabled || button.hidden || !state.selectedId) return;

@@ -36,6 +36,7 @@ jobs:
         with:
           version: "0.12.8"
           enable-cache: true
+          prune-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Install locked dependencies

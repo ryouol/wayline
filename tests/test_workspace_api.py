@@ -2,18 +2,219 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import cv2
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from lingbot_map.workspace.app import create_app
 from lingbot_map.workspace.database import token_digest
-from lingbot_map.workspace.service import WorkspaceService
+from lingbot_map.workspace.modal_engine import ModalLingbotEngine
+from lingbot_map.workspace.service import VideoInspector, WorkspaceService
 
 from .conftest import BOOTSTRAP_TOKEN
 
 
 def fake_mp4(size: int = 64) -> bytes:
     return b"\x00\x00\x00\x18ftypisom" + b"\x00" * max(0, size - 12)
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type", "header"),
+    [
+        ("capture.mp4", "video/mp4", fake_mp4()),
+        ("capture.m4v", "video/mp4", fake_mp4()),
+        ("capture.mov", "video/mp4", fake_mp4()),
+        ("capture.mov", "video/quicktime", fake_mp4()),
+        ("capture.avi", "video/x-msvideo", b"RIFF\x00\x00\x00\x00AVI " + b"\x00" * 52),
+        ("capture.mkv", "video/x-matroska", b"\x1a\x45\xdf\xa3" + b"\x00" * 60),
+    ],
+)
+def test_public_upload_types_match_accepted_file_pairs(
+    authenticated_client, filename, media_type, header
+):
+    configuration = authenticated_client.get("/api/config")
+    assert configuration.status_code == 200
+    suffix = "." + filename.rsplit(".", 1)[1]
+    assert suffix in configuration.json()["acceptedVideoTypes"][media_type]
+    uploaded = authenticated_client.post(
+        "/api/assets", files={"file": (filename, header, media_type)}
+    )
+    assert uploaded.status_code == 201
+
+
+def test_single_frame_upload_is_rejected_without_retaining_data_or_using_allowance(
+    authenticated_client, service, tenant_id, tmp_path
+):
+    service.inspector = VideoInspector()
+    before = service.database.quota(tenant_id)
+    headers = {"Idempotency-Key": "minimum-frames-replacement"}
+
+    def upload_frames(count):
+        path = tmp_path / f"{count}-frames.avi"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+        assert writer.isOpened()
+        try:
+            for index in range(count):
+                writer.write(np.full((48, 64, 3), index * 100, dtype=np.uint8))
+        finally:
+            writer.release()
+        return authenticated_client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": (path.name, path.read_bytes(), "video/x-msvideo")},
+        )
+
+    rejected = upload_frames(1)
+    assert rejected.status_code == 400
+    assert "at least two frames" in rejected.json()["detail"]
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).status_code == 404
+    assert service.database.quota(tenant_id) == before
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+
+    accepted = upload_frames(2)
+    assert accepted.status_code == 201
+    asset = accepted.json()
+    assert asset["metadata"]["frames"] == 2
+    assert ModalLingbotEngine(service.settings).estimate_units(asset["metadata"], {}) == 2
+    assert upload_frames(2).json()["id"] == asset["id"]
+    assert (
+        authenticated_client.get("/api/submissions/upload", headers=headers).json()["id"]
+        == asset["id"]
+    )
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    quota = service.database.quota(tenant_id)
+    for field in ("quota_units", "reserved_units", "consumed_units", "available_units"):
+        assert quota[field] == before[field]
+
+
+def test_upload_still_requires_an_accepted_declared_type(authenticated_client):
+    response = authenticated_client.post(
+        "/api/assets", files={"file": ("capture.mp4", fake_mp4(), "application/octet-stream")}
+    )
+    assert response.status_code == 415
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+
+
+@pytest.mark.parametrize("retained_fraction", [0.55, 0.85])
+def test_truncated_upload_is_rejected_and_a_complete_replacement_can_be_retried(
+    authenticated_client, service, tenant_id, tmp_path, retained_fraction
+):
+    service.inspector = VideoInspector()
+    path = tmp_path / "capture.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+    assert writer.isOpened()
+    try:
+        for index in range(20):
+            writer.write(np.full((48, 64, 3), index * 10, dtype=np.uint8))
+    finally:
+        writer.release()
+    complete = path.read_bytes()
+    truncated = complete[: int(len(complete) * retained_fraction)]
+    path.write_bytes(truncated)
+    # The damaged container still advertises enough frames to pass metadata checks.
+    assert service.inspector.inspect(path)["frames"] == 20
+    before = service.database.quota(tenant_id)
+    headers = {"Idempotency-Key": "truncated-capture-replacement"}
+
+    def upload(data):
+        return authenticated_client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": (path.name, data, "video/x-msvideo")},
+        )
+
+    rejected = upload(truncated)
+    assert rejected.status_code == 400
+    assert "could not be decoded" in rejected.json()["detail"]
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).status_code == 404
+    assert service.database.quota(tenant_id) == before
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+    with service.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM object_claims").fetchone()[0] == 0
+
+    accepted = upload(complete)
+    assert accepted.status_code == 201
+    asset = accepted.json()
+    assert asset["metadata"]["frames"] == 20
+    assert upload(complete).json()["id"] == asset["id"]
+    assert (
+        authenticated_client.get("/api/submissions/upload", headers=headers).json()["id"]
+        == asset["id"]
+    )
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+    assert authenticated_client.get("/api/jobs").json()["jobs"] == []
+    quota = service.database.quota(tenant_id)
+    for field in ("quota_units", "reserved_units", "consumed_units", "available_units"):
+        assert quota[field] == before[field]
+
+
+@pytest.mark.parametrize("exceeded_limit", ["durationSeconds", "frames", "width"])
+def test_upload_limits_are_checked_before_decoding_boundary_frames(
+    authenticated_client, service, monkeypatch, exceeded_limit
+):
+    metadata = service.inspector.inspect(None)
+    limits = {
+        "durationSeconds": service.settings.max_video_seconds,
+        "frames": service.settings.max_video_frames,
+        "width": service.settings.max_video_dimension,
+    }
+    metadata[exceeded_limit] = limits[exceeded_limit] + 1
+    monkeypatch.setattr(service.inspector, "inspect", lambda _path: metadata)
+
+    def unexpected_decode(*_args):
+        pytest.fail("Over-limit uploads must be rejected before decoding")
+
+    monkeypatch.setattr(service.inspector, "validate_boundary_frames", unexpected_decode)
+    response = authenticated_client.post(
+        "/api/assets", files={"file": ("capture.mp4", fake_mp4(), "video/mp4")}
+    )
+    assert response.status_code == 413
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+
+
+@pytest.mark.parametrize("limit", [2048, 4096])
+@pytest.mark.parametrize("long_side", ["width", "height"])
+def test_public_resolution_limit_matches_upload_validation(
+    settings, service, monkeypatch, limit, long_side
+):
+    runtime = replace(settings, max_video_dimension=limit)
+    service.settings = runtime
+    metadata = {
+        "fps": 10.0,
+        "frames": 100,
+        "durationSeconds": 10.0,
+        "width": 1080,
+        "height": 1080,
+        long_side: limit,
+    }
+    monkeypatch.setattr(service.inspector, "inspect", lambda _path: metadata.copy())
+    with TestClient(create_app(runtime, service=service, start_worker=False)) as browser:
+        response = browser.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["maxVideoDimension"] == limit
+        headers = {"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"}
+        accepted = browser.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("at-limit.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert accepted.status_code == 201
+        metadata[long_side] = limit + 1
+        rejected = browser.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("too-wide.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert rejected.status_code == 413
+        assert f"{limit}px" in rejected.json()["detail"]
+        assert len(browser.get("/api/assets", headers=headers).json()["assets"]) == 1
+        assert browser.get("/api/jobs", headers=headers).json()["jobs"] == []
 
 
 def test_authentication_and_security_headers(client, service):
@@ -125,12 +326,178 @@ def test_validated_upload_and_research_gate(authenticated_client, service):
     )
 
 
-def test_upload_rejects_mismatched_content_and_removes_object(authenticated_client, service):
+@pytest.mark.parametrize(
+    ("filename", "expected_name"),
+    [
+        ("a" * 116 + ".MP4", "a" * 116 + ".MP4"),
+        ("a" * 117 + ".MP4", "a" * 116 + ".MP4"),
+        ("part." + "a" * 180 + ".m4v", "part." + "a" * 111 + ".m4v"),
+        ("." * 120 + "walkthrough.mov", "walkthrough.mov"),
+        # Keep the existing stored name and receipt hash for an already-accepted upload.
+        ("a" * 116 + ".MP4" + ".extra.mp4", "a" * 116 + ".MP4"),
+    ],
+)
+def test_long_upload_filename_preserves_extension_and_receipt(
+    authenticated_client, filename, expected_name
+):
+    files = {"file": (filename, fake_mp4(), "video/mp4")}
+    headers = {"Idempotency-Key": "long-capture-name"}
+    upload = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert upload.status_code == 201
+    assert upload.json()["name"] == expected_name
+    replay = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == upload.json()["id"]
+    assert len(authenticated_client.get("/api/assets").json()["assets"]) == 1
+
+
+def test_long_upload_replays_a_receipt_with_a_different_valid_clipped_extension(
+    authenticated_client,
+):
+    clipped = "a" * 116 + ".mp4"
+    filename = clipped + ".export.mov"
+    headers = {"Idempotency-Key": "previously-accepted-long-name"}
+    # Prior versions persisted the first 120 characters in the receipt hash.
+    previous = authenticated_client.post(
+        "/api/assets", files={"file": (clipped, fake_mp4(), "video/mp4")}, headers=headers
+    )
+    assert previous.status_code == 201
+    files = {"file": (filename, fake_mp4(), "video/mp4")}
+    replay = authenticated_client.post("/api/assets", files=files, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == previous.json()["id"]
+    new = authenticated_client.post("/api/assets", files=files)
+    assert new.status_code == 201
+    assert new.json()["name"] == "a" * 116 + ".mov"
+
+
+@pytest.mark.parametrize("suffix", [".exe", "without-extension", ".avi", "." + "a" * 130])
+def test_long_filename_cannot_hide_an_unsupported_suffix(authenticated_client, service, suffix):
     response = authenticated_client.post(
-        "/api/assets", files={"file": ("not-video.mp4", b"plain text", "video/mp4")}
+        "/api/assets",
+        files={"file": ("a" * 116 + ".mp4" + suffix, fake_mp4(), "video/mp4")},
+    )
+    assert response.status_code == 415
+    assert authenticated_client.get("/api/assets").json()["assets"] == []
+    assert not any(path.is_file() for path in (service.settings.data_dir / "objects").rglob("*"))
+
+
+@pytest.mark.parametrize("filename", ["not-video.mp4", "a" * 160 + ".mp4"])
+def test_upload_rejects_mismatched_content_and_removes_object(
+    authenticated_client, service, filename
+):
+    response = authenticated_client.post(
+        "/api/assets", files={"file": (filename, b"plain text", "video/mp4")}
     )
     assert response.status_code == 415
     assert list((service.settings.data_dir / "objects").rglob("*.mp4")) == []
+
+
+def test_upload_submission_lookup_is_current_and_read_only(
+    authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "uncertain-upload-key"}
+    uploaded = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 201
+    asset = uploaded.json()
+    assert authenticated_client.get("/api/submissions/upload", headers=headers).json() == asset
+    job = service.database.create_job(
+        tenant_id=tenant_id,
+        engine_id="synthetic-sample-v1",
+        source_asset_id=asset["id"],
+        params={},
+        provenance={"fixture": True},
+        reserve_units=0,
+    )
+    service.cancel_job(tenant_id, job["id"])
+    expected = authenticated_client.get("/api/assets").json()["assets"][0]
+    assert expected["linkedJobCount"] == 1 and not expected["deletable"]
+    with service.database.connect() as connection:
+        before = list(connection.iterdump())
+    for _ in range(2):
+        recovered = authenticated_client.get("/api/submissions/upload", headers=headers)
+        assert recovered.status_code == 200
+        assert recovered.headers["cache-control"] == "no-store"
+        assert recovered.json() == expected, "Return current asset metadata, not a stale receipt"
+        assert "object_key" not in recovered.json()
+    with service.database.connect() as connection:
+        assert list(connection.iterdump()) == before, "Lookup changes no receipt, quota or rate"
+    assert len(list((service.settings.data_dir / "objects").rglob("*.mp4"))) == 1
+
+
+def test_upload_submission_lookup_requires_a_valid_key(authenticated_client):
+    for headers in [{}, {"Idempotency-Key": "short"}, {"Idempotency-Key": "x" * 201}]:
+        response = authenticated_client.get("/api/submissions/upload", headers=headers)
+        assert response.status_code == 422
+        assert response.headers["cache-control"] == "no-store"
+
+
+def test_completed_upload_receipt_survives_rate_limited_replay(settings, service):
+    limited = replace(settings, upload_rate_per_minute=1)
+    service.settings = limited
+    headers = {
+        "Authorization": f"Bearer {BOOTSTRAP_TOKEN}",
+        "Idempotency-Key": "rate-limited-upload-replay",
+    }
+    with TestClient(create_app(limited, service=service, start_worker=False)) as client:
+        first = client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert first.status_code == 201
+        retry = client.post(
+            "/api/assets",
+            headers=headers,
+            files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        )
+        assert retry.status_code == 429
+        assert retry.json()["code"] == "rate_limit_exceeded"
+        recovered = client.get("/api/submissions/upload", headers=headers)
+        assert recovered.status_code == 200 and recovered.json() == first.json()
+        assert recovered.headers["cache-control"] == "no-store"
+        assert len(client.get("/api/assets", headers=headers).json()["assets"]) == 1
+        assert client.get("/api/jobs", headers=headers).json()["jobs"] == []
+
+
+@pytest.mark.parametrize(
+    "unavailable", ["missing", "expired", "pending", "scope", "tenant", "deleted"]
+)
+def test_upload_submission_lookup_respects_identity_and_lifetime(
+    unavailable, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "scoped-upload-key"}
+    asset = authenticated_client.post(
+        "/api/assets",
+        files={"file": ("walkthrough.mp4", fake_mp4(), "video/mp4")},
+        headers=headers,
+    ).json()
+    if unavailable == "missing":
+        headers = {"Idempotency-Key": "unknown-upload-key"}
+    elif unavailable == "deleted":
+        service.delete_asset(tenant_id, asset["id"])
+    else:
+        other = service.database.provision_tenant(
+            token="other-upload-lookup-test-token", tenant_name="Other", quota_units=100
+        )["tenant_id"]
+        column, value = {
+            "expired": ("expires_at", 0),
+            "pending": ("state", "in_progress"),
+            "scope": ("scope", "POST:/api/jobs/research"),
+            "tenant": ("tenant_id", other),
+        }[unavailable]
+        with service.database.connect() as connection:
+            connection.execute(f"UPDATE idempotency_keys SET {column}=?", (value,))
+    response = authenticated_client.get("/api/submissions/upload", headers=headers)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    authenticated_client.cookies.clear()
+    response = authenticated_client.get("/api/submissions/upload", headers=headers)
+    assert response.status_code == 401 and response.headers["cache-control"] == "no-store"
 
 
 def test_orphan_upload_can_be_deleted(authenticated_client, service):

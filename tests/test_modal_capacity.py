@@ -9,7 +9,7 @@ import pytest
 from starlette.requests import Request
 
 from lingbot_map.workspace.config import RESEARCH_ACKNOWLEDGEMENT
-from lingbot_map.workspace.database import StaleAttempt
+from lingbot_map.workspace.database import IdempotencyConflict, StaleAttempt
 from lingbot_map.workspace.engines import LingbotResearchEngine
 from lingbot_map.workspace.identity import IdentityStore
 from lingbot_map.workspace.modal_engine import ModalLingbotEngine, ReconstructionCapacityExceeded
@@ -216,6 +216,124 @@ def test_research_idempotency_replays_after_capacity_is_exhausted(
     )
     assert conflict.status_code == 409 and conflict.json()["code"] == "idempotency_conflict"
     assert authenticated_client.post("/api/jobs/research", json=payload).status_code == 409
+
+
+@pytest.mark.parametrize("different_settings", [False, True])
+def test_shared_upload_key_coordinates_concurrent_scene_submissions(
+    service, tenant_id, capacity_engine, authenticated_client, different_settings
+):
+    headers = {"Idempotency-Key": "shared-upload-and-scene-key"}
+    uploaded = authenticated_client.post(
+        "/api/assets",
+        headers=headers,
+        files={"file": ("capture.mp4", fake_mp4(), "video/mp4")},
+    )
+    assert uploaded.status_code == 201
+    asset = uploaded.json()
+    barrier = Barrier(2)
+
+    def submit_tab(index):
+        barrier.wait(timeout=5)
+        try:
+            return service.submit_research(
+                tenant_id,
+                asset_id=asset["id"],
+                params={"maxFrames": 31 if different_settings and index else 30},
+                idempotency_key=headers["Idempotency-Key"],
+            )
+        except IdempotencyConflict:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit_tab, range(2)))
+    accepted = [job for job in results if job]
+    assert len(accepted) == (1 if different_settings else 2)
+    assert len({job["id"] for job in accepted}) == 1
+    assert scalar(service, "SELECT COUNT(*) FROM jobs") == 1
+    assert scalar(service, "SELECT COUNT(*) FROM assets") == 1
+    assert scalar(service, "SELECT COUNT(*) FROM idempotency_keys") == 2
+    quota = service.database.quota(tenant_id)
+    assert quota["reserved_units"] == accepted[0]["reserved_units"]
+    assert quota["consumed_units"] == 0
+    assert capacity_engine.capacity_unavailable_reason()
+    recovered = authenticated_client.get("/api/submissions/research", headers=headers)
+    assert recovered.status_code == 200 and recovered.json()["id"] == accepted[0]["id"]
+    upload_receipt = authenticated_client.get("/api/submissions/upload", headers=headers)
+    assert upload_receipt.status_code == 200
+    assert upload_receipt.json()["id"] == asset["id"]
+    assert upload_receipt.json()["linkedJobCount"] == 1
+    assert service.database.quota(tenant_id) == quota
+
+
+def test_research_submission_lookup_is_current_and_read_only(
+    capacity_engine, capture, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "uncertain-research-key"}
+    created = authenticated_client.post(
+        "/api/jobs/research", json={"assetId": capture["id"], "maxFrames": 30}, headers=headers
+    ).json()
+    assert capacity_engine.capacity_unavailable_reason()
+    assert (
+        authenticated_client.get("/api/submissions/research", headers=headers).json()["id"]
+        == created["id"]
+    )
+    service.cancel_job(tenant_id, created["id"])
+    before = service.database.quota(tenant_id)
+    expiry = scalar(service, "SELECT expires_at FROM idempotency_keys")
+    for _ in range(2):
+        recovered = authenticated_client.get("/api/submissions/research", headers=headers)
+        assert recovered.status_code == 200
+        assert recovered.headers["cache-control"] == "no-store"
+        assert recovered.json()["id"] == created["id"]
+        assert recovered.json()["state"] == "cancelled", "Lookup returns current job state"
+    assert service.database.quota(tenant_id) == before
+    assert len(service.database.list_jobs(tenant_id)) == 1
+    assert scalar(service, "SELECT COUNT(*) FROM idempotency_keys") == 1
+    assert scalar(service, "SELECT expires_at FROM idempotency_keys") == expiry
+
+
+def test_research_submission_lookup_requires_a_valid_key(authenticated_client):
+    for headers in [{}, {"Idempotency-Key": "short"}, {"Idempotency-Key": "x" * 201}]:
+        response = authenticated_client.get("/api/submissions/research", headers=headers)
+        assert response.status_code == 422
+        assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "unavailable", ["missing", "expired", "pending", "scope", "tenant", "deleted"]
+)
+def test_research_submission_lookup_does_not_cross_identity_or_lifetime(
+    unavailable, capacity_engine, capture, authenticated_client, service, tenant_id
+):
+    headers = {"Idempotency-Key": "scoped-research-key"}
+    created = authenticated_client.post(
+        "/api/jobs/research", json={"assetId": capture["id"], "maxFrames": 30}, headers=headers
+    ).json()
+    if unavailable == "missing":
+        headers = {"Idempotency-Key": "unknown-research-key"}
+    elif unavailable == "deleted":
+        service.cancel_job(tenant_id, created["id"])
+        service.delete_job(tenant_id, created["id"])
+    else:
+        other = service.database.provision_tenant(
+            token="other-submission-lookup-test-token",
+            tenant_name="Other workspace",
+            quota_units=100,
+        )["tenant_id"]
+        changes = {
+            "expired": ("expires_at", 0),
+            "pending": ("state", "in_progress"),
+            "scope": ("scope", "POST:/api/jobs/sample"),
+            "tenant": ("tenant_id", other),
+        }
+        column, value = changes[unavailable]
+        with service.database.connect() as connection:
+            connection.execute(f"UPDATE idempotency_keys SET {column}=?", (value,))
+    response = authenticated_client.get("/api/submissions/research", headers=headers)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    authenticated_client.cookies.clear()
+    assert authenticated_client.get("/api/submissions/research", headers=headers).status_code == 401
 
 
 def test_modal_capacity_does_not_gate_samples_or_local_engines(service, tenant_id, capacity_engine):

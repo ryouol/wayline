@@ -29,11 +29,13 @@
       </div>
       <div class="timeline" id="sharedTimeline" hidden><div class="timeline-top"><div class="playback-actions"><button class="secondary play-path" type="button">Play path</button><button class="secondary show-all" type="button">Whole scene</button></div><span class="frame-counter">Source frames</span></div><label class="sr-only" for="sharedScrubber">Source frame</label><input id="sharedScrubber" type="range" min="0" max="0" value="0" step="1"><div class="filmstrip" aria-label="Source frames"></div><p class="frame-navigation-help">Source frames: ← / → to step · Home / End for first / last</p></div>
       <div class="viewer-status-row"><p class="viewer-status" id="sharedStatus" role="status">Loading scene.</p><p class="viewer-help">Drag to orbit · scroll to zoom</p></div>
+      <button class="secondary" id="retrySharedPreview" type="button" hidden>Retry preview</button>
+      <button class="secondary" id="cancelSharedPreview" type="button" hidden>Cancel preview</button>
       <p class="legal-note research-warning" id="shareCommercialWarning" role="note" hidden></p>
       <p class="legal-note" id="shareExpiry"></p>
     </section>
 
-    <section class="share-unavailable" id="shareUnavailable" aria-labelledby="shareUnavailableTitle" hidden><h2 id="shareUnavailableTitle" tabindex="-1">This link is no longer available.</h2><p id="shareUnavailableMessage">It may have expired or been removed. Ask the person who shared it for a new link.</p><a class="primary" href="/">Get started with Wayline</a></section>
+    <section class="share-unavailable" id="shareUnavailable" aria-labelledby="shareUnavailableTitle" hidden><h2 id="shareUnavailableTitle" tabindex="-1">This link is no longer available.</h2><p id="shareUnavailableMessage">It may have expired or been removed. Ask the person who shared it for a new link.</p><button class="primary" id="reloadSharedScene" type="button" hidden>Reload scene</button> <a class="primary" href="/">Get started with Wayline</a></section>
   </main>
   <script src="/static/viewer.js"></script>
   <script src="/static/timeline.js"></script>

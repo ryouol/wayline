@@ -78,7 +78,7 @@ def test_session_reset_aborts_requests_and_destroys_webgl_resources():
     app = (STATIC / "app.js").read_text(encoding="utf-8")
     viewer = (STATIC / "viewer.js").read_text(encoding="utf-8")
     assert markup.index("/static/session-events.js") < markup.index("/static/app.js")
-    assert "function secureReset()" in app
+    assert "function secureReset(" in app
     assert "controller.abort()" in app
     assert "state.epoch += 1" in app
     assert 'response.headers.get("X-Workspace-Principal")' in app

@@ -2203,18 +2203,26 @@ class Database:
         if changed != 1:
             raise KeyError(share_id)
 
-    def research_submission_job(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
-        """Resolve an accepted research request without replaying or renewing it."""
+    def _submission_resource_id(self, tenant_id: str, scope: str, raw_key: str) -> str:
+        """Read a completed submission's identity without replaying or renewing it."""
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT response_json FROM idempotency_keys WHERE tenant_id=? "
-                "AND scope='POST:/api/jobs/research' AND key_hash=? "
+                "SELECT response_json FROM idempotency_keys WHERE tenant_id=? AND scope=? "
+                "AND key_hash=? "
                 "AND state='complete' AND expires_at>?",
-                (tenant_id, token_digest(raw_key), time.time()),
+                (tenant_id, scope, token_digest(raw_key), time.time()),
             ).fetchone()
         if row is None:
-            raise KeyError("Research submission not found")
-        return self.get_job(tenant_id, json.loads(row["response_json"])["id"])
+            raise KeyError("Submission not found")
+        return str(json.loads(row["response_json"])["id"])
+
+    def research_submission_job(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
+        job_id = self._submission_resource_id(tenant_id, "POST:/api/jobs/research", raw_key)
+        return self.get_job(tenant_id, job_id)
+
+    def upload_submission_asset(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
+        asset_id = self._submission_resource_id(tenant_id, "POST:/api/assets", raw_key)
+        return self.get_asset(tenant_id, asset_id)
 
     def has_completed_idempotency(self, tenant_id: str, scope: str, raw_key: str | None) -> bool:
         """Identify a replay candidate without claiming a key or trusting its payload."""

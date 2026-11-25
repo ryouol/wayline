@@ -3,10 +3,14 @@
 (async function loadSharedScene() {
   const status = document.getElementById("sharedStatus");
   const download = document.getElementById("sharedDownload");
+  const retry = document.getElementById("reloadSharedScene");
+  const retryPreview = document.getElementById("retrySharedPreview");
+  const cancelPreview = document.getElementById("cancelSharedPreview");
   const controller = new AbortController();
   const timeline = new window.SceneTimeline(document.getElementById("sharedTimeline"));
-  let viewer = null, expiryTimer = null, downloadUrl = null;
-  function unavailable(message, title = "This link is no longer available.") {
+  let viewer = null, expiryTimer = null, metadataTimer = null, downloadUrl = null, activeDownload = null;
+  let activePreview = null;
+  function unavailable(message, title = "This link is no longer available.", canRetry = false) {
     close();
     document.querySelector(".shared-viewer").hidden = true;
     document.getElementById("shareLicense").hidden = true;
@@ -14,21 +18,33 @@
     document.getElementById("shareUnavailableTitle").textContent = title;
     document.getElementById("shareUnavailableMessage").textContent = message;
     document.getElementById("shareUnavailable").hidden = false;
+    retry.hidden = !canRetry;
   }
   function close() {
     controller.abort();
+    activeDownload?.abort();
     clearTimeout(expiryTimer);
+    clearTimeout(metadataTimer);
     closePreview();
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = null;
     download.hidden = true;
+    retryPreview.hidden = true;
   }
   function closePreview() {
+    activePreview?.abort();
+    activePreview = null;
+    cancelPreview.hidden = true;
+    retryPreview.disabled = false;
     timeline.attach(null);
     viewer?.destroy();
     viewer = null;
   }
   window.addEventListener("pagehide", close, { once: true });
+  retry.addEventListener("click", () => {
+    retry.disabled = true;
+    location.reload();
+  });
   document.getElementById("sharedSkipLink").addEventListener("click", (event) => {
     event.preventDefault();
     document.getElementById("shareTitle").focus();
@@ -44,13 +60,18 @@
       return;
     }
     const headers = { Authorization: `Bearer ${token}` };
+    metadataTimer = setTimeout(() => {
+      if (!controller.signal.aborted) unavailable("Loading took too long. Reload this scene to try again.", "Unable to load this scene.", true);
+    }, 15000);
     const response = await fetch("/api/public/share", { headers, credentials: "omit", signal: controller.signal });
+    if (controller.signal.aborted) return;
     if (!response.ok) {
       if ([401, 403, 404, 410].includes(response.status)) unavailable("This link is invalid or has expired.");
-      else unavailable("The shared scene could not be loaded. Please try opening the link again.", "Unable to load this scene.");
+      else unavailable("The shared scene could not be loaded. Reload this scene to try again.", "Unable to load this scene.", true);
       return;
     }
     const data = await response.json();
+    clearTimeout(metadataTimer);
     if (controller.signal.aborted) return;
     if (data.expiresAt * 1000 <= Date.now()) {
       unavailable("This link has expired. Ask the person who shared it for a new link.");
@@ -64,8 +85,9 @@
     warning.hidden = !data.researchOnly;
     warning.textContent = data.commercialWarning || "";
     expiryTimer = setTimeout(() => unavailable("This link has expired. Ask the person who shared it for a new link."), Math.max(0, data.expiresAt * 1000 - Date.now()));
-    async function fetchArtifact() {
-      const result = await fetch(data.artifact.contentUrl, { headers, credentials: "omit", signal: controller.signal });
+    async function fetchArtifact(signal) {
+      const result = await fetch(data.artifact.contentUrl, { headers, credentials: "omit", signal });
+      signal.throwIfAborted();
       if (!result.ok) {
         if ([401, 403, 404, 410].includes(result.status)) unavailable("This link is no longer available. Ask the person who shared it for a new link.");
         throw new Error("The scene could not be downloaded. Please try again.");
@@ -75,39 +97,80 @@
     // Download access depends on the share, not on this browser's WebGL support.
     download.hidden = false;
     download.addEventListener("click", async () => {
-      download.disabled = true;
-      download.textContent = "Preparing download…";
+      if (controller.signal.aborted) return;
+      if (activeDownload) {
+        activeDownload.abort();
+        status.textContent = "Download cancelled. You can try again.";
+        return;
+      }
+      const request = activeDownload = new AbortController();
+      download.textContent = "Cancel download";
+      status.textContent = "Preparing download…";
       try {
-        const response = await fetchArtifact();
+        const response = await fetchArtifact(request.signal);
         const blob = await response.blob();
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || request.signal.aborted) return;
         if (downloadUrl) URL.revokeObjectURL(downloadUrl);
         downloadUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = downloadUrl;
         link.download = data.artifact.filename;
         link.click();
+        status.textContent = "Download ready. Check your browser's downloads.";
       } catch (error) {
-        if (!controller.signal.aborted) status.textContent = error.message;
+        if (!controller.signal.aborted && !request.signal.aborted) status.textContent = error.message;
       } finally {
-        download.disabled = false;
+        activeDownload = null;
         download.textContent = "Download GLB";
       }
     }, { signal: controller.signal });
-    try {
-      viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
-      const response = await fetchArtifact();
-      if (controller.signal.aborted) return;
-      await viewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
-      if (!controller.signal.aborted) timeline.attach(viewer);
-    } catch (error) {
-      if (controller.signal.aborted) return;
+    function previewFailed(message) {
       closePreview();
       document.querySelector(".shared-viewer .viewport-wrap").hidden = true;
       document.querySelector(".shared-viewer .viewer-help").hidden = true;
-      status.textContent = "The 3D preview couldn't be loaded. You can still download this scene.";
+      retryPreview.hidden = false;
+      status.textContent = `${message} Retry the preview or download this scene.`;
     }
+    async function loadPreview(focus = false) {
+      if (controller.signal.aborted || retryPreview.disabled) return;
+      const request = activePreview = new AbortController();
+      retryPreview.disabled = true;
+      cancelPreview.hidden = false;
+      document.querySelector(".shared-viewer .viewport-wrap").hidden = false;
+      document.querySelector(".shared-viewer .viewer-help").hidden = false;
+      status.textContent = "Loading preview…";
+      try {
+        const loadedViewer = viewer = new window.PointCloudViewer(document.getElementById("sharedCanvas"), status);
+        const response = await fetchArtifact(request.signal);
+        if (controller.signal.aborted || activePreview !== request) return;
+        await loadedViewer.load(data.artifact.contentUrl, { prefetchedResponse: response });
+        if (controller.signal.aborted || activePreview !== request) return;
+        if (loadedViewer.contextLost) throw new Error("The 3D preview was interrupted.");
+        document.getElementById("sharedCanvas").addEventListener("wayline-viewer-unavailable", () => {
+          if (!controller.signal.aborted && viewer === loadedViewer) previewFailed("The 3D preview was interrupted.");
+        }, { once: true });
+        timeline.attach(viewer);
+        retryPreview.hidden = true;
+        if (focus) document.getElementById("sharedCanvas").focus();
+      } catch (error) {
+        if (controller.signal.aborted || activePreview !== request) return;
+        previewFailed("The 3D preview couldn't be loaded.");
+      } finally {
+        if (activePreview === request) {
+          activePreview = null;
+          cancelPreview.hidden = true;
+          retryPreview.disabled = false;
+        }
+      }
+    }
+    cancelPreview.addEventListener("click", () => {
+      if (controller.signal.aborted || !activePreview) return;
+      previewFailed("Preview cancelled.");
+      retryPreview.focus();
+    }, { signal: controller.signal });
+    retryPreview.addEventListener("click", () => loadPreview(true), { signal: controller.signal });
+    await loadPreview();
   } catch (error) {
-    if (!controller.signal.aborted) unavailable("The shared scene could not be loaded. Please try opening the link again.", "Unable to load this scene.");
+    if (!controller.signal.aborted) unavailable("The shared scene could not be loaded. Reload this scene to try again.", "Unable to load this scene.", true);
   }
 }());

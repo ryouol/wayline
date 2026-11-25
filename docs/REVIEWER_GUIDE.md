@@ -8,17 +8,22 @@ interpreting historical QA reports as current production facts.
 
 - Repository: [ryouol/wayline](https://github.com/ryouol/wayline), private.
 - Default/application branch: `codex/production-ready-lingbot-map`.
-- Review: [PR #10 against main](https://github.com/ryouol/wayline/pull/10), draft.
+- History consolidation: [PR #10 against main](https://github.com/ryouol/wayline/pull/10).
 - Production URL: [wayline-9ten.onrender.com](https://wayline-9ten.onrender.com/).
-- Verified web runtime: `785bc7e`, live September 13, 2026 at 00:00:01 UTC.
+- Web runtime verified November 24, 2026: `f50ffc4`, Render deployment
+  `dep-dc2pm6tg1s2s739i9cog`. Later source merges require a separate deployment.
 - Modal runtime: `5ff66bb`; later owner/progress changes affect the web app only.
 - This repository handoff changes documentation, links and repository metadata.
   It does not migrate Python imports, database schema, environment keys or model weights.
 
-`main` does not yet contain the product branch. Do not infer deployed behavior
-from `main`. The existing PR is too large for one approval; finding
-139 in [REVIEW.md](REVIEW.md) remains open. Eight dependency PRs are also open;
-none was merged during this handoff.
+The original PR #1 was squash-merged into `main`, while development continued on
+the production branch. The November 24 reconciliation records that shared ancestry:
+the old `main` tree exactly matches an existing production ancestor, so it adds no
+application changes. Use merge commits for this consolidation to preserve ancestry.
+Match a source revision to the live deployment before inferring deployed behavior.
+Historical aggregate-size finding 139 in [REVIEW.md](REVIEW.md) remains a review
+limitation; this mechanical consolidation does not certify every inherited change
+or close launch acceptance gates. Dependency upgrades are reviewed separately.
 
 ## Suggested review order
 
@@ -54,17 +59,19 @@ none was merged during this handoff.
 
 ## Validation and review disposition
 
-The deployed web commit passed 273 Python tests, eleven Node suites, strict lint,
-format/type checks, packaging and a 512 MiB / 0.5 CPU container smoke (201.1 MiB
-peak). See [exact CI run](https://github.com/ryouol/wayline/actions/runs/34726685228).
-The processing release matched 64 static files, eleven backend modules, license
-notices and saved artifact hashes while preserving accounts and all limits.
+The November 24 web commit passed 381 Python tests, eleven Node suites, strict lint,
+format/type checks, packaging and a 512 MiB / 0.5 CPU container smoke (199.5 MiB
+peak). See [exact CI run](https://github.com/ryouol/wayline/actions/runs/45410821788).
+Live checks verified the installed commit, backend hashes, six served assets,
+public health/configuration and read-only API guards. Browser cancellation and retry
+used a local synthetic fixture; no production upload, inference or allowance was used.
 
 Simplify/code-review findings are recorded in [REVIEW.md](REVIEW.md). Fixed findings
 are not outstanding blockers. Do not approve the aggregate solely because CI is green.
 Split independent upstream fixes first; keep coupled identity/schema/API, job/recovery,
 export/viewer and deployment contracts together when preparing smaller landing PRs.
-No new feature work or dependency upgrades are included in this handoff.
+Current release and dependency decisions are tracked in the
+[canonical project Space](https://chatgpt.com/space/page_6ac1875536bc8191af022b6db30a8ef8).
 
 ## What is intentionally absent
 

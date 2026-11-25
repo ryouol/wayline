@@ -24,8 +24,9 @@ did not pass visual-quality acceptance. See [launch readiness](docs/launch-readi
 
 The current application and this handoff open by default on
 [`codex/production-ready-lingbot-map`](https://github.com/ryouol/wayline/tree/codex/production-ready-lingbot-map).
-`main` is the earlier baseline; [PR #10](https://github.com/ryouol/wayline/pull/10)
-is draft and unmerged. Review that branch, not `main`, to inspect the deployed product.
+[PR #10](https://github.com/ryouol/wayline/pull/10) records consolidation of the
+application history into `main`. Match the exact Render deployment commit when
+reviewing live behavior; merging source does not deploy it automatically.
 The repository remains private; reviewers need access.
 
 ## Product flow

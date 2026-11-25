@@ -1,265 +1,134 @@
-# 3D Scene Workspace
+# Wayline
 
-An authenticated workspace for turning a video-to-3D engine result into a
-durable, reviewable artifact: queued job, stage-based progress, browser-native
-point-cloud viewer, download, deletion, and expiring sharing.
+**Turn a short walkthrough into a 3D point-cloud scene you can explore and share.**
 
-The repository also contains the LingBot-Map research model. Its checkpoint and
-training-data commercial rights are unresolved, so that adapter is disabled by
-default, marked `commerciallyCleared: false`, and has no billing path. The
-working zero-cost demo uses an explicitly CC0 synthetic point cloud and makes no
-claim about LingBot quality or performance.
+[Open Wayline — production URL](https://wayline-9ten.onrender.com/) ·
+[Engineer review guide](docs/REVIEWER_GUIDE.md) ·
+[Architecture](docs/architecture.md) ·
+[Documentation](docs/README.md) ·
+[Review PR](https://github.com/ryouol/wayline/pull/10)
 
-## Run the complete local workflow
+![Wayline landing page](docs/screenshots/landing.png)
 
-Use Python 3.11:
+Wayline gives a captured space a persistent home: upload a video, follow processing,
+then orbit the point cloud, replay the camera path, download a GLB, or create an
+expiring view-only share. The frontend and API run together on Render; a private
+Modal GPU worker performs reconstruction using the upstream LingBot-Map model.
 
-```bash
-python3.11 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .
-.venv/bin/lingbot-workspace --dev
-```
+## Start here
 
-The server prints a high-entropy development token once and listens on
-`http://127.0.0.1:7860`. Sign in with that token, choose **Create synthetic
-scene**, and the worker will persist a real GLB plus provenance manifest. The
-result can be orbited in the bundled WebGL viewer, downloaded, shared through a
-24-hour permissioned link, or deleted with all associated stored objects.
+**Live research preview, not general availability.** The deployed application is
+functional, but reconstruction quality and hosted model/data rights remain open
+review items. A licensed benchmark passed; a later user capture reached READY but
+did not pass visual-quality acceptance. See [launch readiness](docs/launch-readiness.md).
 
-`python webui/server.py --dev` remains as a compatibility launcher.
+The current application and this handoff open by default on
+[`codex/production-ready-lingbot-map`](https://github.com/ryouol/wayline/tree/codex/production-ready-lingbot-map).
+[PR #10](https://github.com/ryouol/wayline/pull/10) records consolidation of the
+application history into `main`. Match the exact Render deployment commit when
+reviewing live behavior; merging source does not deploy it automatically.
+The repository remains private; reviewers need access.
 
-## What is implemented
+## Product flow
 
-- High-entropy bearer-token login exchanged for an HTTP-only, SameSite session
-  and stable per-session CSRF token. Peer tabs cannot invalidate one another;
-  logout remains revocable with a stale header.
-- Tenant checks on every asset, job, artifact, download, and share operation.
-- SQLite state with WAL mode, explicit job transitions, expiring worker leases,
-  per-attempt/worker fencing, bounded retries, and attempt-scoped cleanup.
-- Pre-I/O byte and in-flight-slot reservations plus transactional tenant and
-  global storage/minimum-free-space limits for assets, unattached uploads,
-  jobs, artifacts, active shares, and compute reservations; durable upload/job/
-  share rate buckets and configurable retention.
-- Atomic filesystem object storage behind an injectable `ObjectStore` protocol,
-  with provisional in-flight claims, startup orphan/missing-object
-  reconciliation, and a durable deletion outbox that retries failed physical
-  deletes. Attempt artifacts remain private until the job is ready.
-- Streamed uploads with byte limits, container signatures, media-type checks,
-  decode probing, duration/frame/dimension limits, and opaque storage keys.
-- Deletion of unsubmitted uploads, including browser cleanup when job submission
-  fails; referenced uploads remain protected by a database invariant.
-- Capacity reservations released on cancellation/failure and settled on
-  success. Completion and cancellation are resolved in one transaction so a
-  committed cancellation cannot publish late artifacts. These are operational
-  compute units, not money or paid credits.
-- A pluggable `ReconstructionEngine` interface with a production-safe synthetic
-  engine and a gated LingBot command adapter.
-- Stored GLB and manifest artifacts with SHA-256, media type, license, and
-  provenance metadata.
-- A dependency-free WebGL point-cloud viewer with pointer, wheel, and keyboard
-  controls; no remote fonts, analytics, or third-party runtime scripts.
-- Expiring, hashed share tokens and tenant-scoped deletion of source uploads,
-  artifacts, and related shares.
-- Cursor-paginated job/asset/share inventories with visible load-more, delete,
-  revoke, and bounded bulk-cleanup controls. Upload rows expose retained-scene
-  link counts and disable deletion with an explanation; selecting a terminal job
-  and its source upload is normalized as one accepted cleanup cascade.
-  Route-scoped request-hash idempotency settles in the same transaction as every
-  database mutation, and browser transport retries reuse the original key.
-- Session-epoch browser isolation: logout, `401`, and account changes abort
-  in-flight requests, clear all private DOM/tenant state, and destroy WebGL
-  resources. Cross-tab notifications plus focus revalidation cover peer-tab
-  logout and account changes.
-- Worker iteration supervision catches transient maintenance/queue failures,
-  logs them, and retries with bounded exponential backoff.
+1. **Discover:** a visual landing page leads to Google signup.
+2. **Create:** upload a short MP4/MOV, then follow preparation, building and saving.
+3. **Explore:** orbit, replay camera frames, or use basic walk controls.
+4. **Keep or share:** download a GLB or send an expiring, revocable view-only link.
 
-## Architecture
+Public accounts receive **two successful lifetime reconstructions**. Failed or
+cancelled work does not consume a success; deleting a scene does not reset it.
+The verified owner has no personal processing quota. All accounts share the
+project's spending, storage, file-size and execution safeguards. Account creation
+has no application-wide count cap; this is not unlimited processing capacity.
 
-```text
-browser
-  │ authenticated session + CSRF
-  ▼
-FastAPI routes
-  ├── Database repository ── SQLite now / Postgres production boundary
-  ├── ObjectStore ────────── local disk now / S3-compatible production boundary
-  └── durable worker
-        ├── SyntheticSampleEngine (enabled, CC0 output)
-        └── LingbotResearchEngine (disabled until every gate is present)
-```
+| Sign up | Processing |
+|---|---|
+| ![Wayline signup](docs/screenshots/signup.png) | ![Five-step processing panel](docs/screenshots/processing.png) |
 
-The local worker is deliberately small and reliable for a single-instance demo.
-Before horizontal scaling, replace the repository and storage implementations
-at their existing boundaries, claim jobs with Postgres `SKIP LOCKED`, and pass
-signed object references to workers instead of local paths. See
-[`docs/architecture.md`](docs/architecture.md).
+![Wayline studio with a synthetic scene](docs/screenshots/studio.png)
 
-## Production configuration
+Screenshots show the current UI in isolated local fixtures. The studio scene is
+**CC0 synthetic geometry**, not a reconstructed video. Landing/signup artwork is
+a precomputed TUM RGB-D office reconstruction. [Screenshot sources](docs/screenshots/README.md).
 
-Production refuses to boot without a secure token and secure cookies:
+## Run locally
+
+Prerequisites: Python **3.11**, `uv`, and Node.js to run frontend tests. GPU/CUDA,
+Google credentials and Modal billing are unnecessary for the local synthetic flow.
 
 ```bash
-export LINGBOT_ENV=production
-export LINGBOT_BOOTSTRAP_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export LINGBOT_DATA_DIR=/var/lib/scene-workspace
-export LINGBOT_PUBLIC_BASE_URL=https://scenes.example.com
-export LINGBOT_ALLOWED_HOSTS=scenes.example.com
-lingbot-workspace --host 127.0.0.1 --port 7860
+git clone --branch codex/production-ready-lingbot-map git@github.com:ryouol/wayline.git
+cd wayline
+uv sync --python 3.11 --frozen --extra dev
+uv run wayline --dev
 ```
 
-Terminate TLS at a trusted reverse proxy, keep the app on a private interface,
-back up the data directory, and set upload/worker limits explicitly. The
-single-process login limiter is defense in depth; a production edge must apply
-distributed request and upload limits. Production disables interactive docs and
-OpenAPI, validates `Host`, and applies an application-level declared-body
-ceiling. Configure HSTS at the TLS edge only after the final domain and
-subdomain policy has been reviewed.
+Open [localhost:7860](http://127.0.0.1:7860/). Choose **Sign in → Local operator
+access**, use the development token printed on first startup, and create a
+**Synthetic scene** from **New scene**. Keep that token private. Local state is
+stored in `.lingbot-workspace/`; never commit it. Google login requires separate
+OAuth configuration. The local operator login is not public onboarding.
 
-Important environment variables:
+## How it is built
 
-| Variable | Purpose | Default |
-|---|---|---:|
-| `LINGBOT_ALLOWED_HOSTS` | Comma-separated exact Host allowlist; inferred from the public URL when present | required in production |
-| `LINGBOT_MAX_UPLOAD_BYTES` | Per-video byte limit | 250 MiB |
-| `LINGBOT_MAX_ARTIFACT_BYTES` | Per-artifact limit and pre-I/O reservation | 100 MiB |
-| `LINGBOT_GLOBAL_STORAGE_BYTES` | Assets, artifacts, pending-delete, and in-flight bytes across tenants | 20 GiB |
-| `LINGBOT_STORAGE_MIN_FREE_BYTES` | Filesystem free-space floor after outstanding reservations | 1 GiB |
-| `LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS` | Concurrent uploads/artifact writes across tenants | 8 |
-| `LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS` | Concurrent uploads/artifact writes per tenant | 3 |
-| `LINGBOT_MAX_VIDEO_SECONDS` | Decoded duration limit | 300 seconds |
-| `LINGBOT_MAX_VIDEO_FRAMES` | Source frame limit | 9,000 |
-| `LINGBOT_MAX_VIDEO_DIMENSION` | Largest width/height | 4,096 px |
-| `LINGBOT_TENANT_QUOTA_UNITS` | Operational compute-capacity ceiling | 10,000 |
-| `LINGBOT_TENANT_STORAGE_BYTES` | Assets + artifacts + pending-delete bytes | 5 GiB |
-| `LINGBOT_TENANT_MAX_ASSETS` | Retained upload records | 100 |
-| `LINGBOT_TENANT_MAX_UNATTACHED_ASSETS` | Uploads not attached to a job | 10 |
-| `LINGBOT_TENANT_MAX_JOBS` | Retained job records | 500 |
-| `LINGBOT_TENANT_MAX_ARTIFACTS` | Retained artifact records | 1,500 |
-| `LINGBOT_TENANT_MAX_SHARES` | Active expiring shares | 250 |
-| `LINGBOT_UPLOAD_RATE_PER_MINUTE` | Durable per-tenant upload starts | 10 |
-| `LINGBOT_JOB_RATE_PER_MINUTE` | Durable per-tenant job submissions | 30 |
-| `LINGBOT_SHARE_RATE_PER_MINUTE` | Durable per-tenant share creation | 30 |
-| `LINGBOT_TERMINAL_JOB_RETENTION_SECONDS` | Terminal job retention | 30 days |
-| `LINGBOT_UNATTACHED_ASSET_RETENTION_SECONDS` | Unattached upload retention | 24 hours |
-| `LINGBOT_IDEMPOTENCY_TTL_SECONDS` | Completed request replay window | 24 hours |
-| `LINGBOT_JOB_TIMEOUT_SECONDS` | Worker/lease timeout | 3,600 seconds |
-| `LINGBOT_MAX_JOB_ATTEMPTS` | Recovery attempts | 2 |
-| `LINGBOT_SHUTDOWN_TIMEOUT_SECONDS` | Cooperative worker shutdown wait | 30 seconds |
-| `LINGBOT_READINESS_PROBE_TTL_SECONDS` | Successful dependency-probe cache | 2 seconds |
+```mermaid
+flowchart LR
+    Browser[Browser: HTML / CSS / JavaScript + WebGL] --> Web[Render: FastAPI + session auth]
+    Web --> DB[(SQLite: jobs, identity, quotas)]
+    Web --> Files[Private persistent files]
+    Web --> Worker[Durable job workers]
+    Worker --> GPU[Modal: private LingBot GPU runner]
+    GPU --> Worker
+    Worker --> Files
+```
 
-## Research-only LingBot adapter
+| Area | Entry point |
+|---|---|
+| HTTP, identity and configuration | [workspace/app.py](lingbot_map/workspace/app.py), [auth_routes.py](lingbot_map/workspace/auth_routes.py), [config.py](lingbot_map/workspace/config.py) |
+| Job lifecycle and persistence | [service.py](lingbot_map/workspace/service.py), [database.py](lingbot_map/workspace/database.py), [storage.py](lingbot_map/workspace/storage.py) |
+| Video, reconstruction and export | [capture.py](lingbot_map/workspace/capture.py), [modal_engine.py](lingbot_map/workspace/modal_engine.py), [modal_app.py](modal_app.py) |
+| Product and viewer | [static/](lingbot_map/workspace/static/): `app.js`, `viewer.js`, `timeline.js`, `styles.css` |
+| Deployment and checks | [Dockerfile](Dockerfile), [render.yaml](render.yaml), [CI](.github/workflows/ci.yml), [tests/](tests/) |
+| Original model research | [lingbot_map/](lingbot_map/), [demo.py](demo.py), [benchmark/](benchmark/) |
 
-Read [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md) before enabling anything. All
-four gates are required:
+One Render Starter instance and a persistent disk serve the app. SQLite and the
+disk prevent horizontal scaling; deploys can briefly interrupt availability.
+Opening an existing scene uses browser WebGL and does not rerun the GPU model.
+The viewer supports the exported colored **POINTS** contract, not arbitrary GLB meshes.
+
+## Verify and deploy
 
 ```bash
-export LINGBOT_RESEARCH_ACK='I understand LingBot is research-only'
-export LINGBOT_CHECKPOINT_PATH=/absolute/path/lingbot-map.pt
-export LINGBOT_CHECKPOINT_SHA256=ee665103348e07e6b826d529b8e61de8f413d5432a4f2e84970d6c8fd2e1cd72
-export LINGBOT_RESEARCH_COMMAND='/absolute/path/to/isolated-runner'
+uv run pytest
+uv run ruff check .
+uv run mypy lingbot_map/workspace lingbot_map/checkpoints.py
+for suite in tests/*.test.js; do node "$suite" || exit 1; done
+docker build -t wayline:local .
+uv run python scripts/smoke_container.py --image wayline:local
 ```
 
-The command is split without a shell. It receives these environment variables:
+[CI](.github/workflows/ci.yml) additionally checks strict lint/format rules,
+dependency locks, wheel contents and the constrained production container.
+Install `age` and `age-keygen` to run the encryption/restore tests locally;
+without them, those tests may skip. CI installs the encryption tools.
+The deployed runtime at `785bc7e` passed **273 Python tests and 11 Node suites**.
+Tests using mocked providers are not live GPU or OAuth acceptance evidence.
 
-- `LINGBOT_JOB_MANIFEST`: private per-job JSON input and rights record
-- `LINGBOT_OUTPUT_DIR`: private per-job output directory
-- `LINGBOT_CHECKPOINT_PATH`: private content-addressed copy of the exact
-  verified checkpoint (never the mutable operator path)
-- `LINGBOT_SKYSEG_PATH`: present only when sky masking was requested and its
-  separate digest gate passed
+Use the [Render + Modal runbook](docs/deployment.md) for deployment, secrets,
+backups and recovery. Deploys are manual, using an exact reviewed commit.
+[Operating costs](docs/operating-costs.md) documents the approximately $20/month
+target and the distinction between application allowances and a provider invoice cap.
 
-Sky masking defaults off. To permit it, provision the pinned auxiliary model and
-set both `LINGBOT_SKYSEG_PATH` and `LINGBOT_SKYSEG_SHA256`; moving-revision,
-automatic model downloads are rejected.
+## Naming and rights
 
-It must write a structurally valid GLB 2.0 `scene.glb` (maximum 100 MiB) and may
-write `report.json` (maximum 1 MiB). Only an allowlist of bounded report metrics
-is exposed. The stored provenance manifest omits tenant IDs and filesystem
-paths. Cancellation terminates the entire child process group, a timeout kills
-it, logs are capped, and work directories are removed after artifact storage or
-failure. The child receives an environment allowlist rather than application
-secrets. This process boundary is not an OS sandbox; production research must
-run in a separately isolated worker/container. Research output license remains
-`NOASSERTION`.
+**Wayline** is the application and repository name. `lingbot_map`, the installed
+`lingbot-map` Python distribution, existing configuration keys and the historical
+branch name remain stable integration identifiers. They retain the model's origin
+and avoid breaking deployments, imports or stored workspaces during a docs cleanup.
 
-The shipped [`modal_app.py`](modal_app.py) is an inert release manifest: it does
-not import the Modal SDK or construct an App, Volume, Image, remote/GPU function,
-or local entrypoint. The former runner lives only in the explicitly selected
-[`modal_enabled.py`](modal_enabled.py) deployment module. That module checks the
-source-controlled `LINGBOT_RESEARCH_RUNNER_COMPILED` gate before importing Modal,
-so this release rejects even a direct import without allocating or registering
-anything. Enabling it requires a reviewed source change, explicit deployment of
-that module, and closure of the owner gates below; no environment variable can
-enable it. CI verifies the pinned client metadata, imports the inert manifest,
-asserts there are zero remote/resource/entrypoint surfaces, and proves the opt-in
-module fails before the SDK is loaded. The prospective runner otherwise uses the
-hash-locked `requirements/modal.lock`; CUDA PyTorch remains separately version-
-and index-pinned because those platform wheels are outside the PyPI lock.
-
-## Direct model research
-
-Install the CUDA runtime separately and exactly as required by your host:
-
-```bash
-.venv/bin/pip install torch==2.8.0 torchvision==0.23.0 \
-  --index-url https://download.pytorch.org/whl/cu128
-.venv/bin/pip install -e '.[research,vis]'
-LINGBOT_RESEARCH_ACK='I understand LingBot is research-only' ./download_weights.sh
-.venv/bin/python demo.py \
-  --model_path ./lingbot-map.pt \
-  --model_sha256 "$(cut -d' ' -f1 lingbot-map.pt.sha256)" \
-  --image_folder /path/to/owned-or-licensed-images \
-  --use_sdpa
-```
-
-The downloader pins a model-repository revision, checks exact sizes and hashes,
-and writes the sidecar digest required by every direct loader. Every PyTorch and
-ONNX model loader copies the exact digest into a private content-addressed file
-before use; PyTorch also loads with `weights_only=True`. Sky-mask caches are
-bound to that model digest, and there is no unverified escape hatch.
-
-No throughput, scale, accuracy, or state-of-the-art claim is made by this fork;
-none is covered by a reproducible CI artifact on the supported runtime.
-
-## Verify
-
-```bash
-.venv/bin/pip install --require-hashes -r requirements/dev.lock
-.venv/bin/pip install --no-deps --no-build-isolation -e .
-.venv/bin/pytest
-.venv/bin/ruff check .
-.venv/bin/mypy lingbot_map/workspace lingbot_map/checkpoints.py
-node --check lingbot_map/workspace/static/app.js
-node --check lingbot_map/workspace/static/viewer.js
-```
-
-CI also builds the wheel and verifies that the packaged static UI is present.
-`uv.lock` is the cross-platform resolution source, CI pins `uv==0.12.8`, and
-the exported workspace/dev/Modal requirement locks require artifact hashes.
-The automated suite covers authentication, CSRF, host/body gates, tenant
-isolation, upload rejection, quota/rate bounds, request idempotency, fenced
-worker recovery/shutdown, durable deletion/reconciliation, paginated
-inventories, sample artifact generation, viewing bytes, sharing, expiry, path
-traversal, browser teardown, sanitized runner provenance, object-store contract
-injection, and checkpoint immutability.
-
-## Product and launch documents
-
-- [`docs/product-decision.md`](docs/product-decision.md): user, positioning,
-  scope, and non-goals
-- [`docs/architecture.md`](docs/architecture.md): components, invariants, and
-  Postgres/S3 migration boundary
-- [`docs/deployment.md`](docs/deployment.md): production runbook
-- [`docs/launch-readiness.md`](docs/launch-readiness.md): evidence and owner gates
-- [`docs/commercial-clearance.md`](docs/commercial-clearance.md): legal plan
-- [`docs/security-review.md`](docs/security-review.md): remediated findings and
-  remaining deployment controls
-
-## License
-
-Repository source is presented under [`LICENSE.txt`](LICENSE.txt). That source
-license must not be assumed to cover model weights, training data, example
-assets, output rights, or trademarks. The generated synthetic sample has the
-separate provenance and CC0 dedication in [`SAMPLE_LICENSE.md`](SAMPLE_LICENSE.md).
-See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for retained upstream
-notices and review flags.
+[LICENSE.txt](LICENSE.txt) covers repository source only as stated there.
+[MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) tracks unresolved model/checkpoint/data
+rights. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) retains upstream notices;
+[SAMPLE_LICENSE.md](SAMPLE_LICENSE.md) separately dedicates the synthetic sample
+to CC0. The product rename is not an endorsement or a claim of commercial clearance.

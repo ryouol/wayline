@@ -199,6 +199,10 @@ class RotaryPositionEmbedding2D(nn.Module):
     
 
 
+# The following rotary helper and WanRotaryPosEmbed derive from Diffusers,
+# with modifications. Copyright 2025 The HuggingFace Team. All rights reserved.
+# WanRotaryPosEmbed also credits The Wan Team. Apache-2.0; see LICENSE.txt
+# and THIRD_PARTY_NOTICES.md for the comparison revision and modification scope.
 def get_1d_rotary_pos_embed(
     dim: int,
     pos: Union[np.ndarray, int],

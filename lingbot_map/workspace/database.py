@@ -12,11 +12,16 @@ import time
 import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 7
+RECONSTRUCTION_LIMIT = 2
+_JOB_SELECT = """
+    SELECT j.*, a.original_name AS source_original_name FROM jobs j
+    LEFT JOIN assets a ON a.id = j.source_asset_id AND a.tenant_id = j.tenant_id
+"""
 
 
 def _id(prefix: str) -> str:
@@ -29,6 +34,13 @@ def token_digest(token: str) -> str:
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+class ReconstructionAllowance(TypedDict):
+    state: str
+    message: str
+    limit: int
+    remaining: int
 
 
 class QuotaExceeded(ValueError):
@@ -84,20 +96,23 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path.parent.chmod(0o700)
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        for candidate in (
-            self.path,
-            Path(f"{self.path}-wal"),
-            Path(f"{self.path}-shm"),
-        ):
-            if candidate.exists():
-                os.chmod(candidate, 0o600)
-        return connection
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        # SQLite's transaction context does not close its connection.
+        with closing(sqlite3.connect(self.path, timeout=10, isolation_level=None)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA journal_mode = WAL")
+            for candidate in (
+                self.path,
+                Path(f"{self.path}-wal"),
+                Path(f"{self.path}-shm"),
+            ):
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
+            with connection:
+                yield connection
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -129,7 +144,7 @@ class Database:
             # Inspect compatibility through a read-only handle before connect()
             # can enable WAL or create sidecars. An older binary must leave a
             # future database byte-for-byte untouched.
-            with sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True) as inspection:
+            with closing(sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)) as inspection:
                 schema_table = inspection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
                 ).fetchone()
@@ -139,7 +154,15 @@ class Database:
                     else None
                 )
                 existing_version = int(version_row[0]) if version_row is not None else None
-        if existing_version is not None and existing_version not in {1, 2, SCHEMA_VERSION}:
+        if existing_version is not None and existing_version not in {
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            SCHEMA_VERSION,
+        }:
             raise RuntimeError(
                 f"database schema {existing_version} is unsupported; expected {SCHEMA_VERSION}"
             )
@@ -153,7 +176,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS tenants (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
+                    is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
                     quota_units INTEGER NOT NULL CHECK (quota_units >= 0),
+                    successful_reconstructions INTEGER NOT NULL DEFAULT 0
+                        CHECK (successful_reconstructions >= 0),
                     reserved_units INTEGER NOT NULL DEFAULT 0 CHECK (reserved_units >= 0),
                     consumed_units INTEGER NOT NULL DEFAULT 0 CHECK (consumed_units >= 0),
                     storage_limit_bytes INTEGER NOT NULL DEFAULT 5368709120,
@@ -170,6 +196,45 @@ class Database:
                     display_name TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+                CREATE TABLE IF NOT EXISTS remote_runs (
+                    attempt_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    call_id TEXT,
+                    created_at REAL NOT NULL,
+                    cleanup_after REAL NOT NULL,
+                    cleaned INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_remote_cleanup ON remote_runs(cleaned,cleanup_after);
+                CREATE TABLE IF NOT EXISTS delivery_budget (
+                    day INTEGER PRIMARY KEY,
+                    reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes >= 0)
+                );
+                CREATE TABLE IF NOT EXISTS analytics_daily (
+                    day INTEGER NOT NULL,
+                    page TEXT NOT NULL CHECK(page IN ('/','/privacy','/terms','/contact')),
+                    views INTEGER NOT NULL CHECK(views BETWEEN 1 AND 10000),
+                    PRIMARY KEY(day,page)
+                );
+                CREATE TABLE IF NOT EXISTS owner_policy (
+                    id INTEGER PRIMARY KEY CHECK (id=1),
+                    email_hash TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS identities (
+                    provider TEXT NOT NULL CHECK(provider IN ('google','trial')),
+                    subject TEXT NOT NULL,
+                    user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY(provider,subject)
+                );
+                CREATE TABLE IF NOT EXISTS oauth_attempts (
+                    state_hash TEXT PRIMARY KEY,
+                    browser_hash TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    verifier TEXT NOT NULL,
+                    expires_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_oauth_expiry ON oauth_attempts(expires_at);
                 CREATE TABLE IF NOT EXISTS api_tokens (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -361,6 +426,28 @@ class Database:
                         connection.execute(
                             "ALTER TABLE object_claims ADD COLUMN purpose "
                             "TEXT NOT NULL DEFAULT 'legacy'"
+                        )
+                    tenant_columns = {
+                        row[1] for row in connection.execute("PRAGMA table_info(tenants)")
+                    }
+                    if "is_owner" not in tenant_columns:
+                        connection.execute(
+                            "ALTER TABLE tenants ADD COLUMN is_owner "
+                            "INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1))"
+                        )
+                    if "successful_reconstructions" not in tenant_columns:
+                        connection.execute(
+                            "ALTER TABLE tenants ADD COLUMN successful_reconstructions "
+                            "INTEGER NOT NULL DEFAULT 0 CHECK (successful_reconstructions >= 0)"
+                        )
+                        # The previous Google policy permitted one lifetime success.
+                        # consumed_units survives scene deletion and ledger retention.
+                        connection.execute(
+                            "UPDATE tenants SET successful_reconstructions="
+                            "CASE WHEN consumed_units>0 THEN 1 ELSE 0 END, "
+                            "quota_units=MAX(quota_units,240) WHERE id IN ("
+                            "SELECT u.tenant_id FROM users u JOIN identities i ON i.user_id=u.id "
+                            "WHERE i.provider='google')"
                         )
                     connection.execute("UPDATE schema_meta SET version = ?", (SCHEMA_VERSION,))
                     connection.commit()
@@ -640,6 +727,18 @@ class Database:
                 "share_limit": row["share_limit"],
             }
         )
+        if row["is_owner"]:
+            for key in (
+                "quota_units",
+                "available_units",
+                "storage_limit_bytes",
+                "asset_limit",
+                "unattached_asset_limit",
+                "job_limit",
+                "artifact_limit",
+                "share_limit",
+            ):
+                result[key] = None
         return result
 
     @staticmethod
@@ -672,6 +771,32 @@ class Database:
         if tenant is None:
             raise KeyError(tenant_id)
         return tenant
+
+    def reserve_delivery_bytes(self, size_bytes: int, *, limit: int) -> None:
+        """Reserve whole responses across all tenants for at least 31 rolling days.
+
+        Aborted/partial responses remain charged to this application allowance.
+        Static responses, transport overhead and provider billing are outside it.
+        """
+        if size_bytes < 0 or limit <= 0:
+            raise ValueError("Invalid scene delivery allowance")
+        day = int(time.time() // 86400)
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM delivery_budget WHERE day < ?", (day - 31,))
+            used = connection.execute(
+                "SELECT COALESCE(SUM(reserved_bytes), 0) FROM delivery_budget"
+            ).fetchone()[0]
+            if used + size_bytes > limit:
+                raise QuotaExceeded(
+                    "The site's scene viewing and download allowance has been reached. "
+                    "Please try again later."
+                )
+            connection.execute(
+                "INSERT INTO delivery_budget(day,reserved_bytes) VALUES(?,?) "
+                "ON CONFLICT(day) DO UPDATE "
+                "SET reserved_bytes=reserved_bytes+excluded.reserved_bytes",
+                (day, size_bytes),
+            )
 
     @staticmethod
     def _consume_rate(
@@ -743,17 +868,24 @@ class Database:
         asset_id, now = _id("ast"), time.time()
         with self.transaction_or(connection) as active:
             tenant = self._tenant(active, tenant_id)
-            usage = self._resource_usage(active, tenant_id)
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
             claim = active.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             ).fetchone()
             claimed_bytes = int(claim["size_bytes"]) if claim else 0
-            if usage["stored_bytes"] - claimed_bytes + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - claimed_bytes + size_bytes
+                > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
-            if usage["asset_count"] >= tenant["asset_limit"]:
+            if not tenant["is_owner"] and usage["asset_count"] >= tenant["asset_limit"]:
                 raise QuotaExceeded("tenant asset count limit exceeded")
-            if usage["unattached_asset_count"] >= tenant["unattached_asset_limit"]:
+            if (
+                not tenant["is_owner"]
+                and usage["unattached_asset_count"] >= tenant["unattached_asset_limit"]
+            ):
                 raise QuotaExceeded("delete or use an unattached upload before adding another")
             self._consume_rate(
                 active,
@@ -860,6 +992,56 @@ class Database:
         )
         return values, next_cursor
 
+    def reconstruction_allowance(
+        self, tenant_id: str, *, connection: sqlite3.Connection | None = None
+    ) -> ReconstructionAllowance | None:
+        """Report the same Google preview policy used by upload and job admission."""
+        if connection is None:
+            with self.connect() as active:
+                return self.reconstruction_allowance(tenant_id, connection=active)
+        tenant = connection.execute(
+            "SELECT t.successful_reconstructions FROM tenants t JOIN users u ON u.tenant_id=t.id "
+            "JOIN identities i ON i.user_id=u.id WHERE t.id=? AND i.provider='google' "
+            "AND t.is_owner=0 LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        if tenant is None:
+            return None
+        remaining = max(0, RECONSTRUCTION_LIMIT - tenant["successful_reconstructions"])
+        result: ReconstructionAllowance = {
+            "limit": RECONSTRUCTION_LIMIT,
+            "remaining": remaining,
+            "state": "available",
+            "message": f"{remaining} of {RECONSTRUCTION_LIMIT} lifetime videos remaining. "
+            "No payment required.",
+        }
+        if remaining == 0:
+            result["state"] = "used"
+            result["message"] = (
+                "Both included reconstructions have been used. "
+                "You can still view, download and share your spaces."
+            )
+        elif connection.execute(
+            "SELECT 1 FROM jobs WHERE tenant_id=? AND engine_id='lingbot-research-v1' "
+            "AND state IN ('queued','running') LIMIT 1",
+            (tenant_id,),
+        ).fetchone():
+            result["state"] = "processing"
+            result["message"] = "A reconstruction is already in progress in your workspace."
+        elif (
+            connection.execute(
+                "SELECT COUNT(*) FROM usage_ledger WHERE tenant_id=? AND event='reserve' "
+                "AND units>1 AND created_at>?",
+                (tenant_id, time.time() - 86400),
+            ).fetchone()[0]
+            >= 3
+        ):
+            result["state"] = "retry_later"
+            result["message"] = (
+                "The preview allows three reconstruction attempts per day. Please try again later."
+            )
+        return result
+
     def create_job(
         self,
         *,
@@ -875,17 +1057,13 @@ class Database:
     ) -> dict[str, Any]:
         job_id, now = _id("job"), time.time()
         with self.transaction_or(connection) as active:
-            tenant = active.execute(
-                "SELECT quota_units, reserved_units, consumed_units FROM tenants WHERE id = ?",
-                (tenant_id,),
-            ).fetchone()
-            if tenant is None:
-                raise KeyError(tenant_id)
-            limits = active.execute(
-                "SELECT job_limit FROM tenants WHERE id=?", (tenant_id,)
-            ).fetchone()
-            usage = self._resource_usage(active, tenant_id)
-            if usage["job_count"] >= limits["job_limit"]:
+            tenant = self._tenant(active, tenant_id)
+            if engine_id == "lingbot-research-v1":
+                allowance = self.reconstruction_allowance(tenant_id, connection=active)
+                if allowance and allowance["state"] != "available":
+                    raise QuotaExceeded(allowance["message"])
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
+            if not tenant["is_owner"] and usage["job_count"] >= tenant["job_limit"]:
                 raise QuotaExceeded("tenant job count limit exceeded; delete retained jobs")
             self._consume_rate(
                 active,
@@ -896,7 +1074,7 @@ class Database:
                 now=now,
             )
             available = tenant["quota_units"] - tenant["reserved_units"] - tenant["consumed_units"]
-            if reserve_units > available:
+            if not tenant["is_owner"] and reserve_units > available:
                 raise QuotaExceeded(f"job needs {reserve_units} units; {available} remain")
             if source_asset_id:
                 source = active.execute(
@@ -949,7 +1127,7 @@ class Database:
     ) -> dict[str, Any]:
         value = _row(
             connection.execute(
-                "SELECT * FROM jobs WHERE id = ? AND tenant_id = ?", (job_id, tenant_id)
+                _JOB_SELECT + " WHERE j.id = ? AND j.tenant_id = ?", (job_id, tenant_id)
             ).fetchone()
         )
         if value is None:
@@ -961,7 +1139,7 @@ class Database:
     def list_jobs(self, tenant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM jobs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+                _JOB_SELECT + " WHERE j.tenant_id = ? ORDER BY j.created_at DESC LIMIT ?",
                 (tenant_id, limit),
             ).fetchall()
         return [self._decode_job(dict(row)) for row in rows]
@@ -971,15 +1149,15 @@ class Database:
     ) -> tuple[list[dict[str, Any]], str | None]:
         limit = min(100, max(1, limit))
         parameters: list[Any] = [tenant_id]
-        predicate = "tenant_id=?"
+        predicate = "j.tenant_id=?"
         if cursor:
             created_at, item_id = decode_cursor(cursor)
-            predicate += " AND (created_at<? OR (created_at=? AND id<?))"
+            predicate += " AND (j.created_at<? OR (j.created_at=? AND j.id<?))"
             parameters.extend([created_at, created_at, item_id])
         parameters.append(limit + 1)
         with self.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM jobs WHERE {predicate} ORDER BY created_at DESC,id DESC LIMIT ?",
+                _JOB_SELECT + f" WHERE {predicate} ORDER BY j.created_at DESC,j.id DESC LIMIT ?",
                 parameters,
             ).fetchall()
         more = len(rows) > limit
@@ -989,19 +1167,49 @@ class Database:
         )
         return values, next_cursor
 
+    def missing_job_ids(self, tenant_id: str, job_ids: list[str]) -> list[str]:
+        if len(job_ids) > 100:
+            raise ValueError("at most 100 scene IDs can be checked at once")
+        unique_ids = list(dict.fromkeys(job_ids))
+        if not unique_ids:
+            return []
+        placeholders = ",".join("?" for _ in unique_ids)
+        with self.connect() as connection:
+            present = {
+                row["id"]
+                for row in connection.execute(
+                    f"SELECT id FROM jobs WHERE tenant_id=? AND id IN ({placeholders})",
+                    [tenant_id, *unique_ids],
+                )
+            }
+        return [job_id for job_id in unique_ids if job_id not in present]
+
     def claim_next_job(
-        self, *, worker_id: str, lease_seconds: int, max_attempts: int
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        max_attempts: int,
+        engine_ids: tuple[str, ...] | None = None,
     ) -> dict[str, Any] | None:
         now = time.time()
         attempt_token = secrets.token_urlsafe(24)
+        if engine_ids == ():
+            return None
+        engine_filter = (
+            ""
+            if engine_ids is None
+            else (" AND engine_id IN (" + ",".join("?" for _ in engine_ids) + ")")
+        )
         with self.transaction() as connection:
             candidate = connection.execute(
                 """
                 SELECT id, tenant_id FROM jobs
                 WHERE state = 'queued' AND cancellation_requested = 0 AND attempt < ?
-                ORDER BY created_at LIMIT 1
-                """,
-                (max_attempts,),
+                """
+                + engine_filter
+                + " ORDER BY created_at LIMIT 1",
+                (max_attempts, *(engine_ids or ())),
             ).fetchone()
             if candidate is None:
                 return None
@@ -1149,8 +1357,8 @@ class Database:
         now = time.time()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id "
-                "FROM jobs "
+                "SELECT state,reserved_units,cancellation_requested,attempt_token,worker_id,"
+                "engine_id FROM jobs "
                 "WHERE id = ? AND tenant_id = ?",
                 (job_id, tenant_id),
             ).fetchone()
@@ -1189,6 +1397,12 @@ class Database:
                 connection.execute(
                     "INSERT INTO usage_ledger VALUES (?, ?, ?, 'consume', ?, ?, ?)",
                     (_id("led"), tenant_id, job_id, used_units, "completed job usage", now),
+                )
+            if row["engine_id"] == "lingbot-research-v1":
+                connection.execute(
+                    "UPDATE tenants SET successful_reconstructions=successful_reconstructions+1 "
+                    "WHERE id=?",
+                    (tenant_id,),
                 )
             connection.execute(
                 """
@@ -1232,6 +1446,15 @@ class Database:
             if cancelled:
                 code, message = "cancelled", "Job cancelled."
             self._release_reservation(connection, tenant_id, job_id, row["reserved_units"], state)
+            if code == "preview_capacity":
+                # Preserve the ledger across job deletion without charging a
+                # personal retry for work rejected before any remote attempt.
+                connection.execute(
+                    "UPDATE usage_ledger SET event='capacity_denied' "
+                    "WHERE tenant_id=? AND job_id=? AND event='reserve' "
+                    "AND NOT EXISTS (SELECT 1 FROM remote_runs WHERE job_id=?)",
+                    (tenant_id, job_id, job_id),
+                )
             connection.execute(
                 """
                 UPDATE jobs SET state=?, stage=?, error_code=?, error_message=?,
@@ -1402,15 +1625,19 @@ class Database:
             ):
                 raise StaleAttempt("attempt no longer owns this job")
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
-            if usage["artifact_count"] >= tenant["artifact_limit"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
+            if not tenant["is_owner"] and usage["artifact_count"] >= tenant["artifact_limit"]:
                 raise QuotaExceeded("tenant artifact count limit exceeded")
             claim = connection.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
             ).fetchone()
             claimed_bytes = int(claim["size_bytes"]) if claim else 0
-            if usage["stored_bytes"] - claimed_bytes + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - claimed_bytes + size_bytes
+                > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             connection.execute(
                 """
@@ -1669,8 +1896,11 @@ class Database:
         now = time.time()
         with self.transaction() as connection:
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
-            if usage["stored_bytes"] + reserve_bytes > tenant["storage_limit_bytes"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] + reserve_bytes > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             global_used = self._global_stored_bytes(connection)
             if (
@@ -1714,7 +1944,7 @@ class Database:
             raise ValueError("object claim size must not be negative")
         with self.transaction() as connection:
             tenant = self._tenant(connection, tenant_id)
-            usage = self._resource_usage(connection, tenant_id)
+            usage = {} if tenant["is_owner"] else self._resource_usage(connection, tenant_id)
             claim = connection.execute(
                 "SELECT size_bytes FROM object_claims WHERE object_key=? AND tenant_id=?",
                 (object_key, tenant_id),
@@ -1724,7 +1954,10 @@ class Database:
             current = int(claim["size_bytes"])
             if current and size_bytes > current:
                 raise QuotaExceeded("object exceeded its pre-I/O storage reservation")
-            if usage["stored_bytes"] - current + size_bytes > tenant["storage_limit_bytes"]:
+            if (
+                not tenant["is_owner"]
+                and usage["stored_bytes"] - current + size_bytes > tenant["storage_limit_bytes"]
+            ):
                 raise QuotaExceeded("tenant storage byte limit exceeded")
             connection.execute(
                 """
@@ -1862,8 +2095,8 @@ class Database:
             if artifact is None:
                 raise KeyError(artifact_id)
             tenant = self._tenant(active, tenant_id)
-            usage = self._resource_usage(active, tenant_id)
-            if usage["share_count"] >= tenant["share_limit"]:
+            usage = {} if tenant["is_owner"] else self._resource_usage(active, tenant_id)
+            if not tenant["is_owner"] and usage["share_count"] >= tenant["share_limit"]:
                 raise QuotaExceeded("tenant active share limit exceeded")
             self._consume_rate(
                 active,
@@ -1969,6 +2202,41 @@ class Database:
             ).rowcount
         if changed != 1:
             raise KeyError(share_id)
+
+    def _submission_resource_id(self, tenant_id: str, scope: str, raw_key: str) -> str:
+        """Read a completed submission's identity without replaying or renewing it."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT response_json FROM idempotency_keys WHERE tenant_id=? AND scope=? "
+                "AND key_hash=? "
+                "AND state='complete' AND expires_at>?",
+                (tenant_id, scope, token_digest(raw_key), time.time()),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Submission not found")
+        return str(json.loads(row["response_json"])["id"])
+
+    def research_submission_job(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
+        job_id = self._submission_resource_id(tenant_id, "POST:/api/jobs/research", raw_key)
+        return self.get_job(tenant_id, job_id)
+
+    def upload_submission_asset(self, tenant_id: str, raw_key: str) -> dict[str, Any]:
+        asset_id = self._submission_resource_id(tenant_id, "POST:/api/assets", raw_key)
+        return self.get_asset(tenant_id, asset_id)
+
+    def has_completed_idempotency(self, tenant_id: str, scope: str, raw_key: str | None) -> bool:
+        """Identify a replay candidate without claiming a key or trusting its payload."""
+        if not raw_key:
+            return False
+        with self.connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM idempotency_keys WHERE tenant_id=? AND scope=? "
+                    "AND key_hash=? AND state='complete' AND expires_at>?",
+                    (tenant_id, scope, token_digest(raw_key), time.time()),
+                ).fetchone()
+                is not None
+            )
 
     def begin_idempotency(
         self,
@@ -2090,6 +2358,7 @@ class Database:
             ).rowcount
             connection.execute("DELETE FROM idempotency_keys WHERE expires_at<=?", (now,))
             connection.execute("DELETE FROM rate_buckets WHERE bucket_start<?", (int(now) - 3600,))
+            connection.execute("DELETE FROM analytics_daily WHERE day<?", (int(now // 86400) - 29,))
             job_ids = [
                 row[0]
                 for row in connection.execute(

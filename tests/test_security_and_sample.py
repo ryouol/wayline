@@ -38,6 +38,16 @@ def test_synthetic_sample_is_valid_glb_with_provenance():
         == "deterministically generated; no source imagery and no model inference"
     )
     assert scene.point_count > 4_000
+    assert build_synthetic_scene().glb == scene.glb
+    primitive = document["meshes"][0]["primitives"][0]
+    color = document["accessors"][primitive["attributes"]["COLOR_0"]]
+    assert color["type"] == "VEC4" and color["componentType"] == 5121
+    assert color["normalized"] and color["count"] == scene.point_count
+    view = document["bufferViews"][color["bufferView"]]
+    assert view["byteOffset"] % 4 == 0 and view["byteLength"] == scene.point_count * 4
+    binary = scene.glb[28 + json_length :]
+    rgba = binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+    assert rgba[3::4] == b"\xff" * scene.point_count
 
 
 def test_object_store_rejects_traversal_and_enforces_limit(tmp_path):
@@ -157,6 +167,29 @@ def test_production_settings_require_long_secure_token(tmp_path):
         ).validate()
 
 
+def test_recovery_settings_require_explicit_encrypted_destination(settings, monkeypatch):
+    from dataclasses import replace
+
+    recipient = "age1" + "a" * 58
+    for fields in (
+        {"recovery_recipient": recipient},
+        {"recovery_volume_id": "vo-test"},
+        {"recovery_recipient": "AGE-SECRET-KEY-1PRIVATE", "recovery_volume_id": "vo-test"},
+        {"recovery_recipient": recipient, "recovery_volume_id": "arbitrary-volume-name"},
+        {"recovery_upload_budget_bytes": 0},
+    ):
+        with pytest.raises(ValueError, match="Recovery"):
+            replace(settings, **fields).validate()
+    monkeypatch.setenv("LINGBOT_ENV", "test")
+    monkeypatch.setenv("WAYLINE_RECOVERY_RECIPIENT", recipient)
+    monkeypatch.setenv("WAYLINE_RECOVERY_VOLUME_ID", "vo-test")
+    monkeypatch.setenv("WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES", "123456789")
+    configured = Settings.from_env()
+    assert configured.recovery_volume_id == "vo-test"
+    assert configured.recovery_recipient == recipient
+    assert configured.recovery_upload_budget_bytes == 123456789
+
+
 def test_runtime_settings_reject_unsafe_ranges(settings):
     from dataclasses import replace
 
@@ -262,70 +295,48 @@ output = Path(os.environ["LINGBOT_OUTPUT_DIR"])
         cleanup_result(result)
 
 
-def test_opt_in_modal_runner_keeps_sky_masking_opt_in():
-    source = (Path(__file__).parents[1] / "modal_enabled.py").read_text(encoding="utf-8")
-    module = ast.parse(source)
-    reconstruct = next(
-        node
-        for node in module.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "reconstruct"
-    )
-    keyword_defaults = dict(
-        zip(
-            (argument.arg for argument in reconstruct.args.kwonlyargs),
-            reconstruct.args.kw_defaults,
-            strict=True,
-        )
-    )
-    mask_sky = keyword_defaults["mask_sky"]
-    assert isinstance(mask_sky, ast.Constant)
-    assert mask_sky.value is False
-    assert "requirements/modal.lock" in source
-    assert "--require-hashes" in source
-
-
-def test_modal_release_mode_registers_no_sdk_resources_or_entrypoints():
+def test_web_import_does_not_initialize_or_call_modal():
     root = Path(__file__).parents[1]
     script = """
-import importlib
 import sys
-
+from lingbot_map.workspace.app import create_app
+assert "modal_app" not in sys.modules
 assert "modal" not in sys.modules
-release = importlib.import_module("modal_app")
-assert release.LINGBOT_RESEARCH_RUNNER_COMPILED is False
-assert "modal" not in sys.modules
-assert not any(callable(getattr(value, "remote", None)) for value in vars(release).values())
-for forbidden in (
-    "app", "weights", "jobs", "image", "fetch_weights", "reconstruct", "main"
-):
-    assert not hasattr(release, forbidden), forbidden
-try:
-    importlib.import_module("modal_enabled")
-except RuntimeError as error:
-    assert "not compiled into this release" in str(error)
-else:
-    raise AssertionError("disabled opt-in runner imported")
-assert "modal" not in sys.modules
-assert "modal_enabled" not in sys.modules
 """
     completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=root,
-        capture_output=True,
-        check=False,
-        text=True,
+        [sys.executable, "-c", script], cwd=root, capture_output=True, check=False, text=True
     )
     assert completed.returncode == 0, completed.stderr
 
-    release_tree = ast.parse((root / "modal_app.py").read_text(encoding="utf-8"))
-    assert not any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in release_tree.body
+
+def test_modal_deployment_is_private_and_execution_is_bounded():
+    source = (Path(__file__).parents[1] / "modal_app.py").read_text()
+    tree = ast.parse(source)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    decorators = functions["reconstruct"].decorator_list
+    kwargs = {
+        kw.arg: ast.literal_eval(kw.value)
+        for decorator in decorators
+        if isinstance(decorator, ast.Call)
+        for kw in decorator.keywords
+        if isinstance(kw.value, ast.Constant)
+    }
+    from lingbot_map.workspace.runner_contract import REMOTE_TIMEOUT
+
+    assert REMOTE_TIMEOUT == 600
+    assert any(
+        kw.arg == "timeout" and isinstance(kw.value, ast.Name) and kw.value.id == "REMOTE_TIMEOUT"
+        for decorator in decorators
+        if isinstance(decorator, ast.Call)
+        for kw in decorator.keywords
     )
-    assert not any(
-        isinstance(node, (ast.Import, ast.ImportFrom))
-        and any(alias.name == "modal" for alias in node.names)
-        for node in release_tree.body
-    )
+    assert kwargs["retries"] == 0
+    assert kwargs["max_containers"] == 1
+    assert "fastapi_endpoint" not in source and "asgi_app" not in source
+    assert "--require-hashes" in source
+    assert "model = demo.load_model(args, device)" in source
+    assert "model_sha256=MODEL_SHA256" in source
+    assert "expires_at - time.time()" in source
 
 
 def test_every_direct_torch_loader_uses_a_private_verified_path():

@@ -45,8 +45,10 @@ class Settings:
     cookie_secure: bool = True
     session_ttl_seconds: int = 12 * 60 * 60
     max_upload_bytes: int = 250 * 1024 * 1024
+    upload_timeout_seconds: int = 900
     max_artifact_bytes: int = 100 * 1024 * 1024
     global_storage_bytes: int = 20 * 1024 * 1024 * 1024
+    scene_delivery_budget_bytes: int = 2_000_000_000
     storage_min_free_bytes: int = 1024 * 1024 * 1024
     global_max_inflight_objects: int = 8
     tenant_max_inflight_objects: int = 3
@@ -81,6 +83,21 @@ class Settings:
     skyseg_path: Path | None = None
     skyseg_sha256: str = ""
     skyseg_max_bytes: int = 512 * 1024 * 1024
+    modal_enabled: bool = False
+    modal_gpu_seconds_budget: int = 14_400
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    owner_email: str = ""
+    signup_enabled: bool = False
+    trial_enabled: bool = True
+    signup_max_accounts: int = 0
+    trial_max_accounts: int = 100
+    signup_quota_units: int = 240
+    recovery_recipient: str = ""
+    recovery_volume_id: str = ""
+    recovery_upload_budget_bytes: int = 10 * 1024**3
+    analytics_enabled: bool = False
+    analytics_property_id: str = ""
     generated_bootstrap_token: bool = field(default=False, compare=False)
 
     @classmethod
@@ -106,9 +123,13 @@ class Settings:
             cookie_secure=_bool_env("LINGBOT_COOKIE_SECURE", environment == "production"),
             session_ttl_seconds=int(os.getenv("LINGBOT_SESSION_TTL_SECONDS", str(12 * 60 * 60))),
             max_upload_bytes=int(os.getenv("LINGBOT_MAX_UPLOAD_BYTES", str(250 * 1024 * 1024))),
+            upload_timeout_seconds=int(os.getenv("LINGBOT_UPLOAD_TIMEOUT_SECONDS", "900")),
             max_artifact_bytes=int(os.getenv("LINGBOT_MAX_ARTIFACT_BYTES", str(100 * 1024 * 1024))),
             global_storage_bytes=int(
                 os.getenv("LINGBOT_GLOBAL_STORAGE_BYTES", str(20 * 1024 * 1024 * 1024))
+            ),
+            scene_delivery_budget_bytes=int(
+                os.getenv("WAYLINE_SCENE_DELIVERY_BUDGET_BYTES", "2000000000")
             ),
             storage_min_free_bytes=int(
                 os.getenv("LINGBOT_STORAGE_MIN_FREE_BYTES", str(1024 * 1024 * 1024))
@@ -160,12 +181,61 @@ class Settings:
             skyseg_path=Path(skyseg).expanduser().resolve() if skyseg else None,
             skyseg_sha256=os.getenv("LINGBOT_SKYSEG_SHA256", "").lower(),
             skyseg_max_bytes=int(os.getenv("LINGBOT_SKYSEG_MAX_BYTES", str(512 * 1024 * 1024))),
+            modal_enabled=_bool_env("WAYLINE_MODAL_ENABLED"),
+            modal_gpu_seconds_budget=int(os.getenv("WAYLINE_GPU_SECONDS_BUDGET", "14400")),
+            google_client_id=os.getenv("WAYLINE_GOOGLE_CLIENT_ID", ""),
+            google_client_secret=os.getenv("WAYLINE_GOOGLE_CLIENT_SECRET", ""),
+            owner_email=os.getenv("WAYLINE_OWNER_EMAIL", "").strip().casefold(),
+            signup_enabled=_bool_env("WAYLINE_SIGNUP_ENABLED"),
+            trial_enabled=_bool_env("WAYLINE_TRIAL_ENABLED", True),
+            signup_max_accounts=int(os.getenv("WAYLINE_SIGNUP_MAX_ACCOUNTS", "0")),
+            trial_max_accounts=int(os.getenv("WAYLINE_TRIAL_MAX_ACCOUNTS", "100")),
+            signup_quota_units=int(os.getenv("WAYLINE_SIGNUP_QUOTA_UNITS", "240")),
+            recovery_recipient=os.getenv("WAYLINE_RECOVERY_RECIPIENT", ""),
+            recovery_volume_id=os.getenv("WAYLINE_RECOVERY_VOLUME_ID", ""),
+            recovery_upload_budget_bytes=int(
+                os.getenv("WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES", str(10 * 1024**3))
+            ),
             generated_bootstrap_token=generated,
+            analytics_enabled=_bool_env("WAYLINE_ANALYTICS_ENABLED"),
+            analytics_property_id=os.getenv("WAYLINE_ANALYTICS_PROPERTY_ID", ""),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if (self.analytics_enabled or self.analytics_property_id) and not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", self.analytics_property_id
+        ):
+            raise ValueError(
+                "Analytics requires a local property ID of 1–64 letters, digits, _ or -"
+            )
+        if bool(self.recovery_recipient) != bool(self.recovery_volume_id):
+            raise ValueError("Recovery requires both an age recipient and a Modal volume ID")
+        if self.recovery_recipient and not re.fullmatch(
+            r"age1[0-9a-z]{58}", self.recovery_recipient
+        ):
+            raise ValueError("Recovery requires a native age public recipient")
+        if self.recovery_volume_id and not re.fullmatch(
+            r"vo-[A-Za-z0-9]+", self.recovery_volume_id
+        ):
+            raise ValueError("Recovery requires an explicit Modal volume ID")
+        if self.recovery_upload_budget_bytes < 1:
+            raise ValueError("Recovery upload allowance must be positive")
+        if self.modal_enabled and self.job_timeout_seconds > 3600:
+            raise ValueError("Modal jobs require LINGBOT_JOB_TIMEOUT_SECONDS <= 3600")
+        if self.modal_gpu_seconds_budget < 600:
+            raise ValueError("GPU budget must permit at least one bounded job")
+        if self.signup_max_accounts < 0:
+            raise ValueError(
+                "Wayline signup limit must be nonnegative; zero allows unlimited accounts"
+            )
+        if min(self.trial_max_accounts, self.signup_quota_units) < 1:
+            raise ValueError("Wayline account and usage limits must be positive")
+        if self.signup_enabled and not (
+            self.google_client_id and self.google_client_secret and self.public_base_url
+        ):
+            raise ValueError("Google sign-up requires client credentials and a public base URL")
         if self.environment not in {"development", "test", "production"}:
             raise ValueError("LINGBOT_ENV must be development, test, or production")
         if self.environment == "production":
@@ -200,8 +270,10 @@ class Settings:
         bounded_runtime_values = {
             "LINGBOT_SESSION_TTL_SECONDS": self.session_ttl_seconds,
             "LINGBOT_MAX_UPLOAD_BYTES": self.max_upload_bytes,
+            "LINGBOT_UPLOAD_TIMEOUT_SECONDS": self.upload_timeout_seconds,
             "LINGBOT_MAX_ARTIFACT_BYTES": self.max_artifact_bytes,
             "LINGBOT_GLOBAL_STORAGE_BYTES": self.global_storage_bytes,
+            "WAYLINE_SCENE_DELIVERY_BUDGET_BYTES": self.scene_delivery_budget_bytes,
             "LINGBOT_MAX_VIDEO_SECONDS": self.max_video_seconds,
             "LINGBOT_MAX_VIDEO_FRAMES": self.max_video_frames,
             "LINGBOT_MAX_VIDEO_DIMENSION": self.max_video_dimension,
@@ -217,6 +289,8 @@ class Settings:
             raise ValueError(f"{invalid} must be positive")
         if self.storage_min_free_bytes < 0:
             raise ValueError("LINGBOT_STORAGE_MIN_FREE_BYTES must not be negative")
+        if self.upload_timeout_seconds > 900:
+            raise ValueError("LINGBOT_UPLOAD_TIMEOUT_SECONDS must not exceed 900")
         if self.max_artifact_bytes > self.global_storage_bytes:
             raise ValueError("artifact limit cannot exceed the global storage limit")
         if self.max_upload_bytes > self.global_storage_bytes:

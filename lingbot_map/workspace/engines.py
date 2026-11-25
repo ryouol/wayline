@@ -67,6 +67,7 @@ class EngineContext:
     source_path: Path | None
     source_metadata: dict[str, Any] | None
     work_root: Path
+    reserved_units: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +134,23 @@ def _public_report(value: dict[str, Any]) -> dict[str, Any]:
         "peakVramBytes",
         "artifactBytes",
         "pointCount",
+        "workerImportSeconds",
+        "volumeReloadSeconds",
+        "frameExtractionSeconds",
+        "framePreprocessingSeconds",
+        "modelLoadingSeconds",
+        "hostToDeviceSeconds",
+        "exportSeconds",
+        "artifactUploadSeconds",
+        "workerTotalSeconds",
+        "sourceUploadSeconds",
+        "providerRoundTripSeconds",
+        "artifactDownloadSeconds",
+        "peakReservedVramBytes",
+        "inputWidth",
+        "inputHeight",
     }
-    string_keys = {"engineVersion", "license", "sourceRevision", "checkpointSha256"}
+    string_keys = {"engineVersion", "license", "sourceRevision", "checkpointSha256", "gpuType"}
     for key in numeric_keys:
         item = value.get(key)
         if isinstance(item, (int, float)) and not isinstance(item, bool):
@@ -448,7 +464,12 @@ class LingbotResearchEngine(ReconstructionEngine):
 
 
 def engine_registry(settings: Settings) -> dict[str, ReconstructionEngine]:
-    engines: list[ReconstructionEngine] = [SyntheticSampleEngine(), LingbotResearchEngine(settings)]
+    from .modal_engine import ModalLingbotEngine
+
+    engine = (
+        ModalLingbotEngine(settings) if settings.modal_enabled else LingbotResearchEngine(settings)
+    )
+    engines: list[ReconstructionEngine] = [SyntheticSampleEngine(), engine]
     return {engine.descriptor.id: engine for engine in engines}
 
 

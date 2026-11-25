@@ -1,4 +1,4 @@
-# Workspace architecture
+# Wayline architecture
 
 ## Components
 
@@ -66,13 +66,13 @@ continue to count against tenant storage until object deletion succeeds.
 Attempt artifacts are not returned, downloaded, or shareable until their job's
 fenced `ready` settlement commits.
 
-## Production migration boundary
+## Future scaling boundary
 
 SQLite and a local worker are appropriate for the single-instance demo, not for
 horizontal scaling. Preserve the current service and API contracts while
 replacing:
 
-| Current | Production | Required behavior |
+| Current | Future option | Required behavior |
 |---|---|---|
 | SQLite repository | Postgres | preserve attempt fences, quota/idempotency/outbox transactions; RLS/tenant tests; `FOR UPDATE SKIP LOCKED`; migrations |
 | Local object store | S3/R2/GCS | implement the full injected protocol; direct signed multipart upload; checksums; scoped IAM; lifecycle/delete reconciliation |
@@ -107,5 +107,7 @@ does.
   tenant IDs and local paths. The child environment is allowlisted, but this is
   not an OS sandbox; public deployments must place runners in dedicated
   containers/jobs with restricted filesystem, identity, and egress.
-- Application body checks reject oversized declared lengths; the production
-  edge remains responsible for total/multipart limits on chunked transfers.
+- Application body checks reject oversized declared lengths and count actual
+  ASGI stream bytes before the next chunk reaches the parser, including chunked
+  transfers. Partial multipart files close on rejection. Edge concurrency,
+  upload timeouts and aggregate resource limits remain deployment requirements.

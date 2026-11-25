@@ -73,22 +73,26 @@ controls below remain explicit external launch gates.
 - Rule ID: `FASTAPI-LIMITS-001`, `FASTAPI-UPLOAD-001`
 - Severity: Low
 - Status: Partially mitigated; public-launch gate
-- Location: `lingbot_map/workspace/app.py`, `security_headers`, lines 315–333;
-  `lingbot_map/workspace/service.py`, `upload_video`, lines 151–215;
-  `docs/deployment.md`, lines 17–22
+- Location: `lingbot_map/workspace/request_limits.py:9`;
+  `lingbot_map/workspace/service.py`, `upload_video`;
+  `docs/deployment.md`, request-limit configuration
 - Evidence: declared request lengths are rejected before parsing, stored bytes
   are streamed with a hard ceiling, and media signature plus decoded duration,
-  frames, and dimensions are validated. Chunked multipart traffic reaches the
-  ASGI stack before the service stream limit.
-- Impact: without an edge cap, a client could consume parser spool, disk, CPU, or
-  connection resources before the application rejects the file.
-- Fix: configure reverse-proxy limits for total body, multipart fields/parts,
-  timeouts, and chunked transfers; move public scale to direct signed multipart
-  object uploads.
+  frames, and dimensions are validated. The ASGI receive wrapper now enforces
+  observed-byte ceilings for missing/understated lengths and chunked uploads.
+  Six integration cases include early rejection, no further stream consumption,
+  actual rolled-to-disk spool closure, boundary JSON login and normal multipart
+  upload. A real local Uvicorn HTTP chunked smoke also passed.
+- Impact: one parsed body is bounded, but concurrent or slow requests can still
+  consume aggregate parser spool, disk, CPU and connection resources before
+  tenant storage reservations are made.
+- Fix: retain the ASGI cap and configure reverse-proxy limits for concurrent
+  bodies, multipart fields/parts, timeouts and aggregate buffering; move public
+  scale to direct signed multipart object uploads.
 - Mitigation: patched Starlette/python-multipart versions and per-tenant job
   reservations reduce—but do not remove—the edge DoS surface.
-- False positive notes: mark complete only with deployed proxy configuration and
-  an oversized/chunked integration test.
+- False positive notes: local oversized/chunked tests have passed. This remains
+  a public-launch gate until deployed proxy/resource controls are verified.
 
 ## SEC-005 — Distributed edge/login throttling and proxy trust
 

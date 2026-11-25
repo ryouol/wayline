@@ -1,35 +1,45 @@
 """FastAPI surface for the authenticated 3D scene workspace."""
 
 import argparse
+import asyncio
 import hmac
 import logging
+import re
+import shutil
+import tempfile
 import threading
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import (
     Depends,
     FastAPI,
-    File,
     Header,
     HTTPException,
     Query,
     Request,
     Response,
-    UploadFile,
 )
 from fastapi import (
     Path as ApiPath,
 )
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import ClientDisconnect
 
+from .analytics import register_analytics_routes
+from .auth_routes import register_auth_routes
 from .config import Settings
 from .database import (
     IdempotencyConflict,
@@ -39,8 +49,14 @@ from .database import (
     RateLimitExceeded,
     token_digest,
 )
+from .delivery import BudgetedFileResponse
 from .engines import EngineUnavailable
-from .service import UploadRejected, WorkspaceService
+from .identity import IdentityStore
+from .pages import SUPPORT_PAGES, app_page, support_page
+from .request_limits import RequestBodyLimitMiddleware
+from .runtime_lock import workspace_lock
+from .service import InvalidEngineParameters, UploadRejected, WorkspaceService
+from .static_files import VersionedStaticFiles
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -49,7 +65,7 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 class LoginRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     token: str = Field(min_length=16, max_length=512)
 
 
@@ -76,6 +92,7 @@ class HealthResponse(BaseModel):
 class UserResponse(BaseModel):
     displayName: str
     tenantName: str
+    accountType: Literal["operator", "google", "trial", "owner"] = "operator"
 
 
 class LoginResponse(BaseModel):
@@ -84,28 +101,43 @@ class LoginResponse(BaseModel):
 
 
 class QuotaResponse(BaseModel):
-    quota_units: int
+    quota_units: int | None
     reserved_units: int
     consumed_units: int
-    available_units: int
+    available_units: int | None
     stored_bytes: int
     asset_count: int
     unattached_asset_count: int
     job_count: int
     artifact_count: int
     share_count: int
-    storage_limit_bytes: int
-    asset_limit: int
-    unattached_asset_limit: int
-    job_limit: int
-    artifact_limit: int
-    share_limit: int
+    storage_limit_bytes: int | None
+    asset_limit: int | None
+    unattached_asset_limit: int | None
+    job_limit: int | None
+    artifact_limit: int | None
+    share_limit: int | None
+
+
+class ReconstructionAllowanceResponse(BaseModel):
+    state: Literal["available", "processing", "used", "retry_later"]
+    message: str
+    limit: int
+    remaining: int
+
+
+class RetentionResponse(BaseModel):
+    terminalJobSeconds: int
+    unattachedUploadSeconds: int
+    workspaceExpiresAt: float | None
 
 
 class MeResponse(BaseModel):
     user: UserResponse
     csrfToken: str | None
     quota: QuotaResponse
+    reconstructionAllowance: ReconstructionAllowanceResponse | None
+    retention: RetentionResponse
 
 
 class EngineResponse(BaseModel):
@@ -154,6 +186,7 @@ class JobErrorResponse(BaseModel):
 
 class JobResponse(BaseModel):
     id: str
+    displayName: str
     engineId: str
     sourceAssetId: str | None
     state: Literal["queued", "running", "ready", "failed", "cancelled"]
@@ -170,6 +203,7 @@ class JobResponse(BaseModel):
     updatedAt: float
     startedAt: float | None
     finishedAt: float | None
+    expiresAt: float | None
 
 
 class JobDetailResponse(JobResponse):
@@ -179,6 +213,7 @@ class JobDetailResponse(JobResponse):
 class JobsResponse(BaseModel):
     jobs: list[JobResponse]
     nextCursor: str | None
+    missingIds: list[str]
 
 
 class AssetsResponse(BaseModel):
@@ -251,7 +286,6 @@ JobId = Annotated[str, ApiPath(pattern=r"^job_[0-9a-f]{32}$")]
 AssetId = Annotated[str, ApiPath(pattern=r"^ast_[0-9a-f]{32}$")]
 ArtifactId = Annotated[str, ApiPath(pattern=r"^art_[0-9a-f]{32}$")]
 ShareId = Annotated[str, ApiPath(pattern=r"^shr_[0-9a-f]{32}$")]
-ShareToken = Annotated[str, ApiPath(min_length=32, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 IdempotencyKey = Annotated[
     str | None,
     Header(alias="Idempotency-Key", min_length=8, max_length=200),
@@ -308,9 +342,28 @@ def _artifact(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str, Any]:
+def _job(
+    value: dict[str, Any],
+    *,
+    retention_seconds: int,
+    workspace_expires_at: float | None,
+    include_artifacts: bool = False,
+) -> dict[str, Any]:
+    source_name = Path(value.get("source_original_name") or "").stem
+    display_name = " ".join(source_name.replace("_", " ").split()) or "Captured space"
+    expires_at = workspace_expires_at
+    if value["state"] in {"ready", "failed", "cancelled"}:
+        # Match retention's COALESCE(finished_at, updated_at), including epoch zero.
+        finished = value["finished_at"]
+        terminal_expiry = (
+            finished if finished is not None else value["updated_at"]
+        ) + retention_seconds
+        expires_at = terminal_expiry if expires_at is None else min(expires_at, terminal_expiry)
     result = {
         "id": value["id"],
+        "displayName": (
+            "Synthetic studio" if value["engine_id"] == "synthetic-sample-v1" else display_name
+        ),
         "engineId": value["engine_id"],
         "sourceAssetId": value["source_asset_id"],
         "state": value["state"],
@@ -331,6 +384,7 @@ def _job(value: dict[str, Any], *, include_artifacts: bool = False) -> dict[str,
         "updatedAt": value["updated_at"],
         "startedAt": value["started_at"],
         "finishedAt": value["finished_at"],
+        "expiresAt": expires_at,
     }
     if include_artifacts:
         result["artifacts"] = [_artifact(item) for item in value.get("artifacts", [])]
@@ -371,6 +425,8 @@ def create_app(
     runtime.validate()
     workspace = service or WorkspaceService(runtime)
     limiter = LoginLimiter()
+    identities = IdentityStore(workspace.database)
+    upload_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -386,7 +442,7 @@ def create_app(
             workspace.stop_worker()
 
     application = FastAPI(
-        title="3D Scene Workspace",
+        title="Wayline",
         version="0.2.0",
         docs_url=None if runtime.environment == "production" else "/docs",
         redoc_url=None,
@@ -398,32 +454,37 @@ def create_app(
     if runtime.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
+    application.add_middleware(
+        RequestBodyLimitMiddleware, max_upload_bytes=runtime.max_upload_bytes
+    )
+
+    register_auth_routes(application, workspace, runtime, limiter, SESSION_COOKIE)
+    register_analytics_routes(
+        application, workspace.database, runtime, LoginLimiter(limit=120, max_keys=1)
+    )
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
-        rejected: Response | None = None
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                declared_bytes = int(content_length)
-            except ValueError:
-                rejected = JSONResponse(
-                    status_code=400, content={"detail": "Invalid Content-Length."}
-                )
-            else:
-                upload_ceiling = runtime.max_upload_bytes + 1024 * 1024
-                request_ceiling = upload_ceiling if request.url.path == "/api/assets" else 64 * 1024
-                if declared_bytes < 0 or declared_bytes > request_ceiling:
-                    rejected = JSONResponse(
-                        status_code=413, content={"detail": "Request body is too large."}
-                    )
         try:
-            response = rejected or await call_next(request)
+            response = await call_next(request)
         except Exception:
-            logger.exception("unhandled request failure on %s", request.url.path)
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": "The request could not be completed."},
+            # Capability tokens appear in share URLs; never copy paths to logs.
+            logger.exception("unhandled workspace request failure")
+            response = (
+                support_page(
+                    "Something went wrong",
+                    "The workspace could not complete this request.",
+                    "<p>Please return to your workspace and try again. "
+                    "Existing jobs are not automatically resubmitted.</p>",
+                    status=500,
+                    origin=runtime.public_base_url,
+                )
+                if "text/html" in request.headers.get("accept", "")
+                and not request.url.path.startswith("/api/")
+                else JSONResponse(
+                    status_code=500,
+                    content={"detail": "The request could not be completed."},
+                )
             )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -431,11 +492,13 @@ def create_app(
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-            "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
+            "connect-src 'self'; media-src 'self' blob:; object-src 'none'; "
+            "frame-ancestors 'none'; base-uri 'self'; "
             "form-action 'self'; require-trusted-types-for 'script'; trusted-types default"
         )
-        if request.url.path.startswith("/api/"):
+        if request.url.path == "/s" or request.url.path.startswith(("/api/", "/s/", "/auth/")):
             response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         principal_marker = getattr(request.state, "workspace_principal_marker", None)
         if principal_marker:
             response.headers["X-Workspace-Principal"] = principal_marker
@@ -461,6 +524,15 @@ def create_app(
             f"{value['tenant_id']}\0{value['user_id']}"
         )
         logout_request = request.method == "DELETE" and request.url.path == "/api/session"
+        if method == "cookie" and logout_request:
+            # Sign-out remains possible with stale CSRF state, but not from a
+            # cross-site browser request. SameSite=Strict is defense in depth.
+            origin = request.headers.get("origin")
+            expected_origin = runtime.public_base_url or str(request.base_url).rstrip("/")
+            if request.headers.get("sec-fetch-site") == "cross-site" or (
+                origin is not None and origin != expected_origin
+            ):
+                raise HTTPException(403, "Cross-origin sign out is not allowed.")
         if method == "cookie" and request.method in UNSAFE_METHODS and not logout_request:
             supplied = token_digest(x_csrf_token) if x_csrf_token else ""
             if not hmac.compare_digest(supplied, value["csrf_hash"]):
@@ -476,6 +548,38 @@ def create_app(
         )
 
     CurrentPrincipal = Annotated[Principal, Depends(principal)]
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, error: RequestValidationError):
+        # Pydantic's default response echoes input, including malformed tokens.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {"loc": item["loc"], "msg": item["msg"], "type": item["type"]}
+                    for item in error.errors()
+                ]
+            },
+        )
+
+    @application.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, error: StarletteHTTPException):
+        if (
+            error.status_code == 404
+            and "text/html" in request.headers.get("accept", "")
+            and not request.url.path.startswith("/api/")
+        ):
+            return support_page(
+                "Page unavailable",
+                "This page or share is unavailable.",
+                "<p>The page may have moved, or this share may have expired or been revoked. "
+                "Ask the owner for a new link.</p>",
+                status=404,
+                origin=runtime.public_base_url,
+            )
+        return JSONResponse(
+            {"detail": error.detail}, status_code=error.status_code, headers=error.headers
+        )
 
     @application.exception_handler(QuotaExceeded)
     async def quota_error(_: Request, error: QuotaExceeded):
@@ -555,9 +659,21 @@ def create_app(
         if current.method == "cookie" and current.session_id:
             csrf = workspace.database.session_csrf(current.session_id)
         return {
-            "user": {"displayName": current.display_name, "tenantName": current.tenant_name},
+            "user": {
+                "displayName": current.display_name,
+                "tenantName": current.tenant_name,
+                "accountType": identities.account_type(current.user_id),
+            },
             "csrfToken": csrf,
             "quota": workspace.database.quota(current.tenant_id),
+            "reconstructionAllowance": workspace.database.reconstruction_allowance(
+                current.tenant_id
+            ),
+            "retention": {
+                "terminalJobSeconds": runtime.terminal_job_retention_seconds,
+                "unattachedUploadSeconds": runtime.unattached_asset_retention_seconds,
+                "workspaceExpiresAt": identities.workspace_expires_at(current.user_id),
+            },
         }
 
     @application.delete("/api/session", status_code=204)
@@ -569,28 +685,110 @@ def create_app(
         )
 
     @application.get("/api/engines", response_model=EnginesResponse)
-    def engines(_: CurrentPrincipal):
-        return {"engines": workspace.engine_descriptors()}
+    def engines(current: CurrentPrincipal):
+        descriptors = workspace.engine_descriptors()
+        if identities.is_guest(current.user_id):
+            for engine in descriptors:
+                if engine["id"] != "synthetic-sample-v1":
+                    engine["available"] = False
+                    engine["unavailableReasons"] = [
+                        "Sign in with Google to upload a video."
+                        if runtime.signup_enabled
+                        else "Video reconstruction is not available in this playground yet."
+                    ]
+        return {"engines": descriptors}
 
-    @application.post("/api/assets", status_code=201, response_model=AssetResponse)
-    def upload_asset(
+    @application.post(
+        "/api/assets",
+        status_code=201,
+        response_model=AssetResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["file"],
+                            "properties": {"file": {"type": "string", "format": "binary"}},
+                            "additionalProperties": False,
+                        }
+                    }
+                },
+            }
+        },
+    )
+    async def upload_asset(
+        request: Request,
         current: CurrentPrincipal,
-        file: Annotated[UploadFile, File()],
         idempotency_key: IdempotencyKey = None,
     ):
-        try:
-            result = workspace.upload_video(
-                tenant_id=current.tenant_id,
-                filename=file.filename,
-                media_type=file.content_type,
-                stream=file.file,
-                idempotency_key=idempotency_key,
+        if await run_in_threadpool(identities.is_guest, current.user_id):
+            raise HTTPException(403, "Sign in with Google to upload your own video.")
+        reason = await run_in_threadpool(workspace.upload_unavailable_reason, current.tenant_id)
+        if reason and not await run_in_threadpool(
+            workspace.database.has_completed_idempotency,
+            current.tenant_id,
+            "POST:/api/assets",
+            idempotency_key,
+        ):
+            raise HTTPException(409, reason)
+        if not upload_lock.acquire(blocking=False):
+            raise HTTPException(
+                429,
+                "Another upload is in progress. Please try again shortly.",
+                headers={"Retry-After": "5"},
             )
+        try:
+            await run_in_threadpool(
+                workspace.database.consume_rate,
+                current.tenant_id,
+                "upload_request",
+                limit=runtime.upload_rate_per_minute,
+            )
+            free = (await run_in_threadpool(shutil.disk_usage, tempfile.gettempdir())).free
+            if free < runtime.max_upload_bytes + runtime.storage_min_free_bytes:
+                raise HTTPException(507, "There is not enough temporary storage for an upload.")
+            # Parse only after authentication and admission. File() dependencies
+            # would spool the entire multipart body before checking the principal.
+            try:
+                async with asyncio.timeout(runtime.upload_timeout_seconds):
+                    form = await request.form(max_files=1, max_fields=0)
+            except TimeoutError as error:
+                raise HTTPException(408, "Upload timed out. Please try again.") from error
+            except ClientDisconnect as error:
+                raise HTTPException(400, "Upload connection was interrupted.") from error
+            try:
+                file = form.get("file")
+                if not isinstance(file, UploadFile):
+                    raise HTTPException(422, "Provide one video in the file field.")
+                result = await run_in_threadpool(
+                    workspace.upload_video,
+                    tenant_id=current.tenant_id,
+                    filename=file.filename,
+                    media_type=file.content_type,
+                    stream=file.file,
+                    idempotency_key=idempotency_key,
+                )
+            finally:
+                await form.close()
         except UploadRejected as error:
             raise HTTPException(error.status_code, str(error)) from error
         finally:
-            file.file.close()
+            upload_lock.release()
         return _asset(result)
+
+    @application.get("/api/submissions/upload", response_model=AssetResponse)
+    def upload_submission(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
+        if idempotency_key is None:
+            raise HTTPException(422, "Idempotency-Key is required.")
+        try:
+            value = workspace.database.upload_submission_asset(current.tenant_id, idempotency_key)
+        except KeyError as error:
+            raise HTTPException(
+                404, "No accepted video upload could be confirmed for this submission."
+            ) from error
+        return _asset(value)
 
     @application.get("/api/assets", response_model=AssetsResponse)
     def list_assets(
@@ -623,7 +821,11 @@ def create_app(
 
     @application.post("/api/jobs/sample", status_code=202, response_model=JobResponse)
     def sample_job(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
-        return _job(workspace.submit_sample(current.tenant_id, idempotency_key=idempotency_key))
+        return _job(
+            workspace.submit_sample(current.tenant_id, idempotency_key=idempotency_key),
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+        )
 
     @application.post("/api/jobs/research", status_code=202, response_model=JobResponse)
     def research_job(
@@ -631,13 +833,38 @@ def create_app(
         current: CurrentPrincipal,
         idempotency_key: IdempotencyKey = None,
     ):
-        return _job(
-            workspace.submit_research(
+        if identities.is_guest(current.user_id):
+            raise HTTPException(403, "Sign in with Google to reconstruct a video.")
+        try:
+            result = workspace.submit_research(
                 current.tenant_id,
                 asset_id=payload.assetId,
                 params=payload.model_dump(exclude={"assetId"}),
                 idempotency_key=idempotency_key,
             )
+        except InvalidEngineParameters as error:
+            raise HTTPException(422, str(error)) from error
+        return _job(
+            result,
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
+        )
+
+    @application.get("/api/submissions/research", response_model=JobResponse)
+    def research_submission(current: CurrentPrincipal, idempotency_key: IdempotencyKey = None):
+        if idempotency_key is None:
+            raise HTTPException(422, "Idempotency-Key is required.")
+        try:
+            value = workspace.database.research_submission_job(current.tenant_id, idempotency_key)
+        except KeyError as error:
+            # An absent receipt does not establish that a request was rejected.
+            raise HTTPException(
+                404, "No accepted scene could be confirmed for this submission."
+            ) from error
+        return _job(
+            value,
+            retention_seconds=runtime.terminal_job_retention_seconds,
+            workspace_expires_at=identities.workspace_expires_at(current.user_id),
         )
 
     @application.get("/api/jobs", response_model=JobsResponse)
@@ -645,22 +872,61 @@ def create_app(
         current: CurrentPrincipal,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         cursor: Annotated[str | None, Query(max_length=512)] = None,
+        known_ids: Annotated[
+            list[Annotated[str, Field(pattern=r"^job_[0-9a-f]{32}$")]] | None,
+            Query(alias="knownId", max_length=100),
+        ] = None,
     ):
         try:
+            missing_ids = workspace.database.missing_job_ids(current.tenant_id, known_ids or [])
             jobs, next_cursor = workspace.database.page_jobs(
                 current.tenant_id, limit=limit, cursor=cursor
             )
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        return {"jobs": [_job(item) for item in jobs], "nextCursor": next_cursor}
+        workspace_expiry = identities.workspace_expires_at(current.user_id)
+        return {
+            "jobs": [
+                _job(
+                    item,
+                    retention_seconds=runtime.terminal_job_retention_seconds,
+                    workspace_expires_at=workspace_expiry,
+                )
+                for item in jobs
+            ],
+            "nextCursor": next_cursor,
+            "missingIds": missing_ids,
+        }
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetailResponse)
-    def get_job(job_id: JobId, current: CurrentPrincipal):
+    def get_job(
+        job_id: JobId,
+        current: CurrentPrincipal,
+        if_none_match: Annotated[str | None, Header(max_length=4096)] = None,
+    ):
         try:
             value = workspace.database.get_job(current.tenant_id, job_id)
         except KeyError as error:
             raise HTTPException(404, "Job not found.") from error
-        return _job(value, include_artifacts=True)
+        detail = JobDetailResponse.model_validate(
+            _job(
+                value,
+                retention_seconds=runtime.terminal_job_retention_seconds,
+                workspace_expires_at=identities.workspace_expires_at(current.user_id),
+                include_artifacts=True,
+            )
+        )
+        response = JSONResponse(detail.model_dump(mode="json"))
+        # Validate the entire current representation: artifact cleanup need not
+        # change the job's updated_at. Authentication always precedes validation.
+        etag = f'"{sha256(response.body).hexdigest()}"'
+        response.headers["ETag"] = etag
+        if if_none_match and (
+            if_none_match.strip() == "*"
+            or any(tag.strip().removeprefix("W/") == etag for tag in if_none_match.split(","))
+        ):
+            return Response(status_code=304, headers={"ETag": etag})
+        return response
 
     @application.post("/api/jobs/{job_id}/cancel", status_code=202, response_model=CancelResponse)
     def cancel_job(
@@ -694,23 +960,33 @@ def create_app(
         except KeyError as error:
             raise HTTPException(404, "Artifact not found.") from error
 
-    @application.get("/api/artifacts/{artifact_id}/content")
-    def artifact_content(artifact_id: ArtifactId, current: CurrentPrincipal):
-        artifact = artifact_for(artifact_id, current)
-        return FileResponse(
-            workspace.store.path_for_local_use(artifact["object_key"]),
-            media_type=artifact["media_type"],
-            headers={"Content-Disposition": f'inline; filename="{artifact["filename"]}"'},
-        )
-
-    @application.get("/api/artifacts/{artifact_id}/download")
-    def artifact_download(artifact_id: ArtifactId, current: CurrentPrincipal):
-        artifact = artifact_for(artifact_id, current)
-        return FileResponse(
-            workspace.store.path_for_local_use(artifact["object_key"]),
+    def deliver_artifact(artifact: dict[str, Any], request: Request, *, attachment=False):
+        # A single range cannot amplify a response beyond its reserved file size.
+        if "," in request.headers.get("range", ""):
+            raise HTTPException(416, "Only a single byte range is supported.")
+        path = workspace.store.path_for_local_use(artifact["object_key"])
+        try:
+            file_stat = path.stat()
+        except FileNotFoundError as error:
+            raise HTTPException(404, "Artifact not found.") from error
+        return BudgetedFileResponse(
+            path,
+            reserve_bytes=partial(
+                workspace.database.reserve_delivery_bytes, limit=runtime.scene_delivery_budget_bytes
+            ),
             media_type=artifact["media_type"],
             filename=artifact["filename"],
+            content_disposition_type="attachment" if attachment else "inline",
+            stat_result=file_stat,
         )
+
+    @application.get("/api/artifacts/{artifact_id}/content")
+    def artifact_content(artifact_id: ArtifactId, request: Request, current: CurrentPrincipal):
+        return deliver_artifact(artifact_for(artifact_id, current), request)
+
+    @application.get("/api/artifacts/{artifact_id}/download")
+    def artifact_download(artifact_id: ArtifactId, request: Request, current: CurrentPrincipal):
+        return deliver_artifact(artifact_for(artifact_id, current), request, attachment=True)
 
     @application.post(
         "/api/artifacts/{artifact_id}/shares", status_code=201, response_model=ShareResponse
@@ -730,7 +1006,7 @@ def create_app(
             )
         except KeyError as error:
             raise HTTPException(404, "Artifact not found.") from error
-        path = f"/s/{share['token']}"
+        path = f"/s#{share['token']}"
         return {
             "id": share["id"],
             "expiresAt": share["expires_at"],
@@ -811,11 +1087,21 @@ def create_app(
             idempotency_key=idempotency_key,
         )
 
-    @application.get("/api/public/shares/{token}", response_model=PublicShareResponse)
-    def public_share(token: ShareToken):
+    def resolve_public_share(request: Request):
+        authorization = request.headers.get("authorization", "")
+        token = authorization.removeprefix("Bearer ")
+        if not authorization.startswith("Bearer ") or not re.fullmatch(
+            r"[A-Za-z0-9_-]{32,64}", token
+        ):
+            raise HTTPException(404, "Share not found or expired.")
         value = workspace.database.resolve_share(token)
         if not value:
             raise HTTPException(404, "Share not found or expired.")
+        return value
+
+    @application.get("/api/public/share", response_model=PublicShareResponse)
+    def public_share(request: Request):
+        value = resolve_public_share(request)
         research_only = bool(value["metadata"].get("researchOnly"))
         return {
             "artifact": {
@@ -825,7 +1111,7 @@ def create_app(
                 "sha256": value["sha256"],
                 "licenseId": value["license_id"],
                 "metadata": value["metadata"],
-                "contentUrl": f"/api/public/shares/{token}/content",
+                "contentUrl": "/api/public/share/content",
             },
             "expiresAt": value["expires_at"],
             "researchOnly": research_only,
@@ -837,33 +1123,58 @@ def create_app(
             ),
         }
 
-    @application.get("/api/public/shares/{token}/content")
-    def public_share_content(token: ShareToken):
-        value = workspace.database.resolve_share(token)
-        if not value:
-            raise HTTPException(404, "Share not found or expired.")
-        return FileResponse(
-            workspace.store.path_for_local_use(value["object_key"]),
-            media_type=value["media_type"],
-            headers={"Content-Disposition": f'inline; filename="{value["filename"]}"'},
-        )
+    @application.get("/api/public/share/content")
+    def public_share_content(request: Request):
+        return deliver_artifact(resolve_public_share(request), request)
 
-    @application.get("/s/{token}")
-    def share_page(token: ShareToken):
-        if not workspace.database.resolve_share(token):
-            raise HTTPException(404, "Share not found or expired.")
-        return FileResponse(STATIC_DIR / "share.html")
+    @application.get("/s")
+    def share_page():
+        return app_page(
+            "share.html",
+            "Shared space — Wayline",
+            "A permissioned, expiring 3D scene review.",
+            runtime.public_base_url,
+        )
 
     @application.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        return app_page(
+            "index.html",
+            "Wayline — a new perspective",
+            "A private workspace for reviewable 3D scene artifacts.",
+            runtime.public_base_url,
+        )
 
-    application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    @application.get("/privacy", include_in_schema=False)
+    def privacy():
+        return support_page(*SUPPORT_PAGES["privacy"], origin=runtime.public_base_url)
+
+    @application.get("/terms", include_in_schema=False)
+    def terms():
+        return support_page(*SUPPORT_PAGES["terms"], origin=runtime.public_base_url)
+
+    @application.get("/contact", include_in_schema=False)
+    def contact():
+        return support_page(*SUPPORT_PAGES["contact"], origin=runtime.public_base_url)
+
+    @application.get("/robots.txt", include_in_schema=False)
+    def robots():
+        return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
+
+    @application.get("/sitemap.xml", include_in_schema=False)
+    def sitemap():
+        # A private application has no indexable routes. Never enumerate shares.
+        return Response(
+            '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>',
+            media_type="application/xml",
+        )
+
+    application.mount("/static", VersionedStaticFiles(directory=STATIC_DIR), name="static")
     return application
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the authenticated 3D Scene Workspace")
+    parser = argparse.ArgumentParser(description="Run Wayline")
     parser.add_argument(
         "--dev", action="store_true", help="generate a local token if none is configured"
     )
@@ -876,16 +1187,22 @@ def main() -> None:
         print(settings.bootstrap_token)
     import uvicorn
 
-    # Capability share tokens live in URL paths. Disable Uvicorn access logs so
-    # they are never copied into default request logs; edge proxies must apply
-    # the same path redaction policy documented in docs/deployment.md.
-    uvicorn.run(
-        create_app(settings),
-        host=args.host,
-        port=args.port,
-        log_level="info",
-        access_log=False,
-    )
+    # Only application events: do not enable HTTP client or request URL logging.
+    workspace_logger = logging.getLogger("lingbot_map.workspace")
+    workspace_logger.setLevel(logging.INFO)
+    if not workspace_logger.handlers:
+        workspace_logger.addHandler(logging.StreamHandler())
+    workspace_logger.propagate = False
+
+    # OAuth callbacks can contain authorization codes. Avoid default request logs.
+    with workspace_lock(settings.data_dir):
+        uvicorn.run(
+            create_app(settings),
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            access_log=False,
+        )
 
 
 if __name__ == "__main__":

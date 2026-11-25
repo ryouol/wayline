@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -35,10 +36,14 @@ from .engines import (
     cleanup_result,
     engine_registry,
 )
+from .identity import IdentityStore
+from .modal_engine import ModalLingbotEngine, ReconstructionCapacityExceeded
+from .recovery import RecoveryWorker
 from .storage import LocalObjectStore, ObjectStore, ObjectTooLarge, StoredObject
 
 logger = logging.getLogger(__name__)
 
+MAX_FILENAME_LENGTH = 120
 ALLOWED_VIDEO_TYPES = {
     "video/mp4": {".mp4", ".m4v", ".mov"},
     "video/quicktime": {".mov"},
@@ -53,9 +58,13 @@ class UploadRejected(ValueError):
         self.status_code = status_code
 
 
-def safe_filename(value: str | None) -> str:
+class InvalidEngineParameters(ValueError):
+    pass
+
+
+def safe_filename(value: str | None, *, max_length: int | None = MAX_FILENAME_LENGTH) -> str:
     name = Path(value or "upload.mp4").name.strip()
-    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name)[:120].strip(". ")
+    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name)[:max_length].strip(". ")
     return name or "upload.mp4"
 
 
@@ -89,15 +98,36 @@ class VideoInspector:
             height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
         finally:
             capture.release()
-        if fps <= 0 or frames <= 0 or width <= 0 or height <= 0:
+        if not math.isfinite(fps) or fps <= 0 or frames <= 0 or width <= 0 or height <= 0:
             raise UploadRejected("The video has no readable frames or timing metadata.")
         return {
             "fps": round(fps, 3),
             "frames": frames,
             "durationSeconds": round(frames / fps, 3),
+            "samplingDurationSeconds": frames / fps,
             "width": width,
             "height": height,
         }
+
+    def validate_boundary_frames(self, path: Path, frames: int) -> None:
+        """Check the mandatory first/last samples after upload limits have passed."""
+        import cv2
+
+        message = (
+            "The beginning or end of this video could not be decoded. "
+            "Try exporting the video again."
+        )
+        capture = cv2.VideoCapture(str(path))
+        try:
+            for index in (0, frames - 1):
+                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    raise UploadRejected(message)
+        except cv2.error as error:
+            raise UploadRejected(message) from error
+        finally:
+            capture.release()
 
 
 class WorkspaceService:
@@ -117,12 +147,21 @@ class WorkspaceService:
         self.store: ObjectStore = store or LocalObjectStore(settings.data_dir / "objects")
         self.inspector = inspector or VideoInspector()
         self.engines = engines or engine_registry(settings)
+        self._remote_cleaner = ModalLingbotEngine(settings)
         self.work_root = settings.data_dir / "work"
         self.work_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.work_root.chmod(0o700)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
+        self._research_worker: threading.Thread | None = None
+        self._recovery_worker: RecoveryWorker | None = None
+        self._research_engines = tuple(
+            name for name, engine in self.engines.items() if engine.descriptor.research_only
+        )
+        self._sample_engines = tuple(
+            name for name in self.engines if name not in self._research_engines
+        )
         self._worker_id = f"worker_{uuid.uuid4().hex}"
         self._maintenance_at = 0.0
         self._full_maintenance_at = 0.0
@@ -166,6 +205,7 @@ class WorkspaceService:
 
     def initialize(self) -> dict[str, int]:
         self.database.initialize()
+        IdentityStore(self.database).reconcile_owner_email(self.settings.owner_email)
         if self.settings.bootstrap_token:
             self.database.bootstrap(
                 token=self.settings.bootstrap_token,
@@ -200,32 +240,68 @@ class WorkspaceService:
         self._worker = threading.Thread(
             target=self._worker_loop, name="workspace-worker", daemon=True
         )
+        self._research_worker = threading.Thread(
+            target=self._worker_loop,
+            kwargs={"research": True},
+            name="reconstruction-worker",
+            daemon=True,
+        )
+        self._research_worker.start()
         self._worker.start()
+        if self.settings.recovery_recipient:
+            self._recovery_worker = RecoveryWorker(
+                self.settings.data_dir,
+                self.settings.recovery_recipient,
+                self.settings.recovery_volume_id,
+                upload_budget_bytes=self.settings.recovery_upload_budget_bytes,
+            )
+            self._recovery_worker.start()
 
     def stop_worker(self) -> None:
         self._stop.set()
         self._wake.set()
-        if self._worker:
-            self._worker.join(timeout=self.settings.shutdown_timeout_seconds)
-            if self._worker.is_alive():
+        deadline = time.monotonic() + self.settings.shutdown_timeout_seconds
+        if self._recovery_worker:
+            self._recovery_worker.stop(timeout=max(0, deadline - time.monotonic()))
+            self._recovery_worker = None
+        for worker in (self._worker, self._research_worker):
+            if worker:
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+            if worker and worker.is_alive():
                 raise RuntimeError("worker did not stop within the configured shutdown deadline")
-            self._worker = None
+        self._worker = self._research_worker = None
 
     def engine_descriptors(self) -> list[dict[str, Any]]:
         values = []
         for engine in self.engines.values():
             descriptor = engine.descriptor
+            reasons = list(descriptor.unavailable_reasons)
+            if isinstance(engine, ModalLingbotEngine):
+                reason = engine.capacity_unavailable_reason()
+                if reason:
+                    reasons.append(reason)
             values.append(
                 {
                     "id": descriptor.id,
                     "name": descriptor.name,
-                    "available": descriptor.available,
+                    "available": descriptor.available and not reasons,
                     "researchOnly": descriptor.research_only,
                     "commerciallyCleared": descriptor.commercially_cleared,
-                    "unavailableReasons": list(descriptor.unavailable_reasons),
+                    "unavailableReasons": reasons,
                 }
             )
         return values
+
+    def upload_unavailable_reason(
+        self, tenant_id: str, *, connection: sqlite3.Connection | None = None
+    ) -> str | None:
+        allowance = self.database.reconstruction_allowance(tenant_id, connection=connection)
+        if allowance and allowance["state"] != "available":
+            return allowance["message"]
+        engine = self.engines.get("lingbot-research-v1")
+        if isinstance(engine, ModalLingbotEngine):
+            return engine.capacity_unavailable_reason(connection=connection)
+        return None
 
     @staticmethod
     def request_hash(payload: dict[str, Any]) -> str:
@@ -346,11 +422,19 @@ class WorkspaceService:
         stream: BinaryIO,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        original_name = safe_filename(filename)
-        suffix = Path(original_name).suffix.lower()
+        full_name = safe_filename(filename, max_length=None)
+        extension = Path(full_name).suffix
+        suffix = extension.lower()
         declared = (media_type or "").lower().split(";", 1)[0]
-        if declared not in ALLOWED_VIDEO_TYPES or suffix not in ALLOWED_VIDEO_TYPES[declared]:
+        allowed_suffixes = ALLOWED_VIDEO_TYPES.get(declared, set())
+        if suffix not in allowed_suffixes:
             raise UploadRejected("Use an MP4, MOV, AVI, or MKV video file.", status_code=415)
+        clipped_name = safe_filename(filename)
+        clipped_suffix = Path(clipped_name).suffix.lower()
+        original_name = clipped_name
+        if clipped_suffix != suffix:
+            stem = full_name.removesuffix(extension)
+            original_name = stem[: MAX_FILENAME_LENGTH - len(extension)] + extension
         self.database.consume_rate(
             tenant_id,
             "upload",
@@ -394,7 +478,12 @@ class WorkspaceService:
                     "The declared media type does not match the file contents.", status_code=415
                 )
             metadata = self.inspector.inspect(path)
-            if metadata["durationSeconds"] > self.settings.max_video_seconds:
+            if metadata["frames"] < 2:
+                raise UploadRejected("Choose a video with at least two frames for reconstruction.")
+            if (
+                metadata.get("samplingDurationSeconds", metadata["durationSeconds"])
+                > self.settings.max_video_seconds
+            ):
                 raise UploadRejected(
                     f"Video is longer than the {self.settings.max_video_seconds}-second limit.",
                     status_code=413,
@@ -409,10 +498,12 @@ class WorkspaceService:
                     f"Video dimensions exceed {self.settings.max_video_dimension}px.",
                     status_code=413,
                 )
+            self.inspector.validate_boundary_frames(path, metadata["frames"])
             metadata["container"] = detected
             scope = "POST:/api/assets"
             payload = {
-                "filename": original_name,
+                # An older receipt may have hashed a different, but valid, clipped extension.
+                "filename": clipped_name if clipped_suffix in allowed_suffixes else original_name,
                 "mediaType": detected,
                 "sha256": stored.sha256,
                 "sizeBytes": stored.size_bytes,
@@ -427,6 +518,9 @@ class WorkspaceService:
                     connection=connection,
                 )
                 if replay is None:
+                    reason = self.upload_unavailable_reason(tenant_id, connection=connection)
+                    if reason:
+                        raise UploadRejected(reason, status_code=409)
                     created_result = self.database.create_asset(
                         tenant_id=tenant_id,
                         object_key=stored.key,
@@ -507,7 +601,10 @@ class WorkspaceService:
         metadata = None
         if asset_id:
             metadata = self.database.get_asset(tenant_id, asset_id)["metadata"]
-        reservation = engine.estimate_units(metadata, params)
+        try:
+            reservation = engine.estimate_units(metadata, params)
+        except ValueError as error:
+            raise InvalidEngineParameters(str(error)) from error
         with self.database.transaction() as connection:
             request_hash, replay = self._idempotency_begin(
                 tenant_id,
@@ -518,6 +615,10 @@ class WorkspaceService:
             )
             if replay is not None:
                 return replay
+            if isinstance(engine, ModalLingbotEngine):
+                reason = engine.capacity_unavailable_reason(connection=connection)
+                if reason:
+                    raise ReconstructionCapacityExceeded(reason)
             job = self.database.create_job(
                 tenant_id=tenant_id,
                 engine_id=engine_id,
@@ -540,11 +641,20 @@ class WorkspaceService:
         self._wake.set()
         return job
 
-    def _worker_loop(self) -> None:
+    def _worker_loop(self, *, research: bool = False) -> None:
         consecutive_failures = 0
+        cleanup_at = 0.0
         while not self._stop.is_set():
             try:
-                processed = self._worker_iteration()
+                if research:
+                    if time.monotonic() - cleanup_at >= 60:
+                        self._remote_cleaner.cleanup_remote_runs()
+                        cleanup_at = time.monotonic()
+                    processed = not self._stop.is_set() and self.process_next_job(
+                        engine_ids=self._research_engines
+                    )
+                else:
+                    processed = self._worker_iteration()
             except Exception:
                 consecutive_failures += 1
                 delay = min(
@@ -583,13 +693,14 @@ class WorkspaceService:
             self._full_maintenance_at = now
         if self._stop.is_set():
             return False
-        return self.process_next_job()
+        return self.process_next_job(engine_ids=self._sample_engines)
 
-    def process_next_job(self) -> bool:
+    def process_next_job(self, *, engine_ids: tuple[str, ...] | None = None) -> bool:
         job = self.database.claim_next_job(
             worker_id=self._worker_id,
             lease_seconds=self.settings.job_timeout_seconds,
             max_attempts=self.settings.max_job_attempts,
+            engine_ids=engine_ids,
         )
         if job is None:
             return False
@@ -598,6 +709,7 @@ class WorkspaceService:
 
     def _process_job(self, job: dict[str, Any]) -> None:
         tenant_id, job_id = job["tenant_id"], job["id"]
+        processing_started = time.monotonic()
         attempt_token = job["attempt_token"]
         worker_id = job["worker_id"]
         engine = self.engines[job["engine_id"]]
@@ -638,12 +750,14 @@ class WorkspaceService:
                     source_path=source_path,
                     source_metadata=source_metadata,
                     work_root=self.work_root,
+                    reserved_units=job["reserved_units"],
                 ),
                 progress,
                 cancelled,
             )
             if cancelled():
                 raise JobCancelled("job cancelled before artifacts were committed")
+            storage_started = time.monotonic()
             progress("storing", 0.92)
             for artifact in result.artifacts:
                 suffix = Path(artifact.filename).suffix.lower()
@@ -654,7 +768,11 @@ class WorkspaceService:
                 self._claim_object(
                     tenant_id,
                     key,
-                    reserve_bytes=self.settings.max_artifact_bytes,
+                    reserve_bytes=(
+                        min(len(artifact.payload), self.settings.max_artifact_bytes)
+                        if artifact.payload is not None
+                        else self.settings.max_artifact_bytes
+                    ),
                     purpose="artifact",
                 )
                 stored: StoredObject | None = None
@@ -711,6 +829,21 @@ class WorkspaceService:
                 worker_id=worker_id,
                 used_units=result.used_units,
             )
+            if completed:
+                logger.info(
+                    "reconstruction_completed %s",
+                    json.dumps(
+                        {
+                            "jobId": job_id,
+                            "attemptId": attempt_token,
+                            "queueWaitSeconds": max(0, job["started_at"] - job["created_at"]),
+                            "serverProcessingSeconds": time.monotonic() - processing_started,
+                            "artifactStorageSeconds": time.monotonic() - storage_started,
+                            "stages": result.report,
+                            "viewerReadinessMeasured": False,
+                        }
+                    ),
+                )
             if not completed:
                 self._discard_attempt_artifacts(tenant_id, job_id, attempt_token, stored_objects)
         except JobCancelled as error:
@@ -742,6 +875,9 @@ class WorkspaceService:
             logger.exception("job %s failed", job_id)
             self._discard_attempt_artifacts(tenant_id, job_id, attempt_token, stored_objects)
             code = "engine_unavailable" if isinstance(error, EngineUnavailable) else "job_failed"
+            message = "The job could not be completed. Check server logs with the job ID."
+            if isinstance(error, ReconstructionCapacityExceeded):
+                code, message = "preview_capacity", str(error)
             try:
                 self.database.fail_job(
                     tenant_id,
@@ -749,7 +885,7 @@ class WorkspaceService:
                     attempt_token=attempt_token,
                     worker_id=worker_id,
                     code=code,
-                    message="The job could not be completed. Check server logs with the job ID.",
+                    message=message,
                 )
             except StaleAttempt:
                 logger.info("attempt %s lost ownership before failure settlement", attempt_token)
@@ -1059,10 +1195,12 @@ class WorkspaceService:
 
     def run_retention(self) -> dict[str, int]:
         now = time.time()
-        return self.database.run_retention(
+        expired_trials = IdentityStore(self.database).expire_trials()
+        result = self.database.run_retention(
             terminal_before=now - self.settings.terminal_job_retention_seconds,
             unattached_before=now - self.settings.unattached_asset_retention_seconds,
         )
+        return {**result, "expiredTrials": expired_trials}
 
     def reconcile_storage(self) -> dict[str, int]:
         stored = set(self.store.iter_keys("tenants"))
@@ -1089,14 +1227,20 @@ class WorkspaceService:
             "status": "ok",
             "database": str(self.database.path),
             "storage": type(self.store).__name__,
-            "worker": bool(self._worker and self._worker.is_alive()),
+            "worker": self._workers_alive(),
         }
+
+    def _workers_alive(self) -> bool:
+        return all(
+            worker is not None and worker.is_alive()
+            for worker in (self._worker, self._research_worker)
+        )
 
     def ready(self, *, require_worker: bool) -> bool:
         """Check the durable dependencies without exposing their paths."""
 
         now = time.monotonic()
-        worker_ready = not require_worker or bool(self._worker and self._worker.is_alive())
+        worker_ready = not require_worker or self._workers_alive()
         if not worker_ready or self._reconciliation_missing:
             return False
         with self._readiness_lock:

@@ -1,0 +1,80 @@
+# Single persistent service: frontend, API, durable queue, SQLite and private objects.
+# Fixed hosting is $8.25/month; provider overages are not a hard project spend cap.
+services:
+  - type: web
+    name: wayline
+    runtime: docker
+    repo: https://github.com/ryouol/wayline
+    plan: starter
+    branch: codex/production-ready-lingbot-map
+    numInstances: 1
+    healthCheckPath: /healthz
+    autoDeployTrigger: "off"
+    disk:
+      name: wayline-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: LINGBOT_ENV
+        value: production
+      - key: LINGBOT_DATA_DIR
+        value: /data/wayline
+      - key: LINGBOT_BOOTSTRAP_TOKEN
+        generateValue: true
+      - key: LINGBOT_PUBLIC_BASE_URL
+        sync: false
+      - key: LINGBOT_ALLOWED_HOSTS
+        sync: false
+      - key: LINGBOT_COOKIE_SECURE
+        value: "true"
+      - key: LINGBOT_MAX_VIDEO_SECONDS
+        value: "60"
+      - key: LINGBOT_JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: LINGBOT_MAX_JOB_ATTEMPTS
+        value: "1"
+      - key: LINGBOT_GLOBAL_STORAGE_BYTES
+        value: "3500000000"
+      - key: LINGBOT_TENANT_STORAGE_BYTES
+        value: "268435456"
+      - key: LINGBOT_MAX_UPLOAD_BYTES
+        value: "67108864"
+      - key: LINGBOT_MAX_ARTIFACT_BYTES
+        value: "41943040"
+      - key: LINGBOT_GLOBAL_MAX_INFLIGHT_OBJECTS
+        value: "2"
+      - key: LINGBOT_TENANT_MAX_INFLIGHT_OBJECTS
+        value: "1"
+      - key: LINGBOT_UPLOAD_RATE_PER_MINUTE
+        value: "2"
+      - key: WAYLINE_SCENE_DELIVERY_BUDGET_BYTES
+        value: "2000000000"
+      - key: WAYLINE_SIGNUP_ENABLED
+        value: "false"
+      - key: WAYLINE_GOOGLE_CLIENT_ID
+        sync: false
+      - key: WAYLINE_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: WAYLINE_SIGNUP_MAX_ACCOUNTS
+        value: "0"
+      - key: WAYLINE_SIGNUP_QUOTA_UNITS
+        value: "240"
+      - key: WAYLINE_TRIAL_MAX_ACCOUNTS
+        value: "100"
+      - key: WAYLINE_MODAL_ENABLED
+        value: "false"
+      - key: LINGBOT_RESEARCH_ACK
+        value: "I understand LingBot is research-only"
+      - key: WAYLINE_GPU_SECONDS_BUDGET
+        value: "3600"
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
+      # Leave both unset until an encrypted recovery volume has been provisioned.
+      - key: WAYLINE_RECOVERY_RECIPIENT
+        sync: false
+      - key: WAYLINE_RECOVERY_VOLUME_ID
+        sync: false
+      - key: WAYLINE_RECOVERY_UPLOAD_BUDGET_BYTES
+        value: "10737418240"

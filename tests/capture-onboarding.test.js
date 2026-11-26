@@ -2361,6 +2361,65 @@ async function main() {
     assert.equal(h.context.document.body.getAttribute("aria-busy"), "false");
     assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
   }
+  for (const background of [true, false]) {
+    for (const outcome of ["removed", "session", "failure", "cancel", "success", "hidden"]) {
+      const h = harness(), pending = deferred(), viewers = [];
+      const job = { id: "poll-preview", displayName: "Studio", engineId: "synthetic-sample-v1",
+        state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100,
+        artifacts: [{ id: "poll-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+          metadata: {}, viewUrl: "/scene", downloadUrl: "/download" }] };
+      let removed = false;
+      h.context.window.PointCloudViewer = class {
+        constructor() { viewers.push(this); }
+        async load() { return pending.promise; }
+        destroy() { this.destroyed = true; }
+      };
+      h.context.renderJobDetail = h.renderRealJobDetail;
+      h.state.selectedId = job.id;
+      h.context.respond = async path => path.startsWith("/api/jobs?") ? { jobs: [job], nextCursor: null }
+        : removed ? new Response('{"detail":"Gone"}', { status: 404 }) : job;
+      let refreshed = false;
+      const refresh = (background ? h.context.pollJobs() : h.context.loadJobs()).then(() => { refreshed = true; });
+      await new Promise(setImmediate);
+      assert.equal(refreshed, true, "A pending artifact must not hold scene polling open");
+      await refresh;
+      assert.equal(h.state.pollRefresh, null);
+      assert.equal(h.state.viewerAttempt.loading, true);
+      assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
+      const nextPoll = async () => {
+        const timer = h.timers.get(h.state.pollTimer);
+        h.timers.delete(h.state.pollTimer);
+        await timer.callback();
+      };
+      await nextPoll();
+      assert.equal(h.requests.filter(r => r.path === "/api/jobs/poll-preview").length, 2);
+      assert.equal(viewers.length, 1, "Polling rechecks details without another artifact transfer");
+      if (outcome === "removed") { removed = true; await nextPoll(); }
+      if (outcome === "session") h.context.secureReset();
+      if (outcome === "cancel") h.node("cancelPreviewButton").events.get("click")();
+      if (outcome === "hidden") {
+        h.context.document.visibilityState = "hidden";
+        await h.documentEvents.get("visibilitychange")();
+      }
+      if (["removed", "session", "cancel"].includes(outcome)) assert.equal(viewers[0].destroyed, true);
+      if (outcome === "failure") pending.reject(new Error("Preview interrupted")); else pending.resolve();
+      await new Promise(setImmediate);
+      assert.equal(h.node("cancelPreviewButton").hidden, true);
+      if (["removed", "session"].includes(outcome)) {
+        assert.equal(h.state.selectedId, null);
+        assert.equal(h.state.viewer, null);
+        assert.equal(h.node("downloadLink").href, "");
+      } else if (["failure", "cancel"].includes(outcome)) {
+        assert.equal(h.node("retryPreviewButton").hidden, false);
+        assert.equal(h.node("retryPreviewButton").disabled, false);
+        assert.equal(h.node("downloadLink").href, "/download");
+        await nextPoll();
+        assert.equal(viewers.length, 1, "Completed background polls never retry failed or cancelled previews");
+      } else assert.equal(h.state.viewerArtifact, "poll-artifact");
+      if (["session", "hidden"].includes(outcome)) assert.equal(h.state.pollTimer, null);
+      else assert.ok(h.state.pollTimer, "Preview completion must preserve the next metadata check");
+    }
+  }
   for (const backgroundFinishesFirst of [true, false]) {
     const h = harness(), jobs = deferred(), accountResult = deferred();
     h.context.respond = (path) => path.startsWith("/api/jobs?") ? jobs.promise : accountResult.promise;

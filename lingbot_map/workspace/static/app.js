@@ -611,7 +611,7 @@ async function loadJobs({ selectNewest = false, append = false, preserveLoaded =
   }
   if (epoch !== state.epoch) return;
   if (state.selectedId) {
-    await renderJobDetail({ background, summary: freshJobs.find((job) => job.id === state.selectedId) });
+    await renderJobDetail({ background, summary: freshJobs.find((job) => job.id === state.selectedId), waitForPreview: false });
   } else clearDetail();
   if (epoch === state.epoch) schedulePoll();
 }
@@ -889,7 +889,7 @@ function updateProgress(job) {
   });
 }
 
-async function renderJobDetail({ background = false, summary = null, retryPreview = false } = {}) {
+async function renderJobDetail({ background = false, summary = null, retryPreview = false, waitForPreview = true } = {}) {
   if (!state.selectedId) { clearDetail(); return; }
   const selected = state.selectedId, epoch = state.epoch;
   // Only ready jobs expose artifacts. Other states have complete details in the
@@ -992,30 +992,35 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
         retry.disabled = false;
         retry.focus();
       };
-      try {
-        timeline.attach(null);
-        state.viewer?.destroy();
-        state.viewer = null;
-        const viewer = state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
-        await viewer.load(scene.viewUrl);
-        if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
-        if (viewer.contextLost) throw new Error("The 3D preview was interrupted.");
-        byId("sceneCanvas").addEventListener("wayline-viewer-unavailable", () => {
-          if (state.viewer === viewer) previewFailed(new Error("The 3D preview was interrupted."));
-        }, { once: true });
-        state.viewerArtifact = scene.id;
-        renderTimeline();
-        retry.hidden = true;
-        if (retryPreview) byId("sceneCanvas").focus();
-      } catch (error) {
-        previewFailed(error);
-      } finally {
-        if (state.viewerAttempt === attempt) {
-          attempt.loading = false;
-          cancel.hidden = true;
-          retry.disabled = false;
+      // Metadata polling must continue while a large or stalled preview loads.
+      // Direct selection and explicit retry still await the preview for focus.
+      const loading = (async () => {
+        try {
+          timeline.attach(null);
+          state.viewer?.destroy();
+          state.viewer = null;
+          const viewer = state.viewer = new window.PointCloudViewer(byId("sceneCanvas"), byId("viewerStatus"));
+          await viewer.load(scene.viewUrl);
+          if (state.viewerAttempt !== attempt || state.epoch !== epoch || state.selectedId !== selected) return;
+          if (viewer.contextLost) throw new Error("The 3D preview was interrupted.");
+          byId("sceneCanvas").addEventListener("wayline-viewer-unavailable", () => {
+            if (state.viewer === viewer) previewFailed(new Error("The 3D preview was interrupted."));
+          }, { once: true });
+          state.viewerArtifact = scene.id;
+          renderTimeline();
+          retry.hidden = true;
+          if (retryPreview) byId("sceneCanvas").focus();
+        } catch (error) {
+          previewFailed(error);
+        } finally {
+          if (state.viewerAttempt === attempt) {
+            attempt.loading = false;
+            cancel.hidden = true;
+            retry.disabled = false;
+          }
         }
-      }
+      })();
+      if (waitForPreview) await loading;
     }
   } else {
     stopPlayback();

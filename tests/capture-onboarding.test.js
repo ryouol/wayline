@@ -2361,6 +2361,49 @@ async function main() {
     assert.equal(h.context.document.body.getAttribute("aria-busy"), "false");
     assert.equal(h.timers.get(h.state.pollTimer).delay, 5000);
   }
+  for (const narrow of [false, true]) {
+    for (const outcome of ["success", "failure"]) {
+      const h = harness(), pending = deferred(), detail = deferred();
+      const job = { id: "navigate-preview", displayName: "Studio", engineId: "synthetic-sample-v1",
+        state: "ready", stage: "ready", progress: 1, provenance: {}, createdAt: 100,
+        artifacts: [{ id: "navigate-artifact", kind: "scene", filename: "scene.glb", sizeBytes: 100,
+          metadata: {}, viewUrl: "/scene", downloadUrl: "/download" }] };
+      let loads = 0, scrolls = 0;
+      h.context.window.PointCloudViewer = class {
+        async load() { loads++; return pending.promise; }
+        destroy() {}
+      };
+      h.context.window.matchMedia = () => ({ matches: narrow });
+      h.node("workspaceMain").scrollIntoView = () => { scrolls++; };
+      h.context.renderJobDetail = h.renderRealJobDetail;
+      h.context.respond = async path => {
+        assert.equal(path, "/api/jobs/navigate-preview");
+        return detail.promise;
+      };
+      let selected = false;
+      const selecting = h.context.selectJob(job.id).then(() => { selected = true; });
+      assert.equal(h.node("detailTitle").focusCount, 0, "Navigation waits for authenticated details");
+      assert.equal(scrolls, 0);
+      detail.resolve(job);
+      await new Promise(setImmediate);
+      assert.equal(selected, true, "Scene navigation must not wait for the preview transfer");
+      await selecting;
+      assert.equal(h.node("jobDetail").hidden, false);
+      assert.equal(h.node("detailTitle").focusCount, 1);
+      assert.equal(scrolls, narrow ? 1 : 0);
+      assert.equal(h.state.viewerAttempt.loading, true);
+      assert.equal(loads, 1);
+      assert.equal(h.node("downloadLink").href, "/download");
+      if (outcome === "failure") pending.reject(new Error("Preview interrupted")); else pending.resolve();
+      await new Promise(setImmediate);
+      assert.equal(h.node("detailTitle").focusCount, 1, "Finishing the preview must not move focus again");
+      assert.equal(scrolls, narrow ? 1 : 0, "Finishing the preview must not repeat scrolling");
+      assert.equal(h.node("sceneCanvas").focusCount, 0);
+      assert.equal(h.node("retryPreviewButton").hidden, outcome === "success");
+      assert.equal(h.state.viewerAttempt.loading, false);
+      assert.equal(loads, 1);
+    }
+  }
   for (const background of [true, false]) {
     for (const outcome of ["removed", "session", "failure", "cancel", "success", "hidden"]) {
       const h = harness(), pending = deferred(), viewers = [];

@@ -824,7 +824,7 @@ async function selectJob(jobId, { fromLocation = false } = {}) {
     byId("workspaceMain").focus({ preventScroll: true });
     return;
   }
-  await renderJobDetail();
+  await renderJobDetail({ waitForPreview: false });
   if (epoch !== state.epoch || state.selectedId !== jobId) return;
   byId("detailTitle").focus({ preventScroll: true });
   if (window.matchMedia("(max-width: 860px)").matches) byId("workspaceMain").scrollIntoView({ block: "start" });
@@ -993,7 +993,7 @@ async function renderJobDetail({ background = false, summary = null, retryPrevie
         retry.focus();
       };
       // Metadata polling must continue while a large or stalled preview loads.
-      // Direct selection and explicit retry still await the preview for focus.
+      // Explicit retry still awaits the preview for canvas focus.
       const loading = (async () => {
         try {
           timeline.attach(null);
